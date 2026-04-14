@@ -5,9 +5,9 @@ import time
 from typing import Tuple, List, Dict, Optional
 import numpy as np
 
-from src.config import ExplorerConfig
+from src.config import ExplorerConfig, FrontierSelectionStrategy
 from src.map.occupancy_grid import OccupancyGrid
-from src.core.frontier import FrontierQueue
+from src.core.frontier import FrontierQueue, Frontier
 from src.core.collision_checker import CollisionChecker, CollisionType
 from src.core.coverage_analyzer import CoverageAnalyzer
 from src.utils.geometry import (
@@ -31,6 +31,7 @@ class SSTGExplorer:
         d_theta: float = 45.0,
         overlap: float = 0.25,
         r_robot: float = 0.3,
+        frontier_strategy: FrontierSelectionStrategy = FrontierSelectionStrategy.BASELINE,
         config: Optional[ExplorerConfig] = None
     ):
         """
@@ -41,6 +42,7 @@ class SSTGExplorer:
             d_theta: Angular interval in degrees.
             overlap: Overlap distance in meters.
             r_robot: Robot radius in meters.
+            frontier_strategy: Frontier selection strategy for ablation study.
             config: Optional configuration object (overrides individual params).
         """
         if config is not None:
@@ -50,7 +52,8 @@ class SSTGExplorer:
                 r_view=r_view,
                 d_theta=d_theta,
                 overlap=overlap,
-                r_robot=r_robot
+                r_robot=r_robot,
+                frontier_strategy=frontier_strategy
             )
 
         # Derived parameters
@@ -296,7 +299,7 @@ class SSTGExplorer:
         exploration_strength: float
     ) -> float:
         """
-        Compute priority for a frontier.
+        Compute priority for a frontier based on selected strategy.
 
         Args:
             base_position: Base position where frontier originates.
@@ -306,20 +309,23 @@ class SSTGExplorer:
         Returns:
             Priority value (higher = more important).
         """
-        # Base score from exploration strength
-        base_score = exploration_strength
+        strategy = self.config.frontier_strategy
 
-        # Distance weight (favor nearby targets initially)
-        distance = euclidean_distance(self.current_pose, target)
-        coverage_ratio = self._get_current_coverage()
-        alpha = self.config.get_alpha(coverage_ratio)
-
-        distance_weight = 1.0 / (1.0 + (distance / self.config.r_view) ** alpha)
-
-        # Combine factors
-        priority = base_score * distance_weight
-
-        return priority
+        if strategy == FrontierSelectionStrategy.BASELINE:
+            return self._priority_baseline(base_position, target, exploration_strength)
+        elif strategy == FrontierSelectionStrategy.ENHANCED_DISTANCE:
+            return self._priority_enhanced_distance(base_position, target, exploration_strength)
+        elif strategy == FrontierSelectionStrategy.DUAL_FACTOR:
+            return self._priority_dual_factor(base_position, target, exploration_strength)
+        elif strategy == FrontierSelectionStrategy.CUMULATIVE_DISTANCE:
+            return self._priority_cumulative_distance(base_position, target, exploration_strength)
+        elif strategy == FrontierSelectionStrategy.CLUSTER_PRIORITY:
+            return self._priority_cluster_priority(base_position, target, exploration_strength)
+        elif strategy == FrontierSelectionStrategy.HYBRID_ADAPTIVE:
+            return self._priority_hybrid_adaptive(base_position, target, exploration_strength)
+        else:
+            # Fallback to baseline
+            return self._priority_baseline(base_position, target, exploration_strength)
 
     def _update_all_priorities(self):
         """Update priorities of all frontiers in the queue."""
@@ -428,6 +434,266 @@ class SSTGExplorer:
             'iteration_count': self.iteration_count,
             'frontiers_remaining': self.frontier_queue.size() if self.frontier_queue else 0
         }
+
+    # =========================================================================
+    # Frontier Selection Strategies (for Ablation Study)
+    # =========================================================================
+
+    def _priority_baseline(
+        self,
+        base_position: Tuple[float, float],
+        target: Tuple[float, float],
+        exploration_strength: float
+    ) -> float:
+        """
+        Baseline strategy: Original implementation.
+
+        Priority = S_explore(f) × W_dist(f)
+        where W_dist(f) = 1 / (1 + (d_curr/r_view)^α)
+
+        Args:
+            base_position: Base position where frontier originates.
+            target: Target position.
+            exploration_strength: Strength from collision checker [0, 1].
+
+        Returns:
+            Priority value.
+        """
+        # Base score from exploration strength
+        base_score = exploration_strength
+
+        # Distance weight (favor nearby targets)
+        distance = euclidean_distance(self.current_pose, target)
+        coverage_ratio = self._get_current_coverage()
+        alpha = self.config.get_alpha(coverage_ratio)
+
+        distance_weight = 1.0 / (1.0 + (distance / self.config.r_view) ** alpha)
+
+        # Combine factors
+        priority = base_score * distance_weight
+
+        return priority
+
+    def _priority_enhanced_distance(
+        self,
+        base_position: Tuple[float, float],
+        target: Tuple[float, float],
+        exploration_strength: float
+    ) -> float:
+        """
+        Strategy A: Enhanced distance weight with exponential decay.
+
+        Priority = S_explore(f) × W_dist^enhanced(f)
+        where W_dist^enhanced(f) = exp(-β × d_curr/r_view)
+
+        Args:
+            base_position: Base position where frontier originates.
+            target: Target position.
+            exploration_strength: Strength from collision checker [0, 1].
+
+        Returns:
+            Priority value.
+        """
+        base_score = exploration_strength
+
+        # Enhanced distance weight with exponential decay
+        distance = euclidean_distance(self.current_pose, target)
+        beta = self.config.beta
+
+        distance_weight = np.exp(-beta * distance / self.config.r_view)
+
+        priority = base_score * distance_weight
+
+        return priority
+
+    def _priority_dual_factor(
+        self,
+        base_position: Tuple[float, float],
+        target: Tuple[float, float],
+        exploration_strength: float
+    ) -> float:
+        """
+        Strategy B: Dual factor weighting (decoupled quality & distance).
+
+        Priority = λ × S_explore(f) + (1-λ) × W_dist(f)
+        where λ is adaptive based on coverage ratio
+
+        Args:
+            base_position: Base position where frontier originates.
+            target: Target position.
+            exploration_strength: Strength from collision checker [0, 1].
+
+        Returns:
+            Priority value.
+        """
+        # Get adaptive lambda
+        coverage_ratio = self._get_current_coverage()
+        lambda_weight = self.config.get_lambda(coverage_ratio)
+
+        # Exploration quality component
+        quality_score = exploration_strength
+
+        # Distance component (using baseline formula)
+        distance = euclidean_distance(self.current_pose, target)
+        alpha = self.config.get_alpha(coverage_ratio)
+        distance_score = 1.0 / (1.0 + (distance / self.config.r_view) ** alpha)
+
+        # Linear combination
+        priority = lambda_weight * quality_score + (1.0 - lambda_weight) * distance_score
+
+        return priority
+
+    def _priority_cumulative_distance(
+        self,
+        base_position: Tuple[float, float],
+        target: Tuple[float, float],
+        exploration_strength: float
+    ) -> float:
+        """
+        Strategy C: Cumulative distance penalty (global path efficiency).
+
+        Priority = S_explore(f) × W_dist(f) × W_travel(f)
+        where W_travel(f) = exp(-γ × (D_total + d_curr) / D_avg)
+
+        Args:
+            base_position: Base position where frontier originates.
+            target: Target position.
+            exploration_strength: Strength from collision checker [0, 1].
+
+        Returns:
+            Priority value.
+        """
+        base_score = exploration_strength
+
+        # Distance weight (baseline)
+        distance = euclidean_distance(self.current_pose, target)
+        coverage_ratio = self._get_current_coverage()
+        alpha = self.config.get_alpha(coverage_ratio)
+        distance_weight = 1.0 / (1.0 + (distance / self.config.r_view) ** alpha)
+
+        # Travel cost penalty
+        gamma = self.config.gamma
+
+        # Compute average step distance (avoid division by zero)
+        avg_step_distance = self.total_distance / max(1, len(self.explored_nodes) - 1)
+        if avg_step_distance < 0.1:  # Minimum threshold
+            avg_step_distance = self.config.r_view
+
+        # Penalty based on cumulative + current distance
+        cumulative_factor = (self.total_distance + distance) / avg_step_distance
+        travel_weight = np.exp(-gamma * cumulative_factor)
+
+        priority = base_score * distance_weight * travel_weight
+
+        return priority
+
+    def _priority_cluster_priority(
+        self,
+        base_position: Tuple[float, float],
+        target: Tuple[float, float],
+        exploration_strength: float
+    ) -> float:
+        """
+        Strategy D: Local cluster priority (region-focused exploration).
+
+        Priority = S_explore(f) × W_dist(f) × C_cluster(f)
+        where C_cluster(f) = 1 + η × N_nearby / N_total
+
+        Args:
+            base_position: Base position where frontier originates.
+            target: Target position.
+            exploration_strength: Strength from collision checker [0, 1].
+
+        Returns:
+            Priority value.
+        """
+        base_score = exploration_strength
+
+        # Distance weight (baseline)
+        distance = euclidean_distance(self.current_pose, target)
+        coverage_ratio = self._get_current_coverage()
+        alpha = self.config.get_alpha(coverage_ratio)
+        distance_weight = 1.0 / (1.0 + (distance / self.config.r_view) ** alpha)
+
+        # Cluster factor: count nearby frontiers
+        eta = self.config.eta
+        r_cluster = self.config.r_cluster
+
+        all_frontiers = self.frontier_queue.get_all_frontiers()
+        n_total = len(all_frontiers)
+
+        if n_total == 0:
+            cluster_factor = 1.0
+        else:
+            # Count frontiers within cluster radius
+            n_nearby = sum(
+                1 for f in all_frontiers
+                if euclidean_distance(target, f.target) < r_cluster and f.target != target
+            )
+
+            cluster_factor = 1.0 + eta * (n_nearby / n_total)
+
+        priority = base_score * distance_weight * cluster_factor
+
+        return priority
+
+    def _priority_hybrid_adaptive(
+        self,
+        base_position: Tuple[float, float],
+        target: Tuple[float, float],
+        exploration_strength: float
+    ) -> float:
+        """
+        Strategy E: Hybrid adaptive strategy (combines A + D).
+
+        Priority = S_explore(f) × W_dist^enhanced(f) × [1 + ω(ρ) × C_cluster(f)]
+        where ω adapts based on coverage ratio
+
+        Args:
+            base_position: Base position where frontier originates.
+            target: Target position.
+            exploration_strength: Strength from collision checker [0, 1].
+
+        Returns:
+            Priority value.
+        """
+        base_score = exploration_strength
+
+        # Enhanced distance weight (exponential decay - from Strategy A)
+        distance = euclidean_distance(self.current_pose, target)
+        beta = self.config.beta
+        distance_weight = np.exp(-beta * distance / self.config.r_view)
+
+        # Adaptive cluster weight
+        coverage_ratio = self._get_current_coverage()
+        omega = self.config.get_omega(coverage_ratio)
+
+        # Cluster factor (from Strategy D)
+        if omega > 0:  # Only compute if needed
+            eta = self.config.eta
+            r_cluster = self.config.r_cluster
+
+            all_frontiers = self.frontier_queue.get_all_frontiers()
+            n_total = len(all_frontiers)
+
+            if n_total == 0:
+                cluster_contribution = 0.0
+            else:
+                n_nearby = sum(
+                    1 for f in all_frontiers
+                    if euclidean_distance(target, f.target) < r_cluster and f.target != target
+                )
+                cluster_contribution = eta * (n_nearby / n_total)
+
+            cluster_multiplier = 1.0 + omega * cluster_contribution
+        else:
+            cluster_multiplier = 1.0
+
+        priority = base_score * distance_weight * cluster_multiplier
+
+        return priority
+
+    # =========================================================================
 
     def __repr__(self) -> str:
         return (

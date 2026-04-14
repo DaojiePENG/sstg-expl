@@ -11,7 +11,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from src.core.explorer import SSTGExplorer
-from src.config import ExplorerConfig
+from src.config import ExplorerConfig, FrontierSelectionStrategy
 from simulation.simple_env import create_environment
 from src.utils.visualization import (
     visualize_exploration,
@@ -30,7 +30,8 @@ def run_basic_exploration(
     visualize: bool = True,
     save_results: bool = True,  # Changed default to True
     realtime_viz: bool = False,  # Enable real-time visualization
-    save_animation: bool = False  # Save exploration animation
+    save_animation: bool = False,  # Save exploration animation
+    frontier_strategy: FrontierSelectionStrategy = FrontierSelectionStrategy.BASELINE
 ):
     """
     Run basic exploration on a specified environment.
@@ -45,6 +46,7 @@ def run_basic_exploration(
         save_results: Whether to save results to files.
         realtime_viz: Whether to show real-time exploration visualization.
         save_animation: Whether to save exploration process as animated GIF.
+        frontier_strategy: Frontier selection strategy to use.
     """
     print("="*60)
     print("SSTG Explorer - Basic Exploration Example")
@@ -85,12 +87,14 @@ def run_basic_exploration(
     print(f"   r_view: {r_view}m")
     print(f"   d_theta: {d_theta}°")
     print(f"   overlap: {overlap}m")
+    print(f"   frontier_strategy: {frontier_strategy.value}")
 
     explorer = SSTGExplorer(
         r_view=r_view,
         d_theta=d_theta,
         overlap=overlap,
-        r_robot=0.3
+        r_robot=0.3,
+        frontier_strategy=frontier_strategy
     )
 
     # Run exploration
