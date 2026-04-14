@@ -416,7 +416,243 @@ def run_ablation_study():
 
 ---
 
-## 6. 下一步计划
+## 6. 🆕 Phase 1 高级特性：A*路径规划和自适应采样
+
+### 6.1 动机
+
+在实现frontier选择策略后，我们发现两个额外的优化方向：
+
+1. **路径规划**：baseline使用直线路径，在复杂障碍物环境中可能无法到达某些frontier
+2. **采样密度**：固定的角度间隔(d_theta)在狭窄通道中可能遗漏关键方向
+
+因此，我们实现并评估：
+- **Feature F1**: A*最优路径规划
+- **Feature F2**: 基于狭窄通道检测的自适应角度采样
+
+### 6.2 Feature F1: A*路径规划
+
+#### 数学描述
+
+使用A*算法替代直线路径检查：
+
+$$
+\text{Path}_{A*}(s, g) = \argmin_{p \in \mathcal{P}(s,g)} \left[ \sum_{i=1}^{|p|-1} c(p_i, p_{i+1}) \right]
+$$
+
+其中：
+- $\mathcal{P}(s,g)$: 从起点$s$到目标$g$的所有可行路径
+- $c(p_i, p_{i+1})$: 相邻节点间的移动成本
+- 对角移动成本 = $\sqrt{2}$，直线移动成本 = 1
+
+#### 实现细节
+
+```python
+# 启用A*路径规划
+config = ExplorerConfig(
+    use_astar=True,           # 启用A*
+    astar_max_iterations=10000  # 最大搜索迭代次数
+)
+```
+
+**路径简化**：
+- 使用视线检查(line-of-sight)去除冗余航点
+- Bresenham算法验证直线可达性
+- 典型减少50%航点数量
+
+#### 预期影响
+
+| 指标 | 预期变化 | 原因 |
+|------|---------|------|
+| **总距离** | ↑ 5-15% | A*路径比直线稍长但可行 |
+| **节点数** | → 或 ↓ | 更多frontier可达 |
+| **覆盖率** | ↑ 2-5% | 原本不可达的区域变得可达 |
+| **成功率** | ↑ | 减少因路径不可行导致的失败 |
+
+**适用场景**：
+- ✅ 密集障碍物环境
+- ✅ 复杂几何形状
+- ✅ 需要绕路的区域
+- ❌ 开阔空间（开销不值得）
+
+---
+
+### 6.3 Feature F2: 自适应角度采样
+
+#### 数学描述
+
+根据当前位置的通道宽度$w(p)$自适应调整角度间隔：
+
+$$
+d\theta_{adaptive}(p) = \begin{cases}
+d\theta_{min} & \text{if } w(p) < w_{narrow}/2 \\
+d\theta_{min} + \frac{w(p) - w_{narrow}/2}{w_{narrow}/2} (d\theta_{base} - d\theta_{min}) & \text{if } w_{narrow}/2 \leq w(p) < w_{narrow} \\
+d\theta_{base} & \text{if } w(p) \geq w_{narrow}
+\end{cases}
+$$
+
+其中：
+- $w(p) = 2 \cdot d_{obstacle}(p)$: 通道宽度（距离场的2倍）
+- $w_{narrow}$: 狭窄通道阈值（默认1.5m）
+- $d\theta_{min}$: 最小角度间隔（默认15°，24个方向）
+- $d\theta_{base}$: 基础角度间隔（默认45°，8个方向）
+
+#### 实现细节
+
+```python
+# 启用自适应采样
+config = ExplorerConfig(
+    use_adaptive_sampling=True,  # 启用自适应
+    narrow_threshold=1.5,        # 狭窄阈值(m)
+    min_d_theta=15.0,            # 最小角度间隔
+    d_theta=45.0                 # 基础角度间隔
+)
+```
+
+**通道宽度检测**：
+1. 预计算欧氏距离变换(EDT)：O(N) 一次性成本
+2. 查询距离到最近障碍物：O(1)
+3. 估计通道宽度：$w = 2d_{obstacle}$
+
+#### 预期影响
+
+| 指标 | 预期变化 | 原因 |
+|------|---------|------|
+| **总距离** | → 或 ↓ 5% | 更精确的方向选择 |
+| **节点数** | ↓ 10-20% | 避免遗漏导致的重复探索 |
+| **覆盖率** | ↑ 3-8% | 狭窄区域不遗漏 |
+| **计算时间** | ↑ 10-30% | EDT预计算+更多候选方向 |
+
+**适用场景**：
+- ✅ 走廊环境
+- ✅ 门口和通道
+- ✅ 多房间结构
+- ❌ 完全开阔空间（无效果）
+
+---
+
+### 6.4 组合效果分析
+
+#### 配置矩阵
+
+我们测试所有组合：
+
+| 配置ID | Frontier策略 | A* | 自适应 | 简称 |
+|--------|-------------|-----|--------|------|
+| C0 | Baseline | ❌ | ❌ | Baseline |
+| C1 | Baseline | ✅ | ❌ | +A* |
+| C2 | Baseline | ❌ | ✅ | +Adaptive |
+| C3 | Baseline | ✅ | ✅ | +Both |
+| C4 | Enhanced-Dist | ❌ | ❌ | Enh |
+| C5 | Enhanced-Dist | ✅ | ❌ | Enh+A* |
+| C6 | Enhanced-Dist | ❌ | ✅ | Enh+Adaptive |
+| C7 | Enhanced-Dist | ✅ | ✅ | Enh+Both |
+| ... | ... | ... | ... | ... |
+
+**总配置数**：6 strategies × 2 A* options × 2 adaptive options = **24 configurations**
+
+#### 交互效应假设
+
+1. **A* × Enhanced Distance**:
+   - Enhanced Distance策略减少跳跃
+   - A*确保路径可行性
+   - 预期**协同效应**：距离减少幅度 > 单独效应之和
+
+2. **Adaptive × Corridor环境**:
+   - 走廊是典型狭窄通道
+   - 自适应采样在此环境效果最显著
+   - 预期**环境依赖**：效果取决于环境复杂度
+
+3. **A* × Adaptive**:
+   - 两者优化不同方面（路径 vs 采样）
+   - 预期**独立效应**：可累加
+
+---
+
+### 6.5 扩展实验设计
+
+#### 实验流程
+
+```python
+# 运行扩展消融实验
+python examples/extended_ablation_study.py --runs 5
+
+# 快速测试（2策略×2环境×2次）
+python examples/extended_ablation_study.py --quick
+```
+
+#### 评估指标（扩展）
+
+除了原有8项指标外，新增：
+
+| 指标 | 定义 | 目标 |
+|------|------|------|
+| **a_star_success_rate** | A*成功规划路径的比例 | ↑ 高可行性 |
+| **narrow_region_coverage** | 狭窄区域(<1.5m)的覆盖率 | ↑ 不遗漏 |
+| **avg_passage_width** | 探索节点处的平均通道宽度 | - 环境特征 |
+| **adaptive_sampling_rate** | 使用细化采样的节点比例 | - 自适应程度 |
+
+#### 统计分析方法
+
+**三因素方差分析(Three-way ANOVA)**：
+
+$$
+Y = \mu + \alpha_i + \beta_j + \gamma_k + (\alpha\beta)_{ij} + (\alpha\gamma)_{ik} + (\beta\gamma)_{jk} + (\alpha\beta\gamma)_{ijk} + \epsilon
+$$
+
+其中：
+- $\alpha_i$: Frontier策略效应（6水平）
+- $\beta_j$: A*效应（2水平）
+- $\gamma_k$: 自适应采样效应（2水平）
+- $(\alpha\beta)_{ij}$, etc.: 交互效应
+- $\epsilon$: 随机误差
+
+**显著性检验**：
+- $p < 0.001$: 高度显著 (***)
+- $p < 0.01$: 显著 (**)
+- $p < 0.05$: 边缘显著 (*)
+
+---
+
+### 6.6 预期实验结果
+
+基于理论分析和初步测试，我们预期：
+
+#### 主效应
+
+| Feature | 总距离 | 节点数 | 覆盖率 | 适用环境 |
+|---------|--------|--------|--------|---------|
+| **F1: A*** | ↑5-15% | ↓5-10% | ↑2-5% | 密集障碍物 |
+| **F2: Adaptive** | →或↓5% | ↓10-20% | ↑3-8% | 走廊/通道 |
+
+#### 交互效应（最佳组合）
+
+**配置推荐**：
+
+| 环境类型 | 推荐配置 | 预期改善 |
+|---------|---------|---------|
+| **开阔空间** | Enhanced-Dist | 距离↓25%, 跳跃↓60% |
+| **密集障碍物** | Enhanced-Dist + A* | 距离↓20%, 覆盖↑5% |
+| **走廊** | Hybrid-Adaptive + A* + Adaptive | 距离↓35%, 节点↓25%, 覆盖↑10% |
+| **多房间** | Cluster-Priority + A* | 距离↓30%, 跳跃↓50% |
+
+**最佳总体配置**（假设）：
+```python
+config = ExplorerConfig(
+    frontier_strategy=FrontierSelectionStrategy.HYBRID_ADAPTIVE,
+    use_astar=True,
+    use_adaptive_sampling=True
+)
+```
+
+预期在**所有**环境上平均：
+- 总距离 ↓25-30%
+- 跳跃次数 ↓60-70%
+- 覆盖率 ↑5-8%
+- 节点数 ↓15-20%
+
+---
+
+## 7. 下一步计划
 
 1. **✅ 已完成**: 记录baseline策略（当前版本）
 2. **📝 待实现**: 实现5种改进方案

@@ -59,6 +59,15 @@ class ExplorerConfig:
     omega_mid: float = 0.5       # Cluster weight for mid exploration (20-80%)
     omega_late: float = 1.0      # Cluster weight for late exploration (> 80%)
 
+    # Path planning options
+    use_astar: bool = False      # Use A* path planning instead of straight lines
+    astar_max_iterations: int = 10000  # Max iterations for A* search
+
+    # Adaptive sampling options
+    use_adaptive_sampling: bool = False  # Enable adaptive angular sampling
+    narrow_threshold: float = 1.5        # Passage width threshold (meters)
+    min_d_theta: float = 15.0            # Minimum angular interval for narrow passages
+
     # Termination conditions
     min_priority_threshold: float = 0.1  # Minimum priority to continue
     target_coverage: float = 0.95         # Target coverage ratio

@@ -16,6 +16,20 @@ from src.utils.geometry import (
     find_longest_free_sector
 )
 
+# Optional imports for advanced features
+try:
+    from src.planning.astar import AStarPlanner
+    ASTAR_AVAILABLE = True
+except ImportError:
+    ASTAR_AVAILABLE = False
+
+try:
+    from src.map.distance_field import DistanceField
+    from src.core.narrow_passage import NarrowPassageDetector
+    ADAPTIVE_SAMPLING_AVAILABLE = True
+except ImportError:
+    ADAPTIVE_SAMPLING_AVAILABLE = False
+
 
 class SSTGExplorer:
     """
@@ -117,6 +131,42 @@ class SSTGExplorer:
         )
         self.coverage_analyzer = CoverageAnalyzer(occupancy_grid)
 
+        # Create A* planner if enabled
+        self.astar_planner = None
+        if self.config.use_astar:
+            if not ASTAR_AVAILABLE:
+                print("Warning: A* requested but not available. Using direct paths.")
+            else:
+                self.astar_planner = AStarPlanner(
+                    occupancy_grid,
+                    self.config.r_robot,
+                    self.config.obstacle_threshold
+                )
+                if self.config.verbose:
+                    print("  Using A* path planning")
+
+        # Create distance field and narrow passage detector if adaptive sampling enabled
+        self.narrow_passage_detector = None
+        if self.config.use_adaptive_sampling:
+            if not ADAPTIVE_SAMPLING_AVAILABLE:
+                print("Warning: Adaptive sampling requested but not available. Using fixed d_theta.")
+            else:
+                # Compute distance field
+                distance_field = DistanceField(
+                    occupancy_grid,
+                    self.config.obstacle_threshold
+                )
+                self.narrow_passage_detector = NarrowPassageDetector(
+                    occupancy_grid,
+                    distance_field,
+                    self.config.r_robot,
+                    self.config.narrow_threshold,
+                    self.config.d_theta,
+                    self.config.min_d_theta
+                )
+                if self.config.verbose:
+                    print(f"  Using adaptive sampling (narrow < {self.config.narrow_threshold}m)")
+
         # Generate initial frontiers
         if self.config.verbose:
             print(f"Starting exploration from {start_pose}")
@@ -156,12 +206,26 @@ class SSTGExplorer:
             if self._is_covered_by_explored(target):
                 continue
 
-            # Check path feasibility
-            if not self.collision_checker.check_path(self.current_pose, target):
-                continue
+            # Check path feasibility and plan path
+            if self.astar_planner is not None:
+                # Use A* path planning
+                path = self.astar_planner.plan(
+                    self.current_pose,
+                    target,
+                    max_iterations=self.config.astar_max_iterations
+                )
+                if path is None:
+                    # No path found
+                    continue
+                # Compute actual path length
+                travel_dist = self.astar_planner.get_path_length(path)
+            else:
+                # Use direct line check
+                if not self.collision_checker.check_path(self.current_pose, target):
+                    continue
+                travel_dist = euclidean_distance(self.current_pose, target)
 
             # Navigate to target
-            travel_dist = euclidean_distance(self.current_pose, target)
             self.total_distance += travel_dist
             self.current_pose = target
             self.explored_nodes.append(self.current_pose)
@@ -244,6 +308,8 @@ class SSTGExplorer:
         """
         Generate frontiers for a given position.
 
+        Uses adaptive angular sampling if enabled, otherwise uses fixed d_theta.
+
         Args:
             position: Position to generate frontiers from (x, y).
         """
@@ -252,10 +318,19 @@ class SSTGExplorer:
         temp_blocked_obstacle = []
         temp_blocked_explored = []
 
-        # Generate candidate targets at each angle
-        for angle_idx in range(self.n_directions):
-            angle = angle_idx * self.config.d_theta
+        # Determine angles to use (adaptive or fixed)
+        if self.narrow_passage_detector is not None:
+            # Use adaptive sampling based on passage characteristics
+            angles = self.narrow_passage_detector.get_adaptive_directions(
+                position,
+                base_d_theta=self.config.d_theta
+            )
+        else:
+            # Use fixed angular sampling
+            angles = [angle_idx * self.config.d_theta for angle_idx in range(self.n_directions)]
 
+        # Generate candidate targets at each angle
+        for angle in angles:
             # Compute target point
             target = compute_target_point(position, self.config.r_view, angle)
 
