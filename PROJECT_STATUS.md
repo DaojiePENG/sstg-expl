@@ -136,22 +136,33 @@
 
 ## 🚧 待实现功能
 
-### Phase 2: Benchmark框架（优先级：高）
-- ⏳ **Baseline算法**
-  - Uniform Grid Sampling
-  - RRT-based Explorer
-  - Frontier-based Exploration
-  - Next-Best-View (NBV)
+### ✅ Phase 2: Benchmark框架（已完成）
+- ✅ **Baseline算法** (`src/baseline/`)
+  - Uniform Grid Sampling (均匀网格采样)
+  - RRT-based Explorer (基于RRT探索)
+  - Frontier-based Exploration (经典frontier方法)
+  - Next-Best-View (NBV，信息增益方法)
+  - 统一的BaseExplorer接口
 
-- ⏳ **Benchmark运行器** (`simulation/benchmark.py`)
-  - 多算法批量运行
-  - 标准环境配置（YAML）
-  - 结果自动保存
+- ✅ **Benchmark运行器** (`simulation/benchmark.py`)
+  - 多算法批量运行框架
+  - 标准化结果收集
+  - JSON结果自动保存
+  - 支持自定义算法参数
 
-- ⏳ **指标计算与对比**
-  - 覆盖率、节点数、距离等
+- ✅ **指标计算与对比** (`simulation/benchmark_analysis.py`)
+  - 5项核心指标统计
   - 雷达图对比可视化
-  - 统计显著性检验
+  - 箱线图可视化
+  - Welch's t-test统计显著性检验
+  - 完整分析报告生成
+
+- ✅ **参考文献整理** (`REFERENCES_AND_BASELINES.md`)
+  - 已实现算法文献（5种）
+  - 待实现算法文献（9种较新方法）
+  - 综述类文献
+  - Benchmark设计建议
+  - 论文写作建议
 
 ### Phase 3: 扩展功能（优先级：中）
 - ⏳ **更多仿真环境**
@@ -286,11 +297,25 @@
 - [ ] 分析完整实验结果，生成对比图表
 - [ ] 统计显著性检验（Three-way ANOVA）
 
-### 本月
-- [ ] 实现Uniform Grid Baseline
-- [ ] 实现RRT Explorer对比算法
-- [ ] 设计并实现Benchmark框架
-- [ ] 撰写Phase 1实验报告
+### ✅ 本月（已完成）
+- [x] 实现A*路径规划
+- [x] 实现距离场
+- [x] 实现狭窄通道检测
+- [x] 实现6种frontier选择策略
+- [x] 创建策略对比工具
+- [x] 集成A*和自适应采样到主探索器
+- [x] 运行快速消融实验
+- [x] 实现4种Baseline算法
+- [x] 实现Benchmark框架
+- [x] 整理参考文献和待实现算法
+
+### 下月计划
+- [ ] 运行完整消融实验（6策略×5环境×5次运行）
+- [ ] 运行Benchmark对比实验（7算法×5环境×5次运行）
+- [ ] 统计显著性分析和可视化
+- [ ] 实现1-2个较新的baseline算法（如Submodular Optimization）
+- [ ] 撰写Phase 1+2实验报告
+- [ ] 准备论文初稿
 
 ## 📞 联系与反馈
 
