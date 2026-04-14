@@ -1,6 +1,6 @@
 # SSTG-Explorer 项目状态
 
-## ✅ 已完成功能 (v0.2.0)
+## ✅ 已完成功能 (v0.3.0)
 
 ### 核心算法模块
 - ✅ **Frontier数据结构** (`src/core/frontier.py`)
@@ -36,7 +36,30 @@
   - 全局frontier管理
   - 自适应优先级调整
   - 多终止条件支持
-  - 🆕 实时可视化集成
+  - 实时可视化集成
+  - 🆕 6种frontier选择策略（消融实验）
+
+### 🆕 Phase 1 高级特性
+- ✅ **A*路径规划** (`src/planning/astar.py`)
+  - 8连通网格搜索
+  - 欧氏距离启发式
+  - 路径简化（去除冗余点）
+  - 视线检查优化
+  - 完整路径长度计算
+
+- ✅ **距离场** (`src/map/distance_field.py`)
+  - 欧氏距离变换（EDT）
+  - O(1)距离查询
+  - 梯度计算
+  - 碰撞检查加速
+  - 通行空间可视化
+
+- ✅ **狭窄通道检测** (`src/core/narrow_passage.py`)
+  - 基于距离场的通道宽度检测
+  - 自适应角度采样密度
+  - 通道方向估计
+  - 狭窄区域定位
+  - 自适应探索辅助
 
 ### 仿真与可视化
 - ✅ **仿真环境** (`simulation/simple_env.py`)
@@ -68,13 +91,16 @@
 
 ### 配置与示例
 - ✅ **配置系统** (`src/config.py`)
-  - ExplorerConfig
+  - ExplorerConfig（包含6种策略配置）
+  - FrontierSelectionStrategy枚举
   - SimulationConfig
   - BenchmarkConfig
 
 - ✅ **示例脚本** 
   - `examples/basic_exploration.py` - 基础探索（支持实时可视化）
-  - 🆕 `examples/realtime_demo.py` - 实时可视化演示
+  - `examples/realtime_demo.py` - 实时可视化演示
+  - 🆕 `examples/strategy_comparison.py` - 策略消融实验
+  - 🆕 `examples/test_phase1_features.py` - Phase 1功能测试
 
 ### 🆕 输出管理
 - ✅ **结构化输出目录** (`outputs/`)
@@ -100,24 +126,13 @@
   - QUICKSTART.md（快速开始指南）
   - SSTG-Expl-Plan.md（详细设计文档）
   - VISUALIZATION_UPDATE.md（可视化更新说明）
-  - 🆕 REALTIME_VISUALIZATION.md（实时可视化指南）
-  - 🆕 UPDATES_SUMMARY.md（功能更新总结）
+  - REALTIME_VISUALIZATION.md（实时可视化指南）
+  - UPDATES_SUMMARY.md（功能更新总结）
+  - 🆕 ABLATION_STUDY.md（消融实验设计）
+  - 🆕 STRATEGY_REFERENCE.md（策略快速参考）
   - 代码注释（Google风格docstrings）
 
 ## 🚧 待实现功能
-
-### Phase 1: 高级特性（优先级：高）
-- ⏳ **A*路径规划** (`src/planning/astar.py`)
-  - 替代直线路径
-  - 处理复杂障碍物规避
-
-- ⏳ **距离场** (`src/map/distance_field.py`)
-  - 加速碰撞检测
-  - 提供距离查询
-
-- ⏳ **狭窄通道检测**
-  - 自适应角度细化
-  - 动态调整采样密度
 
 ### Phase 2: Benchmark框架（优先级：高）
 - ⏳ **Baseline算法**
@@ -176,26 +191,49 @@
 ### 基础功能测试
 - ✅ 所有单元测试通过（4/4）
 - ✅ 空房间探索成功（8x8m，11节点，99.1%覆盖）
+- ✅ Phase 1所有模块导入成功
+
+### 🆕 Phase 1 高级特性测试
+- ✅ A*路径规划：成功规划穿越走廊路径
+- ✅ 距离场：EDT计算正确，O(1)查询验证
+- ✅ 狭窄通道检测：成功识别走廊狭窄区域
+
+### 🆕 消融实验（Frontier选择策略）
+| 策略 | 状态 | 说明 |
+|------|------|------|
+| Baseline | ✅ 已实现 | 原始实现（v0.1-baseline标签）|
+| Enhanced Distance | ✅ 已实现 | 指数距离衰减 |
+| Dual Factor | ✅ 已实现 | 质量-距离解耦 |
+| Cumulative Distance | ✅ 已实现 | 全局路径效率 |
+| Cluster Priority | ✅ 已实现 | 区域集中探索 |
+| Hybrid Adaptive | ✅ 已实现 | 组合策略 |
 
 ### 初步性能
 | 环境 | 尺寸 | 节点数 | 覆盖率 | 时间 |
 |------|------|--------|--------|------|
 | 空房间 | 8x8m | 11 | 99.1% | ~12s |
-| 待测试 | - | - | - | - |
+| 走廊 | 15x2.5m | - | - | 测试中 |
+| 障碍物 | 10x10m | - | - | 测试中 |
 
 ## 🔧 已知问题
 
 1. **性能优化**
    - 大环境下frontier队列更新较慢
-   - 可考虑使用KD-tree加速
+   - ✅ 已实现距离场加速查询
+   - 可进一步考虑KD-tree优化
 
 2. **可视化**
-   - 动画生成需要ffmpeg
+   - 动画生成需要ffmpeg或Pillow
    - 大量节点时绘图较慢
 
 3. **边界情况**
    - 起始点在障碍物内的处理
    - 完全封闭区域的检测
+
+4. **🆕 Phase 1特性集成**
+   - A*路径规划尚未集成到主探索器
+   - 狭窄通道自适应采样待集成
+   - 需要实际环境测试验证效果
 
 ## 📝 使用建议
 
@@ -204,28 +242,34 @@
 2. ✅ 参数影响研究
 3. ✅ 算法原型开发
 4. ✅ 与导航系统离线集成
+5. ✅ 🆕 Frontier选择策略消融实验
+6. ✅ 🆕 狭窄通道环境探索研究
 
 ### 不推荐用途（需等待后续开发）
 1. ❌ 实时机器人部署（需ROS2集成）
-2. ❌ 大规模环境（>50m，需性能优化）
+2. ❌ 大规模环境（>50m，需进一步性能优化）
 3. ❌ 动态环境（需动态更新机制）
-4. ❌ 与其他算法直接对比（需benchmark框架）
+4. ⚠️ 与其他算法直接对比（Phase 1完成，Phase 2 benchmark框架待开发）
 
 ## 🎯 近期开发计划
 
-### 本周
-- [ ] 实现A*路径规划
-- [ ] 添加更多单元测试
+### ✅ 本周（已完成）
+- [x] 实现A*路径规划
+- [x] 实现距离场
+- [x] 实现狭窄通道检测
+- [x] 实现6种frontier选择策略
+- [x] 创建策略对比工具
 
 ### 下周
-- [ ] 实现Uniform Grid Baseline
-- [ ] 实现RRT Explorer对比算法
-- [ ] 设计Benchmark框架
+- [ ] 集成A*和狭窄通道检测到主探索器
+- [ ] 运行完整消融实验
+- [ ] 分析实验结果，生成对比图表
 
 ### 本月
-- [ ] 完成Benchmark框架
-- [ ] 在标准环境上运行完整对比实验
-- [ ] 撰写实验报告
+- [ ] 实现Uniform Grid Baseline
+- [ ] 实现RRT Explorer对比算法
+- [ ] 设计并实现Benchmark框架
+- [ ] 撰写Phase 1实验报告
 
 ## 📞 联系与反馈
 
@@ -235,6 +279,6 @@
 
 ---
 
-**版本**: 0.1.0  
+**版本**: 0.3.0  
 **最后更新**: 2026-04-15  
-**状态**: ✅ 核心功能完成，可用于原型验证
+**状态**: ✅ Phase 1完成，可用于算法研究和消融实验

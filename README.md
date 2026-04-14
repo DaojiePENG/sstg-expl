@@ -32,7 +32,7 @@ SSTG-Explorer 是一个专门为空间语义拓扑图构建设计的探索算法
 
 ```bash
 # 克隆仓库
-git clone <repository_url>
+git clone https://github.com/DaojiePENG/sstg-expl
 cd sstg-expl
 
 # 安装依赖
@@ -248,14 +248,14 @@ MIT License
   title = {SSTG-Explorer: Spatial Semantic Topological Graph Explorer},
   author = {SSTG Team},
   year = {2026},
-  url = {<repository_url>}
+  url = {https://github.com/DaojiePENG/sstg-expl}
 }
 ```
 
 ## 联系方式
 
-- Issues: <repository_url>/issues
-- Email: <your_email>
+- Issues: https://github.com/DaojiePENG/sstg-expl/issues
+- Email: Daojie.PENG@qq.com
 
 ## 相关项目
 
