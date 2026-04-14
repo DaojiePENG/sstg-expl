@@ -1,0 +1,9 @@
+{
+    "env": {
+      "ANTHROPIC_BASE_URL": "https://vip.yi-zhan.top",
+      "ANTHROPIC_AUTH_TOKEN": "sk-iangbvJqqKloiTWQ06A5111165164fC5Bd25865bCf7aE332",
+      "ANTHROPIC_MODEL": "claude-sonnet-4-5-20250929-thinking",
+      "ANTHROPIC_SMALL_FAST_MODEL": "claude-sonnet-4-5-20250929-thinking",
+      "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS":1
+    }
+}

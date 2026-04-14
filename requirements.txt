@@ -1,0 +1,23 @@
+# Core dependencies
+numpy>=1.20.0
+scipy>=1.7.0
+
+# Map and path planning
+scikit-image>=0.18.0
+
+# Visualization
+matplotlib>=3.3.0
+seaborn>=0.11.0
+
+# Data processing
+pandas>=1.3.0
+
+# Configuration
+pyyaml>=5.4.0
+
+# Testing
+pytest>=6.2.0
+pytest-cov>=2.12.0
+
+# Optional: for better performance
+numba>=0.53.0
