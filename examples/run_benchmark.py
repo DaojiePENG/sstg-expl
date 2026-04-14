@@ -33,13 +33,23 @@ def main():
         'sstg_optimal',    # SSTG with A* + adaptive sampling
     ]
 
-    # Define test environments
+    # Define test environments (5 standard environments)
     environments = [
         create_environment('empty', width=10.0, height=10.0),
         create_environment('obstacles', width=10.0, height=10.0,
-                          num_obstacles=5, seed=42),
+                          num_obstacles=5, seed=42),  # Sparse obstacles
+        create_environment('obstacles', width=10.0, height=10.0,
+                          num_obstacles=15, seed=43),  # Dense obstacles
         create_environment('corridor', length=15.0, width=2.5),
+        create_environment('multiple_rooms', width=15.0, height=10.0),
     ]
+
+    # Give environments proper names for results
+    environments[0].name = 'empty'
+    environments[1].name = 'sparse_obstacles'
+    environments[2].name = 'dense_obstacles'
+    environments[3].name = 'corridor'
+    environments[4].name = 'multiple_rooms'
 
     # Algorithm-specific parameters (optional)
     algorithm_kwargs = {

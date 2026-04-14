@@ -12,16 +12,15 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
 import numpy as np
 
-from ..baseline import (
+from src.baseline import (
     BaseExplorer,
     UniformGridExplorer,
     RRTExplorer,
     FrontierExplorer,
     NextBestViewExplorer
 )
-from ..core.explorer import SSTGExplorer
-from ..config import ExplorerConfig, FrontierSelectionStrategy
-from .simple_env import SimulationEnvironment
+from src.core.explorer import SSTGExplorer
+from src.config import ExplorerConfig, FrontierSelectionStrategy
 
 
 @dataclass
@@ -138,7 +137,7 @@ class BenchmarkRunner:
     def run_single_experiment(
         self,
         algorithm: BaseExplorer,
-        env: SimulationEnvironment,
+        env,  # Environment object from simple_env
         run_id: int
     ) -> BenchmarkResult:
         """
@@ -153,10 +152,16 @@ class BenchmarkRunner:
             Benchmark result
         """
         # Reset algorithm
-        algorithm.reset()
+        if hasattr(algorithm, 'reset'):
+            algorithm.reset()
 
         # Get environment data
-        occupancy_grid = env.get_occupancy_map()
+        occupancy_grid_obj = env.get_occupancy_map()
+        # Convert to numpy array for baseline algorithms
+        if hasattr(occupancy_grid_obj, 'data'):
+            occupancy_grid = occupancy_grid_obj.data
+        else:
+            occupancy_grid = occupancy_grid_obj
         start_pose = env.get_start_pose()
 
         # Run exploration
@@ -196,7 +201,7 @@ class BenchmarkRunner:
     def run_benchmark(
         self,
         algorithms: List[str],
-        environments: List[SimulationEnvironment],
+        environments: List,  # List of Environment objects
         algorithm_kwargs: Optional[Dict[str, Dict]] = None
     ):
         """
