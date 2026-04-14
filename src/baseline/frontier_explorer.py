@@ -82,8 +82,12 @@ class FrontierExplorer(BaseExplorer):
         start_time = time.time()
         self.reset()
 
-        # Create OccupancyGrid wrapper
-        grid = OccupancyGrid(occupancy_grid, resolution=0.05)
+        # Get OccupancyGrid object
+        if isinstance(occupancy_grid, OccupancyGrid):
+            grid = occupancy_grid
+        else:
+            # occupancy_grid is numpy array
+            grid = OccupancyGrid(data=occupancy_grid, resolution=0.05, origin=(0.0, 0.0))
 
         # Initialize with start position
         current_pos = np.array(start_pose[:2])

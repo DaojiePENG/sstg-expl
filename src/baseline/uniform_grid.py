@@ -73,8 +73,12 @@ class UniformGridExplorer(BaseExplorer):
         start_time = time.time()
         self.reset()
 
-        # Create OccupancyGrid wrapper
-        grid = OccupancyGrid(occupancy_grid, resolution=0.05)
+        # Get OccupancyGrid object
+        if isinstance(occupancy_grid, OccupancyGrid):
+            grid = occupancy_grid
+        else:
+            # occupancy_grid is numpy array
+            grid = OccupancyGrid(data=occupancy_grid, resolution=0.05, origin=(0.0, 0.0))
 
         # Generate grid points
         grid_points = self._generate_grid_points(grid)
