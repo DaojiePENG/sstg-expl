@@ -114,14 +114,18 @@ class BenchmarkRunner:
                 frontier_strategy=FrontierSelectionStrategy.BASELINE,
                 **kwargs
             )
-            return SSTGExplorer(config=config)
+            explorer = SSTGExplorer(config=config)
+            explorer.name = 'SSTG'
+            return explorer
         elif algorithm_name == 'sstg_enhanced':
             # SSTG with enhanced distance strategy
             config = ExplorerConfig(
                 frontier_strategy=FrontierSelectionStrategy.ENHANCED_DISTANCE,
                 **kwargs
             )
-            return SSTGExplorer(config=config)
+            explorer = SSTGExplorer(config=config)
+            explorer.name = 'SSTG (Enhanced)'
+            return explorer
         elif algorithm_name == 'sstg_optimal':
             # SSTG with best configuration (from ablation study)
             config = ExplorerConfig(
@@ -130,7 +134,9 @@ class BenchmarkRunner:
                 use_adaptive_sampling=True,
                 **kwargs
             )
-            return SSTGExplorer(config=config)
+            explorer = SSTGExplorer(config=config)
+            explorer.name = 'SSTG (Optimal)'
+            return explorer
         else:
             raise ValueError(f"Unknown algorithm: {algorithm_name}")
 
@@ -157,12 +163,17 @@ class BenchmarkRunner:
 
         # Get environment data
         occupancy_grid_obj = env.get_occupancy_map()
-        # Convert to numpy array for baseline algorithms
-        if hasattr(occupancy_grid_obj, 'data'):
-            occupancy_grid = occupancy_grid_obj.data
-        else:
-            occupancy_grid = occupancy_grid_obj
         start_pose = env.get_start_pose()
+
+        # SSTG Explorer needs OccupancyGrid object, others need numpy array
+        if 'sstg' in algorithm.name.lower():
+            occupancy_grid = occupancy_grid_obj
+        else:
+            # Convert to numpy array for baseline algorithms
+            if hasattr(occupancy_grid_obj, 'data'):
+                occupancy_grid = occupancy_grid_obj.data
+            else:
+                occupancy_grid = occupancy_grid_obj
 
         # Run exploration
         start_time = time.time()
