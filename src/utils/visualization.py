@@ -18,7 +18,8 @@ def visualize_exploration(
     show_connections: bool = False,
     save_path: Optional[str] = None,
     figsize: Tuple[int, int] = (12, 10),
-    dpi: int = 100
+    dpi: int = 100,
+    title: Optional[str] = None
 ):
     """
     Visualize exploration results.
@@ -121,7 +122,10 @@ def visualize_exploration(
 
     ax.set_xlabel('X (m)')
     ax.set_ylabel('Y (m)')
-    ax.set_title(f'SSTG Exploration Result ({len(positions)} nodes)')
+    if title:
+        ax.set_title(title)
+    else:
+        ax.set_title(f'SSTG Exploration Result ({len(positions)} nodes)')
     ax.legend()
     ax.axis('equal')
     ax.grid(True, alpha=0.3)
@@ -130,12 +134,10 @@ def visualize_exploration(
 
     if save_path:
         plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
-        print(f"Figure saved to {save_path}")
-        plt.show()  # Also display the figure
+        plt.close()
     else:
         plt.show()
-
-    plt.close()
+        plt.close()
 
 
 def visualize_coverage_map(

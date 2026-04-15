@@ -153,8 +153,18 @@ class RoomWithObstacles(Environment):
         map_data[:, :wall_cells] = 100
         map_data[:, -wall_cells:] = 100
 
+        # Get start position to avoid placing obstacles there
+        start_x, start_y, _ = self.get_start_pose()
+        safe_radius = 0.8  # Keep 0.8m radius around start clear
+
         # Add random rectangular obstacles
-        for _ in range(self.num_obstacles):
+        attempts = 0
+        max_attempts = self.num_obstacles * 10  # Prevent infinite loop
+        placed = 0
+
+        while placed < self.num_obstacles and attempts < max_attempts:
+            attempts += 1
+
             # Random size (0.5m to 2m)
             obs_width = np.random.uniform(0.5, 2.0)
             obs_height = np.random.uniform(0.5, 2.0)
@@ -164,6 +174,25 @@ class RoomWithObstacles(Environment):
             x = np.random.uniform(margin, self.width - margin - obs_width)
             y = np.random.uniform(margin, self.height - margin - obs_height)
 
+            # Check if obstacle overlaps with start position safe zone
+            obs_center_x = x + obs_width / 2
+            obs_center_y = y + obs_height / 2
+            dist_to_start = np.sqrt((obs_center_x - start_x)**2 + (obs_center_y - start_y)**2)
+
+            # Also check corners
+            corners = [
+                (x, y), (x + obs_width, y),
+                (x, y + obs_height), (x + obs_width, y + obs_height)
+            ]
+            min_corner_dist = min(
+                np.sqrt((cx - start_x)**2 + (cy - start_y)**2)
+                for cx, cy in corners
+            )
+
+            # Skip if too close to start position
+            if dist_to_start < safe_radius or min_corner_dist < safe_radius:
+                continue
+
             # Convert to grid coordinates
             i_start = int(y / self.resolution)
             i_end = int((y + obs_height) / self.resolution)
@@ -172,6 +201,11 @@ class RoomWithObstacles(Environment):
 
             # Place obstacle
             map_data[i_start:i_end, j_start:j_end] = 100
+            placed += 1
+
+        if placed < self.num_obstacles:
+            print(f"Warning: Only placed {placed}/{self.num_obstacles} obstacles "
+                  f"(couldn't find valid positions for others)")
 
         return map_data
 
