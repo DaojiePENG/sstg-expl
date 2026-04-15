@@ -65,9 +65,9 @@ algorithm_kwargs = {
     'rrt': {'max_iterations': 500, 'step_size': 1.0},
     'frontier': {'target_coverage': 0.95, 'max_iterations': 500},
     'nbv': {'n_candidates': 50, 'target_coverage': 0.95, 'max_iterations': 500},
-    'sstg': {'d_theta': 45.0, 'target_coverage': 0.95},
-    'sstg_enhanced': {'d_theta': 45.0, 'target_coverage': 0.95, 'beta': 1.0},
-    'sstg_optimal': {'d_theta': 45.0, 'target_coverage': 0.95, 'beta': 1.0}
+    'sstg': {'d_theta': 30.0, 'target_coverage': 0.95},
+    'sstg_enhanced': {'d_theta': 30.0, 'target_coverage': 0.95, 'beta': 1.0},
+    'sstg_optimal': {'d_theta': 30.0, 'target_coverage': 0.95, 'beta': 1.0}
 }
 
 # Create runner

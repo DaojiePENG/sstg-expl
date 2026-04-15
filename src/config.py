@@ -22,10 +22,16 @@ class ExplorerConfig:
 
     # Core exploration parameters
     r_view: float = 2.0          # View radius in meters
-    d_theta: float = 30.0        # Angular interval in degrees (reduced from 45° for denser sampling)
+    d_theta: float = 30.0        # Angular interval in degrees (default, may be adapted)
     overlap: float = 0.25        # Overlap distance in meters
     r_robot: float = 0.3         # Robot radius in meters
     d_safe: float = 0.2          # Safety distance from obstacles in meters
+
+    # Adaptive d_theta parameters
+    adaptive_dtheta: bool = False  # Disable adaptive d_theta (fixed 30° performs best across all environments)
+    dtheta_simple: float = 45.0    # d_theta for simple environments (fewer directions, better for open spaces)
+    dtheta_complex: float = 30.0   # d_theta for complex environments (more directions, better for obstacles)
+    complexity_threshold: float = 0.12  # Environment density threshold: <12% = simple, ≥12% = complex
 
     # Frontier selection strategy
     frontier_strategy: FrontierSelectionStrategy = FrontierSelectionStrategy.BASELINE

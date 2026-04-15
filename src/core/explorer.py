@@ -209,6 +209,22 @@ class SSTGExplorer:
             else:
                 self.adaptive_min_priority = self.config.min_priority_threshold
 
+        # Adaptive d_theta based on environment complexity
+        if self.config.adaptive_dtheta:
+            complexity_thresh = getattr(self.config, 'complexity_threshold', 0.12)
+            if self.environment_density < complexity_thresh:
+                # Simple environment: use larger d_theta (fewer directions, more efficient)
+                self.config.d_theta = self.config.dtheta_simple
+                if self.config.verbose:
+                    print(f"  Adaptive d_theta: {self.config.d_theta}° (simple environment, density={self.environment_density:.1%})")
+            else:
+                # Complex environment: use smaller d_theta (more directions, better coverage)
+                self.config.d_theta = self.config.dtheta_complex
+                if self.config.verbose:
+                    print(f"  Adaptive d_theta: {self.config.d_theta}° (complex environment, density={self.environment_density:.1%})")
+        elif self.config.verbose:
+            print(f"  Using fixed d_theta: {self.config.d_theta}°")
+
         # Main exploration loop
         while not self._should_terminate():
             # Get best frontier
@@ -523,12 +539,12 @@ class SSTGExplorer:
                 valid_frontiers = sum(1 for f in self.frontier_queue._entry_map.values()
                                      if f != self.frontier_queue._REMOVED and abs(f.priority) > 1e-10)
 
-                if valid_frontiers > 0 and coverage < 0.90:
+                if valid_frontiers > 0 and coverage < 0.94:
                     # We have valid frontiers but priority calculation might have issues
                     # This can happen in multi-room environments where distance decay is too aggressive
                     if self.config.verbose:
                         print(f"Warning: Max priority near zero ({max_priority:.2e}) but {valid_frontiers} frontiers exist")
-                        print(f"Coverage {coverage:.1%} < 90%, forcing re-evaluation")
+                        print(f"Coverage {coverage:.1%} < 94%, forcing re-evaluation")
                     # Return False to continue, but this indicates a potential issue
                     return False
                 else:

@@ -78,3 +78,5 @@ outputs/
 *.jpg
 *.gif
 *.mp4
+
+.claude/*
