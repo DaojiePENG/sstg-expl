@@ -113,19 +113,26 @@ class CollisionChecker:
         self,
         point: Tuple[float, float],
         explored_nodes: List[Tuple[float, float]],
-        d_repel: float
+        d_repel: float,
+        r_view: Optional[float] = None
     ) -> Tuple[bool, float]:
         """
-        Check if point is too close to explored nodes (soft obstacle).
+        Check if point is within coverage of explored nodes.
+
+        IMPORTANT: We now use r_view (coverage radius) instead of d_repel (spacing control)
+        to determine if a point is already covered. This fixes the bug where frontiers
+        in the range [d_repel, r_view] were incorrectly treated as FREE when they were
+        actually already covered.
 
         Args:
             point: Point to check (x, y).
             explored_nodes: List of explored positions (x, y).
-            d_repel: Repulsion distance (r_view - overlap).
+            d_repel: Repulsion distance (r_view - overlap) - kept for backwards compatibility.
+            r_view: Coverage radius. If None, falls back to d_repel (old behavior).
 
         Returns:
-            Tuple of (is_too_close, min_distance):
-            - is_too_close: True if within d_repel of any explored node.
+            Tuple of (is_covered, min_distance):
+            - is_covered: True if within r_view of any explored node (already covered).
             - min_distance: Distance to nearest explored node.
         """
         if not explored_nodes:
@@ -137,43 +144,64 @@ class CollisionChecker:
             for explored in explored_nodes
         )
 
-        is_too_close = min_dist < d_repel
+        # FIX: Use r_view (actual coverage) instead of d_repel (spacing preference)
+        coverage_radius = r_view if r_view is not None else d_repel
+        is_covered = min_dist < coverage_radius
 
-        return (is_too_close, min_dist)
+        return (is_covered, min_dist)
 
     def check_collision_type(
         self,
         point: Tuple[float, float],
         explored_nodes: List[Tuple[float, float]],
-        d_repel: float
+        d_repel: float,
+        r_view: Optional[float] = None
     ) -> Tuple[CollisionType, float]:
         """
         Determine collision type for a point.
 
+        FIXED: Now correctly uses r_view (coverage radius) to check if a point is
+        already within the explored area's coverage. Points within r_view are marked
+        as SOFT_OBSTACLE with strength based on distance from nearest explored node.
+
         Args:
             point: Point to check (x, y).
             explored_nodes: List of explored positions.
-            d_repel: Repulsion distance.
+            d_repel: Repulsion distance (for spacing control).
+            r_view: Coverage radius. If None, falls back to d_repel (old behavior).
 
         Returns:
             Tuple of (collision_type, exploration_strength):
             - collision_type: Type of collision (FREE/HARD_OBSTACLE/SOFT_OBSTACLE).
             - exploration_strength: Priority multiplier [0, 1].
                                    1.0 for FREE, 0.0 for HARD_OBSTACLE,
-                                   distance/d_repel for SOFT_OBSTACLE.
+                                   distance/r_view for SOFT_OBSTACLE (within coverage).
         """
         # Check hard obstacle first
         if not self.check_point(point):
             return (CollisionType.HARD_OBSTACLE, 0.0)
 
-        # Check soft obstacle (explored nodes)
-        is_too_close, min_dist = self.check_against_explored(
-            point, explored_nodes, d_repel
+        # Check if within coverage of explored nodes (use r_view, not d_repel!)
+        is_covered, min_dist = self.check_against_explored(
+            point, explored_nodes, d_repel, r_view
         )
 
-        if is_too_close:
+        if is_covered:
+            # Point is within r_view coverage of an explored node
             # Exploration strength decreases as we get closer to explored nodes
-            strength = min_dist / d_repel if d_repel > 0 else 0.0
+            # At distance=0: strength=0 (completely covered)
+            # At distance=r_view: strength→1.0 (edge of coverage)
+            coverage_radius = r_view if r_view is not None else d_repel
+            strength = min_dist / coverage_radius if coverage_radius > 0 else 0.0
+
+            # Apply additional penalty if within spacing distance (d_repel)
+            # This encourages the algorithm to prefer frontiers farther from existing nodes
+            if r_view is not None and min_dist < d_repel:
+                # Within both coverage and spacing distance
+                # Further reduce strength to discourage over-sampling
+                spacing_penalty = 0.5  # Reduce by 50%
+                strength *= spacing_penalty
+
             return (CollisionType.SOFT_OBSTACLE, strength)
 
         return (CollisionType.FREE, 1.0)

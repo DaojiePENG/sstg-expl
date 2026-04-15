@@ -22,7 +22,7 @@ class ExplorerConfig:
 
     # Core exploration parameters
     r_view: float = 2.0          # View radius in meters
-    d_theta: float = 45.0        # Angular interval in degrees
+    d_theta: float = 30.0        # Angular interval in degrees (reduced from 45° for denser sampling)
     overlap: float = 0.25        # Overlap distance in meters
     r_robot: float = 0.3         # Robot radius in meters
     d_safe: float = 0.2          # Safety distance from obstacles in meters
@@ -31,9 +31,9 @@ class ExplorerConfig:
     frontier_strategy: FrontierSelectionStrategy = FrontierSelectionStrategy.BASELINE
 
     # Priority calculation parameters (Baseline)
-    alpha: float = 2.0           # Distance decay exponent (局部性控制)
+    alpha: float = 2.0           # Distance decay exponent (favor locality)
     adaptive_alpha: bool = True  # Whether to adapt alpha based on coverage
-    alpha_early: float = 2.0     # Alpha for early exploration (< 30% coverage)
+    alpha_early: float = 2.0     # Alpha for early exploration (< 30% coverage) - back to original
     alpha_mid: float = 1.0       # Alpha for mid exploration (30-70% coverage)
     alpha_late: float = 0.5      # Alpha for late exploration (> 70% coverage)
 
@@ -60,7 +60,7 @@ class ExplorerConfig:
     omega_late: float = 1.0      # Cluster weight for late exploration (> 80%)
 
     # Path planning options
-    use_astar: bool = False      # Use A* path planning instead of straight lines
+    use_astar: bool = True       # Use A* path planning instead of straight lines (default True for robustness)
     astar_max_iterations: int = 10000  # Max iterations for A* search
 
     # Adaptive sampling options
@@ -69,9 +69,11 @@ class ExplorerConfig:
     min_d_theta: float = 15.0            # Minimum angular interval for narrow passages
 
     # Termination conditions
-    min_priority_threshold: float = 0.1  # Minimum priority to continue
+    min_priority_threshold: float = 0.005  # Minimum priority to continue (lowered from 0.02 for multi-room environments)
     target_coverage: float = 0.95         # Target coverage ratio
     max_iterations: int = 10000           # Maximum number of exploration steps
+    adaptive_threshold: bool = True       # Adapt threshold based on environment density
+    density_threshold: float = 0.20       # Environment density threshold for adaptation (20%)
 
     # Map parameters
     map_resolution: float = 0.05  # Map resolution in meters/pixel

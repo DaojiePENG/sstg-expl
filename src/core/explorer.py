@@ -190,6 +190,25 @@ class SSTGExplorer:
                 coverage_ratio=coverage
             )
 
+        # Compute environment density for adaptive thresholds
+        self.environment_density = self._compute_environment_density(occupancy_grid)
+        if self.config.verbose and self.config.adaptive_threshold:
+            print(f"  Environment density: {self.environment_density:.1%} occupied")
+
+        # Adjust min_priority_threshold based on density
+        self.adaptive_min_priority = self.config.min_priority_threshold
+        if self.config.adaptive_threshold:
+            # In dense environments, lower the threshold to allow exploration
+            density_thresh = getattr(self.config, 'density_threshold', 0.20)
+            if self.environment_density > density_thresh:
+                # Lower threshold progressively with density
+                density_factor = 1.0 + (self.environment_density - density_thresh) / 0.10
+                self.adaptive_min_priority = self.config.min_priority_threshold / density_factor
+                if self.config.verbose:
+                    print(f"  Adjusted priority threshold: {self.adaptive_min_priority:.4f} (from {self.config.min_priority_threshold:.4f})")
+            else:
+                self.adaptive_min_priority = self.config.min_priority_threshold
+
         # Main exploration loop
         while not self._should_terminate():
             # Get best frontier
@@ -334,9 +353,9 @@ class SSTGExplorer:
             # Compute target point
             target = compute_target_point(position, self.config.r_view, angle)
 
-            # Check collision type
+            # Check collision type (FIXED: now passes r_view for correct coverage check)
             collision_type, strength = self.collision_checker.check_collision_type(
-                target, self.explored_nodes, self.d_repel
+                target, self.explored_nodes, self.d_repel, self.config.r_view
             )
 
             # Track blocked frontiers
@@ -409,8 +428,9 @@ class SSTGExplorer:
 
         for frontier in frontiers:
             # Recheck collision type (may have changed due to new explored nodes)
+            # FIXED: now passes r_view for correct coverage check
             collision_type, strength = self.collision_checker.check_collision_type(
-                frontier.target, self.explored_nodes, self.d_repel
+                frontier.target, self.explored_nodes, self.d_repel, self.config.r_view
             )
 
             # Remove if now hitting hard obstacle
@@ -453,6 +473,22 @@ class SSTGExplorer:
             self.config.r_view
         )
 
+    def _compute_environment_density(self, occupancy_grid: OccupancyGrid) -> float:
+        """
+        Compute environment density (ratio of occupied space).
+
+        Higher density means more obstacles, which makes exploration harder.
+
+        Args:
+            occupancy_grid: Occupancy grid map.
+
+        Returns:
+            Density ratio [0, 1] where 0 = completely free, 1 = completely occupied.
+        """
+        total_cells = occupancy_grid.data.size
+        occupied_cells = np.sum(occupancy_grid.data >= self.config.obstacle_threshold)
+        return occupied_cells / total_cells
+
     def _should_terminate(self) -> bool:
         """
         Check termination conditions.
@@ -470,15 +506,59 @@ class SSTGExplorer:
         if self.frontier_queue.is_empty():
             return True
 
-        # Max priority too low
+        # Get current coverage
+        coverage = self._get_current_coverage()
+
+        # Max priority too low (use adaptive threshold)
         max_priority = self.frontier_queue.max_priority()
-        if max_priority is not None and max_priority < self.config.min_priority_threshold:
+        threshold = self.adaptive_min_priority if hasattr(self, 'adaptive_min_priority') else self.config.min_priority_threshold
+
+        if max_priority is not None and max_priority < threshold:
+            # IMPROVED: Check if priority is numerically valid (not near-zero due to numerical issues)
+            # If max_priority is extremely small (< 1e-10), there might be numerical issues
+            # or all frontiers are blocked by explored nodes
+            if max_priority < 1e-10:
+                # Check if we have valid unexplored frontiers by examining the queue
+                # Count frontiers with non-zero priority (use entry_map to avoid REMOVED entries)
+                valid_frontiers = sum(1 for f in self.frontier_queue._entry_map.values()
+                                     if f != self.frontier_queue._REMOVED and abs(f.priority) > 1e-10)
+
+                if valid_frontiers > 0 and coverage < 0.90:
+                    # We have valid frontiers but priority calculation might have issues
+                    # This can happen in multi-room environments where distance decay is too aggressive
+                    if self.config.verbose:
+                        print(f"Warning: Max priority near zero ({max_priority:.2e}) but {valid_frontiers} frontiers exist")
+                        print(f"Coverage {coverage:.1%} < 90%, forcing re-evaluation")
+                    # Return False to continue, but this indicates a potential issue
+                    return False
+                else:
+                    if self.config.verbose:
+                        print(f"Max priority {max_priority:.2e} near zero, no valid frontiers")
+                    return True
+
+            # In dense environments, be more lenient before giving up
+            density_thresh = getattr(self.config, 'density_threshold', 0.20)
+            if hasattr(self, 'environment_density') and self.environment_density > density_thresh:
+                # Check if we still have reasonable coverage potential
+                # If coverage is low and priority is not too bad, keep going
+                if coverage < 0.85 and max_priority > threshold * 0.3:
+                    return False
+
+            # IMPROVED: For multi-room or complex environments, be more lenient
+            # If coverage is far from target, don't give up too easily
+            if coverage < 0.93:  # Increased from 0.80 to push closer to 95% target
+                # Check if we have a reasonable number of unexplored frontiers
+                queue_size = self.frontier_queue.size()
+                if queue_size >= 3 and max_priority > threshold * 0.05:  # More lenient: 0.05 from 0.1
+                    if self.config.verbose:
+                        print(f"Coverage {coverage:.1%} < 93%, {queue_size} frontiers remain, continuing")
+                    return False
+
             if self.config.verbose:
-                print(f"Max priority {max_priority:.3f} below threshold")
+                print(f"Max priority {max_priority:.3f} below threshold {threshold:.3f}")
             return True
 
         # Coverage target reached and no high-priority frontiers remain
-        coverage = self._get_current_coverage()
         if coverage >= self.config.target_coverage:
             if max_priority is not None and max_priority < 0.5:
                 if self.config.verbose:
@@ -558,8 +638,10 @@ class SSTGExplorer:
         """
         Strategy A: Enhanced distance weight with exponential decay.
 
-        Priority = S_explore(f) × W_dist^enhanced(f)
+        Priority = S_explore(f) × W_dist^enhanced(f) × density_bonus
         where W_dist^enhanced(f) = exp(-β × d_curr/r_view)
+
+        In dense obstacle environments, applies a bonus to prevent premature termination.
 
         Args:
             base_position: Base position where frontier originates.
@@ -578,6 +660,16 @@ class SSTGExplorer:
         distance_weight = np.exp(-beta * distance / self.config.r_view)
 
         priority = base_score * distance_weight
+
+        # Apply density bonus in dense environments
+        if hasattr(self, 'environment_density'):
+            density_thresh = getattr(self.config, 'density_threshold', 0.20)
+            if self.environment_density > density_thresh:
+                # In dense environments, boost priority to encourage continued exploration
+                # Bonus increases with density: up to 3x boost at 40% density
+                density_excess = self.environment_density - density_thresh
+                density_bonus = 1.0 + min(density_excess / 0.10, 2.0)  # Up to 3x
+                priority *= density_bonus
 
         return priority
 
