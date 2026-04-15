@@ -4,6 +4,7 @@ Collision checking for SSTG Explorer.
 from typing import Tuple, List, Optional
 from enum import Enum
 import numpy as np
+from scipy.spatial import cKDTree
 
 from src.map.occupancy_grid import OccupancyGrid
 from src.utils.geometry import (
@@ -54,6 +55,25 @@ class CollisionChecker:
         self.inflated_grid = occupancy_grid.inflate_obstacles(
             r_robot + d_safe
         )
+
+        # Performance optimization: KD-tree for explored nodes lookup
+        self.explored_tree = None  # Will be cKDTree when updated
+
+    def update_explored_tree(self, explored_nodes: List[Tuple[float, float]]):
+        """
+        Update KD-tree for fast nearest neighbor queries.
+
+        Performance optimization: O(n log n) build time, O(log n) query time
+        vs O(n) for linear search per query.
+
+        Args:
+            explored_nodes: List of explored positions (x, y).
+        """
+        if explored_nodes and len(explored_nodes) > 0:
+            # Build KD-tree from explored nodes
+            self.explored_tree = cKDTree(explored_nodes)
+        else:
+            self.explored_tree = None
 
     def check_point(
         self,
@@ -124,6 +144,9 @@ class CollisionChecker:
         in the range [d_repel, r_view] were incorrectly treated as FREE when they were
         actually already covered.
 
+        Performance optimization: Uses KD-tree for O(log n) nearest neighbor search
+        instead of O(n) linear search.
+
         Args:
             point: Point to check (x, y).
             explored_nodes: List of explored positions (x, y).
@@ -138,11 +161,17 @@ class CollisionChecker:
         if not explored_nodes:
             return (False, float('inf'))
 
-        # Find minimum distance to explored nodes
-        min_dist = min(
-            euclidean_distance(point, explored)
-            for explored in explored_nodes
-        )
+        # Performance optimization: Use KD-tree if available
+        if self.explored_tree is not None and len(explored_nodes) == len(self.explored_tree.data):
+            # Use KD-tree for O(log n) query
+            dist, idx = self.explored_tree.query(point)
+            min_dist = float(dist)
+        else:
+            # Fallback to linear search if tree not available
+            min_dist = min(
+                euclidean_distance(point, explored)
+                for explored in explored_nodes
+            )
 
         # FIX: Use r_view (actual coverage) instead of d_repel (spacing preference)
         coverage_radius = r_view if r_view is not None else d_repel

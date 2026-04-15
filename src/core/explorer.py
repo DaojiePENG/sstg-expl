@@ -90,6 +90,9 @@ class SSTGExplorer:
         self.iteration_count = 0
         self.start_time = 0.0
 
+        # Performance optimization: cached coverage value
+        self.cached_coverage = 0.0  # Updated once per iteration instead of per priority calculation
+
     def explore(
         self,
         occupancy_grid: OccupancyGrid,
@@ -266,6 +269,13 @@ class SSTGExplorer:
             self.explored_nodes.append(self.current_pose)
             self.iteration_count += 1
 
+            # Performance optimization: Update KD-tree for fast collision checking
+            self.collision_checker.update_explored_tree(self.explored_nodes)
+
+            # Performance optimization: Update coverage cache once per iteration
+            # This avoids recomputing coverage for every priority calculation
+            self.cached_coverage = self._get_current_coverage()
+
             # Generate new frontiers from current pose
             self._generate_frontiers(self.current_pose)
 
@@ -275,7 +285,7 @@ class SSTGExplorer:
             # Update visualization
             if visualizer is not None:
                 active_frontiers = self.frontier_queue.get_all_frontiers()
-                coverage = self._get_current_coverage()
+                # Use cached coverage for visualization
                 visualizer.update(
                     current_position=self.current_pose,
                     explored_nodes=self.explored_nodes.copy(),
@@ -283,15 +293,15 @@ class SSTGExplorer:
                     blocked_obstacle=self.blocked_obstacle_points.copy(),
                     blocked_explored=self.blocked_explored_points.copy(),
                     iteration=self.iteration_count,
-                    coverage_ratio=coverage
+                    coverage_ratio=self.cached_coverage
                 )
 
             # Progress logging
             if self.config.verbose and self.iteration_count % 10 == 0:
-                coverage = self._get_current_coverage()
+                # Use cached coverage for logging
                 print(f"Iteration {self.iteration_count}: "
                       f"{len(self.explored_nodes)} nodes, "
-                      f"coverage={coverage:.1%}, "
+                      f"coverage={self.cached_coverage:.1%}, "
                       f"frontiers={self.frontier_queue.size()}")
 
         # Finalize and compute statistics
@@ -635,8 +645,10 @@ class SSTGExplorer:
 
         # Distance weight (favor nearby targets)
         distance = euclidean_distance(self.current_pose, target)
-        coverage_ratio = self._get_current_coverage()
-        alpha = self.config.get_alpha(coverage_ratio)
+
+        # Performance optimization: Use cached coverage instead of recomputing
+        # This is computed once per iteration, not per priority calculation
+        alpha = self.config.get_alpha(self.cached_coverage)
 
         distance_weight = 1.0 / (1.0 + (distance / self.config.r_view) ** alpha)
 
@@ -709,16 +721,15 @@ class SSTGExplorer:
         Returns:
             Priority value.
         """
-        # Get adaptive lambda
-        coverage_ratio = self._get_current_coverage()
-        lambda_weight = self.config.get_lambda(coverage_ratio)
+        # Get adaptive lambda using cached coverage
+        lambda_weight = self.config.get_lambda(self.cached_coverage)
 
         # Exploration quality component
         quality_score = exploration_strength
 
         # Distance component (using baseline formula)
         distance = euclidean_distance(self.current_pose, target)
-        alpha = self.config.get_alpha(coverage_ratio)
+        alpha = self.config.get_alpha(self.cached_coverage)
         distance_score = 1.0 / (1.0 + (distance / self.config.r_view) ** alpha)
 
         # Linear combination
@@ -792,10 +803,9 @@ class SSTGExplorer:
         """
         base_score = exploration_strength
 
-        # Distance weight (baseline)
+        # Distance weight (baseline) using cached coverage
         distance = euclidean_distance(self.current_pose, target)
-        coverage_ratio = self._get_current_coverage()
-        alpha = self.config.get_alpha(coverage_ratio)
+        alpha = self.config.get_alpha(self.cached_coverage)
         distance_weight = 1.0 / (1.0 + (distance / self.config.r_view) ** alpha)
 
         # Cluster factor: count nearby frontiers
@@ -847,9 +857,8 @@ class SSTGExplorer:
         beta = self.config.beta
         distance_weight = np.exp(-beta * distance / self.config.r_view)
 
-        # Adaptive cluster weight
-        coverage_ratio = self._get_current_coverage()
-        omega = self.config.get_omega(coverage_ratio)
+        # Adaptive cluster weight using cached coverage
+        omega = self.config.get_omega(self.cached_coverage)
 
         # Cluster factor (from Strategy D)
         if omega > 0:  # Only compute if needed
