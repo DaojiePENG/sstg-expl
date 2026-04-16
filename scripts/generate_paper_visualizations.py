@@ -37,11 +37,17 @@ def parse_results(data):
     for result in data['results']:
         algo = result['algorithm']
         env = result['environment']
+        am = result.get('additional_metrics', {}) or {}
         results_by_algo[algo][env].append({
             'coverage': result['coverage_ratio'],
             'nodes': result['num_nodes'],
             'distance': result['total_distance'],
-            'time': result['computation_time']
+            'time': result['computation_time'],
+            'avg_obstacle_distance': am.get('avg_obstacle_distance', None),
+            'min_obstacle_distance': am.get('min_obstacle_distance', None),
+            'mean_nn_distance': am.get('mean_nn_distance', None),
+            'nn_distance_std': am.get('nn_distance_std', None),
+            'dispersion_uniformity': am.get('dispersion_uniformity', None),
         })
 
     return results_by_algo
@@ -232,6 +238,135 @@ def generate_summary_table(results_by_algo, output_path):
     return summary
 
 
+def plot_obstacle_distance_comparison(results_by_algo, output_path):
+    """Plot: Average obstacle distance comparison across algorithms."""
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    environments = sorted(list(results_by_algo[list(results_by_algo.keys())[0]].keys()))
+    algorithms = sorted(results_by_algo.keys())
+
+    # Filter out algorithms with no spatial data
+    has_data = False
+    for algo in algorithms:
+        for env in environments:
+            runs = results_by_algo[algo][env]
+            if runs and runs[0].get('avg_obstacle_distance') is not None:
+                has_data = True
+                break
+        if has_data:
+            break
+
+    if not has_data:
+        print("  ⚠️ No spatial metrics found, skipping obstacle distance plot")
+        plt.close(fig)
+        return
+
+    x = np.arange(len(environments))
+    width = 0.12
+    n_algos = len(algorithms)
+
+    # Plot 1: Average obstacle distance
+    ax = axes[0]
+    for i, algo in enumerate(algorithms):
+        means = []
+        stds = []
+        for env in environments:
+            runs = results_by_algo[algo][env]
+            vals = [r['avg_obstacle_distance'] for r in runs if r.get('avg_obstacle_distance') is not None]
+            means.append(np.mean(vals) if vals else 0)
+            stds.append(np.std(vals) if vals else 0)
+
+        offset = (i - n_algos / 2 + 0.5) * width
+        bars = ax.bar(x + offset, means, width, yerr=stds,
+                       label=algo, capsize=2, alpha=0.85)
+
+    ax.set_xlabel('Environment')
+    ax.set_ylabel('Avg Distance to Nearest Obstacle (m)')
+    ax.set_title('Node-to-Obstacle Distance')
+    ax.set_xticks(x)
+    ax.set_xticklabels([e.replace('_', '\n') for e in environments], fontsize=8)
+    ax.legend(fontsize=6, ncol=2, loc='upper right')
+    ax.grid(axis='y', alpha=0.3)
+
+    # Plot 2: Dispersion uniformity
+    ax = axes[1]
+    for i, algo in enumerate(algorithms):
+        means = []
+        stds = []
+        for env in environments:
+            runs = results_by_algo[algo][env]
+            vals = [r['dispersion_uniformity'] for r in runs if r.get('dispersion_uniformity') is not None]
+            means.append(np.mean(vals) if vals else 0)
+            stds.append(np.std(vals) if vals else 0)
+
+        offset = (i - n_algos / 2 + 0.5) * width
+        bars = ax.bar(x + offset, means, width, yerr=stds,
+                       label=algo, capsize=2, alpha=0.85)
+
+    ax.set_xlabel('Environment')
+    ax.set_ylabel('Dispersion Uniformity (higher = more uniform)')
+    ax.set_title('Node Spacing Uniformity')
+    ax.set_xticks(x)
+    ax.set_xticklabels([e.replace('_', '\n') for e in environments], fontsize=8)
+    ax.legend(fontsize=6, ncol=2, loc='upper right')
+    ax.set_ylim(0, 1.05)
+    ax.grid(axis='y', alpha=0.3)
+
+    plt.tight_layout()
+    fig.savefig(output_path / 'spatial_quality_comparison.pdf', bbox_inches='tight')
+    fig.savefig(output_path / 'spatial_quality_comparison.png', bbox_inches='tight')
+    plt.close(fig)
+    print("  ✅ Spatial quality comparison plot saved")
+
+
+def plot_spatial_heatmap(results_by_algo, output_path):
+    """Plot: Heatmap of spatial quality metrics across algorithms and environments."""
+    environments = sorted(list(results_by_algo[list(results_by_algo.keys())[0]].keys()))
+    algorithms = sorted(results_by_algo.keys())
+
+    # Check if data exists
+    has_data = False
+    for algo in algorithms:
+        for env in environments:
+            runs = results_by_algo[algo][env]
+            if runs and runs[0].get('avg_obstacle_distance') is not None:
+                has_data = True
+                break
+        if has_data:
+            break
+    if not has_data:
+        print("  ⚠️ No spatial metrics, skipping spatial heatmap")
+        return
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+
+    metrics = [
+        ('avg_obstacle_distance', 'Avg Obstacle Distance (m)', 'YlGn'),
+        ('mean_nn_distance', 'Mean NN Distance (m)', 'YlOrRd'),
+        ('dispersion_uniformity', 'Dispersion Uniformity', 'Blues'),
+    ]
+
+    for ax, (metric_key, title, cmap) in zip(axes, metrics):
+        matrix = np.zeros((len(algorithms), len(environments)))
+        for i, algo in enumerate(algorithms):
+            for j, env in enumerate(environments):
+                runs = results_by_algo[algo][env]
+                vals = [r[metric_key] for r in runs if r.get(metric_key) is not None]
+                matrix[i, j] = np.mean(vals) if vals else 0
+
+        sns.heatmap(matrix, annot=True, fmt='.3f', cmap=cmap,
+                    xticklabels=[e.replace('_', '\n') for e in environments],
+                    yticklabels=algorithms, ax=ax, cbar_kws={'shrink': 0.8})
+        ax.set_title(title, fontsize=10)
+        ax.tick_params(labelsize=7)
+
+    plt.tight_layout()
+    fig.savefig(output_path / 'spatial_quality_heatmap.pdf', bbox_inches='tight')
+    fig.savefig(output_path / 'spatial_quality_heatmap.png', bbox_inches='tight')
+    plt.close(fig)
+    print("  ✅ Spatial quality heatmap saved")
+
+
 def main():
     """Main function to generate all visualizations."""
     print("="*70)
@@ -261,6 +396,8 @@ def main():
     plot_efficiency_comparison(results_by_algo, OUTPUT_DIR)
     plot_time_comparison(results_by_algo, OUTPUT_DIR)
     plot_heatmap_performance(results_by_algo, OUTPUT_DIR)
+    plot_obstacle_distance_comparison(results_by_algo, OUTPUT_DIR)
+    plot_spatial_heatmap(results_by_algo, OUTPUT_DIR)
 
     # Generate summary table
     print("\nGenerating summary table...")

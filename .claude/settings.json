@@ -1,9 +1,18 @@
 {
-    "env": {
-      "ANTHROPIC_BASE_URL": "https://vip.yi-zhan.top",
-      "ANTHROPIC_AUTH_TOKEN": "sk-iangbvJqqKloiTWQ06A5111165164fC5Bd25865bCf7aE332",
-      "ANTHROPIC_MODEL": "claude-sonnet-4-5-20250929-thinking",
-      "ANTHROPIC_SMALL_FAST_MODEL": "claude-sonnet-4-5-20250929-thinking",
-      "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS":1
-    }
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://vip.yi-zhan.top",
+    "ANTHROPIC_AUTH_TOKEN": "sk-iangbvJqqKloiTWQ06A5111165164fC5Bd25865bCf7aE332",
+    "ANTHROPIC_MODEL": "claude-sonnet-4-5-20250929-thinking",
+    "ANTHROPIC_SMALL_FAST_MODEL": "claude-sonnet-4-5-20250929-thinking",
+    "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(python examples/test_baselines.py)",
+      "Bash(grep -n \"OccupancyGrid\\(occupancy_grid\" src/baseline/*.py)",
+      "Bash(python examples/run_benchmark.py)",
+      "Bash(tee outputs/benchmarks/benchmark_run.log)"
+    ]
+  }
 }

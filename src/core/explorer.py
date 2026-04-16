@@ -93,6 +93,9 @@ class SSTGExplorer:
         # Performance optimization: cached coverage value
         self.cached_coverage = 0.0  # Updated once per iteration instead of per priority calculation
 
+        # Phase 1 Optimization: Initialize adaptive priority threshold
+        self.adaptive_min_priority = self.config.min_priority_threshold
+
     def explore(
         self,
         occupancy_grid: OccupancyGrid,
@@ -354,10 +357,16 @@ class SSTGExplorer:
         Generate frontiers for a given position.
 
         Uses adaptive angular sampling if enabled, otherwise uses fixed d_theta.
+        Phase 1 Optimization: Aggressive pruning during generation.
 
         Args:
             position: Position to generate frontiers from (x, y).
         """
+        # Phase 1 Optimization: Prune covered frontiers periodically
+        if (self.config.enable_aggressive_pruning and
+            self.iteration_count % self.config.frontier_prune_interval == 0):
+            self._prune_covered_frontiers()
+
         # Clear blocked points tracking for this position's frontiers
         # Note: We accumulate blocked points across all positions
         temp_blocked_obstacle = []
@@ -373,6 +382,12 @@ class SSTGExplorer:
         else:
             # Use fixed angular sampling
             angles = [angle_idx * self.config.d_theta for angle_idx in range(self.n_directions)]
+
+        # Phase 1 Optimization: Count how many frontiers we add/skip
+        added_count = 0
+        skipped_strength = 0
+        skipped_distance = 0
+        skipped_priority = 0
 
         # Generate candidate targets at each angle
         for angle in angles:
@@ -392,14 +407,41 @@ class SSTGExplorer:
                 # This is a frontier but with reduced priority
                 temp_blocked_explored.append(target)
 
+            # Phase 1 Optimization: Strength pruning
+            if self.config.enable_aggressive_pruning:
+                if strength < self.config.frontier_min_strength:
+                    skipped_strength += 1
+                    continue
+
             # Compute priority
             priority = self._compute_priority(
                 position, target, strength
             )
 
+            # Phase 1 Optimization: Priority pruning
+            if self.config.enable_aggressive_pruning:
+                min_acceptable_priority = self.adaptive_min_priority * self.config.frontier_priority_factor
+                if priority < min_acceptable_priority:
+                    skipped_priority += 1
+                    continue
+
+            # Phase 1 Optimization: Distance pruning (check if too close to existing frontiers)
+            if self.config.enable_aggressive_pruning:
+                if self._too_close_to_existing_frontier(target, self.config.frontier_min_distance):
+                    skipped_distance += 1
+                    continue
+
             # Add to queue
             if priority > 0:
                 self.frontier_queue.add(position, angle, target, priority)
+                added_count += 1
+
+        # Debug logging for pruning effectiveness
+        if self.config.verbose and self.config.enable_aggressive_pruning and self.iteration_count % 5 == 0:
+            total_skipped = skipped_strength + skipped_distance + skipped_priority
+            if total_skipped > 0 or added_count > 0:
+                print(f"  [Pruning] Added: {added_count}, Skipped: {total_skipped} "
+                      f"(str:{skipped_strength}, dist:{skipped_distance}, pri:{skipped_priority})")
 
         # Update accumulated blocked points (keep last N positions worth)
         max_tracked = 200  # Limit to avoid memory issues
@@ -448,11 +490,27 @@ class SSTGExplorer:
             return self._priority_baseline(base_position, target, exploration_strength)
 
     def _update_all_priorities(self):
-        """Update priorities of all frontiers in the queue."""
+        """
+        Update priorities of all frontiers in the queue.
+
+        Phase 1 Optimization: Localized updates - only update frontiers
+        within influence radius of current position.
+        """
         # Get all frontiers
         frontiers = self.frontier_queue.get_all_frontiers()
 
+        # Phase 1 Optimization: Localized updates
+        updated_count = 0
+        skipped_count = 0
+
         for frontier in frontiers:
+            # Localized update: only update if within influence radius
+            if self.config.enable_localized_updates:
+                dist_to_current = euclidean_distance(frontier.target, self.current_pose)
+                if dist_to_current > self.config.priority_update_radius:
+                    skipped_count += 1
+                    continue
+
             # Recheck collision type (may have changed due to new explored nodes)
             # FIXED: now passes r_view for correct coverage check
             collision_type, strength = self.collision_checker.check_collision_type(
@@ -471,6 +529,50 @@ class SSTGExplorer:
 
             # Update priority
             self.frontier_queue.update_priority(frontier.frontier_id, new_priority)
+            updated_count += 1
+
+        # Debug logging for localized updates
+        if self.config.verbose and self.config.enable_localized_updates and self.iteration_count % 5 == 0:
+            total = updated_count + skipped_count
+            if total > 0:
+                print(f"  [Localized] Updated: {updated_count}/{total} frontiers "
+                      f"(skipped {skipped_count} distant)")
+
+    def _prune_covered_frontiers(self):
+        """
+        Phase 1 Optimization: Remove frontiers that are now covered by explored nodes.
+
+        This is called periodically during exploration to clean up the queue.
+        """
+        to_remove = []
+        for frontier in self.frontier_queue.get_all_frontiers():
+            if self._is_covered_by_explored(frontier.target):
+                to_remove.append(frontier.frontier_id)
+
+        for fid in to_remove:
+            self.frontier_queue.remove(fid)
+
+        if self.config.verbose and len(to_remove) > 0:
+            print(f"  [Pruning] Removed {len(to_remove)} covered frontiers, "
+                  f"queue size: {len(self.frontier_queue)}")
+
+    def _too_close_to_existing_frontier(self, target: Tuple[float, float], min_dist: float) -> bool:
+        """
+        Phase 1 Optimization: Check if target is too close to existing frontiers.
+
+        This prevents adding redundant frontiers that are very close to each other.
+
+        Args:
+            target: Target position to check
+            min_dist: Minimum allowed distance to existing frontiers
+
+        Returns:
+            True if too close to any existing frontier
+        """
+        for frontier in self.frontier_queue.get_all_frontiers():
+            if euclidean_distance(target, frontier.target) < min_dist:
+                return True
+        return False
 
     def _is_covered_by_explored(self, point: Tuple[float, float]) -> bool:
         """

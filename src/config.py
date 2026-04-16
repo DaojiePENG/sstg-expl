@@ -81,6 +81,17 @@ class ExplorerConfig:
     adaptive_threshold: bool = True       # Adapt threshold based on environment density
     density_threshold: float = 0.20       # Environment density threshold for adaptation (20%)
 
+    # Phase 1 Optimization: Aggressive Frontier Pruning
+    enable_aggressive_pruning: bool = True    # Enable aggressive frontier pruning
+    frontier_min_strength: float = 0.3        # Minimum exploration strength (降低from 0.4 to 0.3)
+    frontier_min_distance: float = 0.3        # Minimum distance between frontiers (降低from 0.5 to 0.3)
+    frontier_prune_interval: int = 2          # Prune covered frontiers every N iterations
+    frontier_priority_factor: float = 0.3     # Minimum priority factor (降低from 0.5 to 0.3)
+
+    # Phase 1 Optimization: Localized Priority Updates
+    enable_localized_updates: bool = True     # Only update nearby frontiers
+    priority_update_radius: float = 4.0       # Update frontiers within radius (meters, default 2*r_view)
+
     # Map parameters
     map_resolution: float = 0.05  # Map resolution in meters/pixel
     obstacle_threshold: int = 50  # Occupancy threshold (0-100)

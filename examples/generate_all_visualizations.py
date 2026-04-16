@@ -51,13 +51,23 @@ environments = [
     create_environment('obstacles', width=10.0, height=10.0, num_obstacles=15, seed=43),
     create_environment('corridor', length=15.0, width=2.5),
     create_environment('multiple_rooms', width=15.0, height=10.0),
+    create_environment('l_corridor'),
+    create_environment('maze', width=12.0, height=12.0),
+    create_environment('dense_obstacles', width=10.0, height=10.0, num_obstacles=15, seed=43),
+    create_environment('narrow_passages', width=15.0, height=10.0),
+    create_environment('warehouse', width=15.0, height=12.0),
 ]
 
 environments[0].name = 'empty'
 environments[1].name = 'sparse_obstacles'
-environments[2].name = 'dense_obstacles'
+environments[2].name = 'dense_obstacles_v1'
 environments[3].name = 'corridor'
 environments[4].name = 'multiple_rooms'
+environments[5].name = 'l_shaped_corridor'
+environments[6].name = 'maze'
+environments[7].name = 'dense_obstacles'
+environments[8].name = 'narrow_passages'
+environments[9].name = 'warehouse'
 
 # Algorithm parameters
 algorithm_kwargs = {

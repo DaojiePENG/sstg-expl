@@ -25,7 +25,7 @@ def parse_results(data: Dict) -> pd.DataFrame:
     """Convert benchmark results to pandas DataFrame for analysis."""
     records = []
     for result in data['results']:
-        records.append({
+        record = {
             'algorithm': result['algorithm'],
             'environment': result['environment'],
             'run_id': result['run_id'],
@@ -33,21 +33,36 @@ def parse_results(data: Dict) -> pd.DataFrame:
             'nodes': result['num_nodes'],
             'distance': result['total_distance'],
             'time': result['computation_time'],
-            'efficiency': result['coverage_efficiency']
-        })
+            'efficiency': result['coverage_efficiency'],
+        }
+        # Extract spatial quality metrics from additional_metrics
+        am = result.get('additional_metrics', {}) or {}
+        record['avg_obstacle_distance'] = am.get('avg_obstacle_distance', np.nan)
+        record['min_obstacle_distance'] = am.get('min_obstacle_distance', np.nan)
+        record['mean_nn_distance'] = am.get('mean_nn_distance', np.nan)
+        record['nn_distance_std'] = am.get('nn_distance_std', np.nan)
+        record['dispersion_uniformity'] = am.get('dispersion_uniformity', np.nan)
+        records.append(record)
     return pd.DataFrame(records)
 
 
 def generate_summary_statistics(df: pd.DataFrame) -> pd.DataFrame:
     """Generate summary statistics by algorithm and environment."""
-    summary = df.groupby(['algorithm', 'environment']).agg({
+    agg_dict = {
         'coverage': ['mean', 'std', 'min', 'max'],
         'nodes': ['mean', 'std'],
         'distance': ['mean', 'std'],
         'time': ['mean', 'std'],
-        'efficiency': ['mean', 'std']
-    }).round(2)
+        'efficiency': ['mean', 'std'],
+    }
+    # Add spatial metrics if available
+    if 'avg_obstacle_distance' in df.columns and df['avg_obstacle_distance'].notna().any():
+        agg_dict['avg_obstacle_distance'] = ['mean', 'std']
+        agg_dict['min_obstacle_distance'] = ['mean', 'std']
+        agg_dict['mean_nn_distance'] = ['mean', 'std']
+        agg_dict['dispersion_uniformity'] = ['mean', 'std']
 
+    summary = df.groupby(['algorithm', 'environment']).agg(agg_dict).round(3)
     return summary
 
 
@@ -259,6 +274,51 @@ def generate_markdown_report(df: pd.DataFrame, best_performers: Dict,
     report.append("2. **Emphasize**: Improvements over traditional methods (Uniform Grid, RRT, Frontier)")
     report.append("3. **Discuss**: Trade-offs between coverage, efficiency, and computation time")
     report.append("4. **Address**: Environment-specific adaptations and their impact")
+
+    # 7. Spatial Quality Metrics (new)
+    if 'avg_obstacle_distance' in df.columns and df['avg_obstacle_distance'].notna().any():
+        report.append("\n## Spatial Quality Metrics\n")
+        report.append("### Node-to-Obstacle Distance\n")
+        report.append("Average distance from exploration nodes to nearest obstacle (higher = safer placement).\n")
+
+        spatial_stats = df.groupby('algorithm').agg({
+            'avg_obstacle_distance': 'mean',
+            'min_obstacle_distance': 'mean',
+            'mean_nn_distance': 'mean',
+            'dispersion_uniformity': 'mean',
+        }).round(3)
+
+        report.append("| Algorithm | Avg Obs Dist (m) | Min Obs Dist (m) | Mean NN Dist (m) | Uniformity |")
+        report.append("|-----------|-----------------|-----------------|-----------------|------------|")
+        for algo, row in spatial_stats.iterrows():
+            report.append(
+                f"| {algo} | {row['avg_obstacle_distance']:.3f} | "
+                f"{row['min_obstacle_distance']:.3f} | "
+                f"{row['mean_nn_distance']:.3f} | "
+                f"{row['dispersion_uniformity']:.3f} |"
+            )
+        report.append("\n")
+
+        # Per-environment spatial comparison
+        report.append("### Per-Environment Spatial Quality\n")
+        for env in df['environment'].unique():
+            env_data = df[df['environment'] == env]
+            report.append(f"\n#### {env}\n")
+            env_spatial = env_data.groupby('algorithm').agg({
+                'avg_obstacle_distance': 'mean',
+                'mean_nn_distance': 'mean',
+                'dispersion_uniformity': 'mean',
+            }).round(3).sort_values('avg_obstacle_distance', ascending=False)
+
+            report.append("| Algorithm | Avg Obs Dist (m) | Mean NN Dist (m) | Uniformity |")
+            report.append("|-----------|-----------------|-----------------|------------|")
+            for algo, row in env_spatial.iterrows():
+                report.append(
+                    f"| {algo} | {row['avg_obstacle_distance']:.3f} | "
+                    f"{row['mean_nn_distance']:.3f} | "
+                    f"{row['dispersion_uniformity']:.3f} |"
+                )
+        report.append("\n")
 
     # Write report
     with open(output_file, 'w') as f:
