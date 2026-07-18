@@ -1,0 +1,20 @@
+name: sstg-explorer
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - numpy>=1.20
+  - scipy>=1.7
+  - scikit-image>=0.18
+  - matplotlib>=3.3
+  - seaborn>=0.11
+  - pandas>=1.3
+  - pyyaml>=5.4
+  - pillow
+  - imageio
+  - imageio-ffmpeg
+  - pytest>=6.2
+  - pytest-cov>=2.12
+  - pip
+  - pip:
+      - -e .

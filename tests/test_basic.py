@@ -1,15 +1,11 @@
 """
 Simple unit tests for SSTG Explorer core components.
 """
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
 import numpy as np
-from src.core.frontier import Frontier, FrontierQueue
-from src.utils.geometry import *
-from src.map.occupancy_grid import OccupancyGrid
-from simulation.simple_env import EmptyRoom
+from sstg_explorer.core.frontier import Frontier, FrontierQueue
+from sstg_explorer.utils.geometry import *
+from sstg_explorer.map.occupancy_grid import OccupancyGrid
+from sstg_explorer.environments import EmptyRoom
 
 
 def test_frontier_queue():
