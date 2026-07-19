@@ -1,6 +1,6 @@
 # SSTG-Explorer：RAL 论文公式、算法与写作参考
 
-本文档给出与当前实现一致的数学表述。投稿时应压缩为主文需要的公式，不能保留代码中不存在的虚构目标项。
+本文档给出与当前实现一致的双协议数学表述：Sec. 1–10 对应已冻结的 `known_static_disk` 结构规划实验；Sec. 11 对应论文主实验 `unknown_static_occlusion`。两者共享图结构、测地执行与空间质量指标，但覆盖定义和可用信息不同，投稿时绝不能混成一张主表。公式可压缩，不能保留代码中不存在的虚构目标项。
 
 ## 1. 符号与问题定义
 
@@ -101,7 +101,7 @@ s(\mathbf f)=
 
 ## 4. 测地优先级
 
-在按 (r_r+d_s) 膨胀后的统一安全栅格上定义测地距离
+在按 \(r_r+d_s\) 膨胀后的统一安全栅格上定义测地距离
 
 \[
 d_G(\mathbf x,\mathbf y)=
@@ -292,7 +292,203 @@ R_{\pi}^{\mathrm{safe}}=\frac{1}{|\Pi|}\sum_{\mathbf p\in\Pi}
 
 另报告 success rate、runtime、节点数、恢复次数、候选总数与各拒绝原因计数。
 
-## 11. 必做消融
+## 11. 未知地图在线 SSTG-Explorer
+
+### 11.1 Truth–belief 分离与遮挡观测
+
+令静态 ground-truth 占据栅格为 \(M^\star:\mathcal C\rightarrow\{0,100\}\)，策略可读 belief 为
+
+\[
+B_t:\mathcal C\rightarrow\{-1,0,100\},
+\qquad B_0(c)=-1,
+\tag{26}
+\]
+
+其中 \(-1\) 表示未知。\(M^\star\) 只由传感器仿真器和评价器持有，candidate generator、utility、frontier detector、geodesic planner 和学习型 global policy 都只能接收 \(B_t\)。地图边界尺寸已知，内容未知。
+
+在位姿 \(\mathbf q_t=(x_t,y_t,\theta_t)\) 处，水平 FOV 为 \(\phi\)、量程为 \(R\)、角分辨率为 \(\delta_\alpha\) 的射线角集合为
+
+\[
+\mathcal A_t=\left\{\theta_t-\frac{\phi}{2}+k\delta_\alpha
+\;\middle|\;k=0,\ldots,
+\left\lceil\frac{\phi}{\delta_\alpha}\right\rceil\right\}.
+\tag{27}
+\]
+
+沿角度 \(\alpha\) 以栅格步长 \(\delta_r=\rho/2\) 采样 \(c_{\alpha,k}\)。第一障碍索引与单束可见集为
+
+\[
+k_\alpha^\star=
+\min\{k\mid M^\star(c_{\alpha,k})=100\},
+\qquad
+\mathcal Z_\alpha(\mathbf q_t)=
+\{c_{\alpha,k}\mid k\le k_\alpha^\star, k\delta_r\le R\}.
+\tag{28}
+\]
+
+若量程内没有障碍，则 \(k_\alpha^\star\) 取最后一个有效采样。障碍表面可见而墙后不可见。整帧可见集与 belief 更新为
+
+\[
+\mathcal Z(\mathbf q_t)=\bigcup_{\alpha\in\mathcal A_t}
+\mathcal Z_\alpha(\mathbf q_t),
+\qquad
+B_{t+1}(c)=
+\begin{cases}
+M^\star(c),&c\in\mathcal Z(\mathbf q_t),\\
+B_t(c),&\text{otherwise}.
+\end{cases}
+\tag{29}
+\]
+
+实现使用理想静态传感器与完美位姿；没有把定位漂移、动态障碍或量测噪声藏在“未知地图”名称中。机器人沿每条实际 A* 路径每 \(d_{scan}=1\,\mathrm m\) 继续观测，并在目标朝向补一帧，而不是只在离散终点画覆盖圆。
+
+未知协议的 observed-free coverage 为
+
+\[
+R_C^{obs}(t)=
+\frac{\sum_{c\in\mathcal C}
+\mathbb 1[M^\star(c)=0\land B_t(c)=0]}
+{\sum_{c\in\mathcal C}\mathbb 1[M^\star(c)=0]}.
+\tag{30}
+\]
+
+`known_ratio` 和障碍召回率分别为
+
+\[
+R_K(t)=\frac{1}{|\mathcal C|}\sum_c\mathbb 1[B_t(c)\ne-1],
+\qquad
+R_O(t)=\frac{\sum_c\mathbb 1[M^\star(c)=100\land B_t(c)=100]}
+{\sum_c\mathbb 1[M^\star(c)=100]}.
+\tag{31}
+\]
+
+### 11.2 已知安全区、frontier band 与拓扑候选
+
+未知障碍不能被当成 free。机器人中心的硬可行域要求整个 footprint 已观测为自由：
+
+\[
+\mathcal F_t^K=
+\{\mathbf x\mid B_t(c)=0,
+\ \forall c\in\mathcal B(\mathbf x,r_r)\}.
+\tag{32}
+\]
+
+当前实现用 \(r_r=0.3\,\mathrm m\) 作硬碰撞约束；\(d_{pref}=0.5\,\mathrm m\) 是报告和排序使用的偏好净空，不再错误地扩大机器人几何尺寸。四连通 start component 定义 reachable set \(\mathfrak R_t\subseteq\mathcal F_t^K\)，从而 cost map 与禁止斜穿墙角的 A* 具有一致可达性。
+
+令未知栅格集合 \(\mathcal U_t=\{c\mid B_t(c)=-1\}\)，SSTG 的 frontier band 为
+
+\[
+\mathcal R_t=
+\{\mathbf x\in\mathfrak R_t\mid
+d(\mathbf x,\mathcal U_t)\le d_{band}\},
+\qquad d_{band}=r_r+2\rho.
+\tag{33}
+\]
+
+大 frontier 往往是单个连通边界，只取一个 centroid 会漏掉门洞和货架 aisle。实现因此用确定性 farthest-point sampling 从 \(\mathfrak R_t\) 和 \(\mathfrak R_t\cap\mathcal R_t\) 分别保留拓扑视点：
+
+\[
+\mathbf f_1=\arg\max_{\mathbf x\in\mathcal S}
+\left[d_G(\mathbf q_t,\mathbf x)+\lambda_D D_O^t(\mathbf x)\right],
+\qquad
+\mathbf f_k=\arg\max_{\mathbf x\in\mathcal S}
+\min_{j<k}\|\mathbf x-\mathbf f_j\|_2,
+\tag{34}
+\]
+
+并在最近间距小于 \(d_{rep}=2\,\mathrm m\) 时停止。这里 \(\mathcal S\) 完全来自 belief 的已知安全区域，不是预先读取 truth 的 uniform grid。
+
+### 11.3 遮挡预测增益与最终优先级
+
+候选 \(f=(\mathbf x,\theta)\) 的 optimistic gain 只把 belief 中已知 occupied cell 当作射线终点：
+
+\[
+G_t(f)=|\widehat{\mathcal Z}(f;B_t)\cap\mathcal U_t|.
+\tag{35}
+\]
+
+这不是从 truth 偷看遮挡；未知障碍会在真实执行观测后截断射线。候选先按无射线的 range/FOV optimistic count 与 travel cost 预筛，最多对 18 个高潜力点、6 个近点和所有原地旋转计算 Eq. (35)，其余标记为 `pruned_evaluation_budget`。
+
+令
+
+\[
+\bar g_t(f)=\frac{G_t(f)}{\max_{h\in\mathcal Q_t}G_t(h)},\quad
+\bar \ell_t(f)=\frac{d_G(\mathbf q_t,\mathbf x)}{R},\quad
+\bar c_t(f)=\min\!\left(\frac{D_O^t(\mathbf x)}{d_{pref}},1\right),
+\tag{36}
+\]
+
+\[
+\bar s_t(f)=\min\!\left(
+\frac{\min_{\mathbf v\in\mathcal V_t}\|\mathbf x-\mathbf v\|_2}
+{d_{rep}},1\right).
+\tag{37}
+\]
+
+最终 Unknown SSTG-Explorer 使用与代码一致的加性归一化效用
+
+\[
+P_t^{U}(f)=
+1.20\bar g_t(f)-0.15\bar\ell_t(f)
++0.30\bar s_t(f)+0.20w_S\bar c_t(f),
+\qquad w_S=1.5.
+\tag{38}
+\]
+
+加性形式避免远端高增益门洞被乘性 travel decay 压成近零。对于原地朝向候选，代码令 \(\bar s_t=0.35\)；它不增加平移路程，但作为新的 oriented viewpoint 计入节点数、旋转量和空间冗余率。
+
+### 11.4 视点离散性与冗余指标
+
+除 Eq. (23) 的 nearest-neighbor 统计外，按决策顺序定义阈值 \(d_{red}=1\,\mathrm m\) 的回访冗余率
+
+\[
+R_{red}=\frac{1}{T}
+\sum_{i=1}^{T}
+\mathbb 1\!\left[
+\min_{0\le j<i}\|\mathbf v_i-\mathbf v_j\|_2<d_{red}
+\right].
+\tag{39}
+\]
+
+原地换朝向在空间上确实重复，因此 Eq. (39) 计为 redundant；同时必须报告 `in_place_rotations` 与 `total_rotation_deg`，以区分无意义回访和窄 FOV 下必要的多朝向观测。信息/视点效率为
+
+\[
+\eta_V=\frac{R_C^{obs}(T)}{|\mathcal V_T|}.
+\tag{40}
+\]
+
+论文应联合报告 \(R_C^{obs}\)、实际平移距离、节点数、mean/median/min \(d^{NN}\)、\(R_{red}\)、\(\eta_V\) 和成功率。少量远隔点也会产生很大的 NN distance，因此“间距更大”本身不能证明探索更好。
+
+### 11.5 Algorithm 2：在线未知地图闭环
+
+```text
+Input: hidden truth M* (sensor/evaluator only), all-unknown B0, start q0
+OBSERVE(M*, B0, q0); trace all changed cells
+while observed-free coverage < τ and decisions < Tmax:
+    FK ← erode(known-free(Bt), robot footprint)
+    R  ← start-connected component of FK; compute geodesic costs
+    C  ← multi-representative frontier band ∪ topological vantages
+    if FOV < 360°: C ← C ∪ current-pose orientation candidates
+    for f in C:
+        trace optimistic gain, cost, clearance, spacing and candidate ID
+    shortlist C; ray-cast predicted gain using Bt; trace every pruning state
+    f* ← argmax Eq. (38); π* ← known-free A*(qt, f*)
+    if π* is unreachable: trace it and continue
+    execute π*; observe every 1 m and at f*; store compact belief updates
+    append oriented viewpoint, actual path, scans and coverage delta
+return belief, oriented viewpoints, actual trajectory, complete decision trace
+```
+
+若候选数为 \(C_t\)，每个候选的射线数为 \(K=\lceil\phi/\delta_\alpha\rceil\)，每束最大步数为 \(S=\lceil R/(\rho/2)\rceil\)，只对 \(C_e\le18+6+C_{rot}\) 个候选做精确预测。未知算法的主项为
+
+\[
+O\!\left(T\left[N\log N+C_tN+C_eKS\right]\right),
+\tag{41}
+\]
+
+其中当前 farthest-point implementation 对候选 mask 的最坏项写为 \(C_tN\)。论文还应报告实际 runtime，而不能只给大 \(O\)。
+
+## 12. 必做消融
 
 | 变体 | 关闭/替换内容 | 要回答的问题 |
 |---|---|---|
@@ -303,10 +499,14 @@ R_{\pi}^{\mathrm{safe}}=\frac{1}{|\Pi|}\sum_{\mathbf p\in\Pi}
 | Adaptive angular | 启用 Eq. (7)，窄通道降至 \(15^\circ\) | 增密是否真的优于最终固定 30° |
 | No aggressive pruning | 关闭 strength/duplicate pruning | 速度–候选质量权衡 |
 | No clearance utility | 令 \(w_S=0\) | 安全偏好对净空、覆盖和路程的影响 |
+| Single frontier centroid | 每个连通 frontier 只留一个代表点 | warehouse/dense 的遮挡短板是否复现 |
+| Known-obstacle-only safety | 不要求整个 footprint 已知 free | 是否出现新观测后被障碍困住 |
+| No topology vantages | 只保留 frontier band | aisle/doorway 的视点是否丢失 |
+| No spacing utility | Eq. (38) 去掉 \(\bar s_t\) | 空间回访率与 coverage/view 的变化 |
 
 旧 priority queue bug 是实现错误，应修复并通过单测保证，不应把修 bug 包装成贡献。
 
-## 12. 学习型基线的正确表述
+## 13. 学习型基线的正确表述
 
 `ANS-Global (adapted)` 加载 Chaplot et al. 发布的 global-policy checkpoint。保留 CNN、orientation embedding 与连续 goal head；本项目以 observed occupancy/explored map 构造其 8-channel 输入，用共同 A* 执行目标。没有使用原论文的 RGB Neural-SLAM mapper 和 learned local controller。因此：
 
@@ -317,7 +517,7 @@ R_{\pi}^{\mathrm{safe}}=\frac{1}{|\Pi|}\sum_{\mathbf p\in\Pi}
 
 完整 ANS、DRL-Graph 和 Exploring Exploration 的输入/数据集不同，适合作为 related work 或第二套 Habitat 协议，不能悄悄并入已知栅格主表。
 
-## 13. 写作禁区
+## 14. 写作禁区
 
 - 不写 “optimal”，除非给出理论最优性或界。
 - 不用单 seed 结果声称显著提升。
@@ -326,7 +526,7 @@ R_{\pi}^{\mathrm{safe}}=\frac{1}{|\Pi|}\sum_{\mathbf p\in\Pi}
 - 不把 runtime 跨硬件比较。
 - 不把过程 trace 的候选数量当作独立统计样本。
 
-## 14. 当前可直接引用的实验事实
+## 15. 当前可直接引用的实验事实
 
 数据源：`outputs/benchmark_runs/20260719_043528/results.json`（270 runs）与 `outputs/ablation_runs/20260719_043544/results.json`（315 runs）。二者的 experiment-source SHA-256 均为 `efa1828c62bac7ca0f33849449e1363a3ff14bd0079a5e9668764b8ade7e8642`，ANS checkpoint SHA-256 为 `616fd1485e1f0ba9673db08340d586c050f001f171890d966809c0b9f0320314`。
 

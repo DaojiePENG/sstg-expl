@@ -191,6 +191,8 @@ def run_experiment(runner, algo_key, env, run_id, seed):
         "total_distance": float(meta.get("total_distance", 0)), "num_nodes": len(nodes),
         "computation_time": elapsed,
         "coverage_efficiency": float(meta.get("coverage_ratio", 0)) / max(float(meta.get("total_distance", 0)), .01),
+        "coverage_per_viewpoint": float(meta.get("coverage_ratio", 0)) / max(len(nodes), 1),
+        "viewpoints_per_95_coverage": len(nodes) * 0.95 / max(float(meta.get("coverage_ratio", 0)), 1e-9),
         "additional_metrics": {
             **{key: value for key, value in meta.items() if key != "paths"},
             **spatial, **trace_metrics,
@@ -250,7 +252,9 @@ def summarize(records, out):
         "avg_boundary_distance", "min_boundary_distance", "node_safe_fraction",
         "avg_path_obstacle_distance", "min_path_obstacle_distance",
         "avg_path_boundary_distance", "min_path_boundary_distance", "path_safe_fraction",
-        "mean_nn_distance", "dispersion_uniformity",
+        "mean_nn_distance", "median_nn_distance", "min_nn_distance",
+        "dispersion_uniformity", "redundant_viewpoint_fraction",
+        "viewpoint_separation_ratio", "coverage_per_viewpoint",
     ]
     def metric(record, name):
         return record.get(name, record.get("additional_metrics", {}).get(name, 0.0))
@@ -286,6 +290,12 @@ def summarize(records, out):
             "path_clearance_mean": float(np.mean([metric(record, "avg_path_obstacle_distance") for record in subset])),
             "path_clearance_min_mean": float(np.mean([metric(record, "min_path_obstacle_distance") for record in subset])),
             "path_safe_fraction": float(np.mean([metric(record, "path_safe_fraction") for record in subset])),
+            "mean_nn_distance": float(np.mean([metric(record, "mean_nn_distance") for record in subset])),
+            "redundant_viewpoint_fraction": float(np.mean([metric(record, "redundant_viewpoint_fraction") for record in subset])),
+            "coverage_per_viewpoint": float(np.mean([
+                record["coverage_ratio"] / max(record["num_nodes"], 1)
+                for record in subset
+            ])),
             "success_rate": float(np.mean([record["success"] for record in subset])),
         })
     with (out / "aggregate.csv").open("w", newline="") as stream:
@@ -473,6 +483,33 @@ def summarize(records, out):
                 f"{item['node_safe_fraction']*100:.1f} & {item['path_safe_fraction']*100:.1f} " + r"\\" + "\n"
             )
         stream.write("\\bottomrule\\end{tabular}\n")
+
+    redundancy_fields = [
+        "algorithm", "mean_nn_distance", "redundant_viewpoint_fraction",
+        "coverage_per_viewpoint", "nodes_mean",
+    ]
+    with (out / "viewpoint_redundancy_table.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=redundancy_fields, extrasaction="ignore")
+        writer.writeheader(); writer.writerows(aggregate)
+    with (out / "viewpoint_redundancy_table.md").open("w") as stream:
+        stream.write("| Algorithm | Mean NN distance | Redundant views (<1 m) | Coverage/view | Nodes |\n")
+        stream.write("|---|---:|---:|---:|---:|\n")
+        for item in aggregate:
+            stream.write(
+                f"| {item['algorithm']} | {item['mean_nn_distance']:.3f} m "
+                f"| {item['redundant_viewpoint_fraction']:.1%} "
+                f"| {item['coverage_per_viewpoint']:.4f} | {item['nodes_mean']:.2f} |\n"
+            )
+    fig, ax = plt.subplots(figsize=(10.5, 5.2))
+    x = np.arange(len(aggregate)); width = 0.38
+    ax.bar(x - width / 2, [item["mean_nn_distance"] for item in aggregate], width,
+           label="Mean nearest-neighbor distance [m]")
+    ax.bar(x + width / 2, [item["redundant_viewpoint_fraction"] * 2.0 for item in aggregate], width,
+           label="Redundant fraction × 2 (visual scale)")
+    ax.set_xticks(x, [item["algorithm"] for item in aggregate], rotation=25, ha="right")
+    ax.set_title("Viewpoint separation and spatial redundancy")
+    ax.grid(axis="y", alpha=.25); ax.legend(fontsize=8); fig.tight_layout()
+    fig.savefig(out / "viewpoint_redundancy.png", dpi=180); plt.close(fig)
     return rows
 
 
@@ -481,9 +518,28 @@ def html_report(rows, records, out):
     for r in records:
         if r["run_id"] != 0: continue
         rel = f'artifacts/{r["environment"]}/{r["algorithm_key"]}'
-        cards.append(f'<article><h3>{r["algorithm"]} · {r["environment"]}</h3><a href="{rel}/video.mp4"><img src="{rel}/animation.gif"></a><p>coverage {r["coverage_ratio"]:.1%} · distance {r["total_distance"]:.1f} m · nodes {r["num_nodes"]}</p><p><a href="{rel}/steps/">run 0 steps</a> · <a href="{rel}/run.json">raw data</a> · <a href="{rel}/video.mp4">MP4</a> · <a href="{rel}/runs/">runs 1–4</a></p></article>')
+        base = out / rel
+        media = (
+            f'<a href="{rel}/video.mp4"><img src="{rel}/animation.gif"></a>'
+            if (base / "video.mp4").exists() else
+            '<p>media disabled; numerical trace retained</p>'
+        )
+        links = [f'<a href="{rel}/run.json">raw data</a>']
+        if (base / "steps").exists():
+            links.insert(0, f'<a href="{rel}/steps/">run 0 steps</a>')
+        if (base / "video.mp4").exists():
+            links.append(f'<a href="{rel}/video.mp4">MP4</a>')
+        if (base / "runs").exists():
+            links.append(f'<a href="{rel}/runs/">other runs</a>')
+        cards.append(
+            f'<article><h3>{r["algorithm"]} · {r["environment"]}</h3>'
+            f'{media}<p>coverage {r["coverage_ratio"]:.1%} · '
+            f'distance {r["total_distance"]:.1f} m · '
+            f'nodes {r["num_nodes"]}</p>'
+            f'<p>{" · ".join(links)}</p></article>'
+        )
     body = "\n".join(cards)
-    html = f'''<!doctype html><meta charset="utf-8"><title>SSTG-Explorer benchmark</title><style>body{{font:15px system-ui;margin:2rem;background:#f4f6f8}}main{{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:1rem}}article{{background:white;padding:1rem;border-radius:10px}}img{{width:100%}}table{{background:white}}code{{background:#eee}}</style><h1>SSTG-Explorer benchmark</h1><p>Self-contained results under a common 0.5 m inflated-grid A* protocol. Blue polylines are actual executed paths, not straight links between viewpoints. Click an animation for MP4; every trajectory step and raw record is retained.</p><p><a href="coverage_heatmap.png">coverage heatmap</a> · <a href="coverage_distance_tradeoff.png">coverage–distance</a> · <a href="safety_comparison.png">safety comparison</a> · <a href="safety_table.md">safety table</a> · <a href="summary.csv">per-environment CSV</a> · <a href="aggregate.csv">aggregate CSV</a> · <a href="pairwise_vs_sstg.csv">cluster-bootstrap comparison</a> · <a href="results_table.md">paper table</a> · <a href="results.json">all data</a> · <a href="manifest.json">manifest</a></p><main>{body}</main>'''
+    html = f'''<!doctype html><meta charset="utf-8"><title>SSTG-Explorer benchmark</title><style>body{{font:15px system-ui;margin:2rem;background:#f4f6f8}}main{{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:1rem}}article{{background:white;padding:1rem;border-radius:10px}}img{{width:100%}}table{{background:white}}code{{background:#eee}}</style><h1>SSTG-Explorer benchmark</h1><p>Self-contained results under a common 0.5 m inflated-grid A* protocol. Blue polylines are actual executed paths, not straight links between viewpoints. Click an animation for MP4; every trajectory step and raw record is retained.</p><p><a href="coverage_heatmap.png">coverage heatmap</a> · <a href="coverage_distance_tradeoff.png">coverage–distance</a> · <a href="safety_comparison.png">safety comparison</a> · <a href="safety_table.md">safety table</a> · <a href="viewpoint_redundancy.png">viewpoint redundancy</a> · <a href="viewpoint_redundancy_table.md">redundancy table</a> · <a href="summary.csv">per-environment CSV</a> · <a href="aggregate.csv">aggregate CSV</a> · <a href="pairwise_vs_sstg.csv">cluster-bootstrap comparison</a> · <a href="results_table.md">paper table</a> · <a href="results.json">all data</a> · <a href="manifest.json">manifest</a></p><main>{body}</main>'''
     (out / "index.html").write_text(html, encoding="utf-8")
 
 

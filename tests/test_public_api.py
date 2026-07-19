@@ -6,6 +6,7 @@ from sstg_explorer.environments import create_environment
 from sstg_explorer.planning.astar import AStarPlanner
 from scipy.ndimage import label
 import numpy as np
+import pytest
 
 
 def test_public_default_is_final_sstg_explorer():
@@ -70,3 +71,16 @@ def test_safety_metrics_cover_viewpoints_paths_and_boundaries():
     assert metrics["avg_obstacle_distance"] > 0.5
     assert metrics["avg_boundary_distance"] > 0.5
     assert metrics["path_safe_fraction"] == 1.0
+
+
+def test_viewpoint_redundancy_metrics_penalize_close_revisits():
+    environment = create_environment("empty", width=5.0, height=5.0)
+    metrics = BenchmarkRunner.compute_spatial_metrics(
+        [(2.0, 2.0), (2.2, 2.0), (4.0, 2.0)],
+        environment.get_occupancy_map(),
+        r_view=2.0,
+        redundancy_distance=1.0,
+    )
+    assert metrics["mean_nn_distance"] > 0.0
+    assert metrics["min_nn_distance"] == pytest.approx(0.2)
+    assert metrics["redundant_viewpoint_fraction"] == pytest.approx(0.5)

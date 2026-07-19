@@ -1,85 +1,69 @@
 # SSTG-Explorer：IEEE Robotics and Automation Letters 文章架构
 
-本文档按 IEEE RAL 的“短而完整”体裁设计。RAL 当前要求正文、图、表和参考文献共 6 页，最多付费增加 2 页；没有额外 appendix。投稿前仍须核对 [RAL Information for Authors](https://www.ieee-ras.org/publications/ra-l/ra-l-information-for-authors/) 与 [RAL FAQ](https://www.ieee-ras.org/publications/ra-l/faq/)。
+本文档按 IEEE RAL 的“短而完整”体裁设计。按 2026-07-19 核验的官方规则，正文、图、表和参考文献共 6 页，最多付费增加 2 页；不能用 appendix 或其他 supplementary material 超过 8 页。投稿前仍须核对 [RAL Information for Authors](https://www.ieee-ras.org/publications/ra-l/ra-l-information-for-authors/) 与 [RAL FAQ](https://www.ieee-ras.org/publications/ra-l/faq/)。
 
 ## 1. 论文定位
 
-建议标题：
+建议主标题：
 
-> **SSTG-Explorer: Traceable Geodesic Viewpoint Exploration for Spatial-Semantic Topological Graph Construction**
+> **SSTG-Explorer: Traceable Occlusion-Aware Viewpoint Exploration for Spatial-Semantic Topological Mapping**
 
-核心问题不是一般意义的未知空间 SLAM，而是：给定二维占据栅格与机器人/传感器约束，生成同时满足覆盖、可达、安全间距和视觉重叠需求的观测节点序列。论文必须明确这一输入协议，避免与 RGB-only embodied exploration 混淆。
+主问题应改为：在静态二维占据栅格内容未知、位姿完美的条件下，机器人如何只依靠受 FOV、量程和墙体遮挡约束的在线观测，生成兼顾信息增益、可达性、障碍净空和空间离散性的有向语义观测节点。unknown_static_occlusion 是论文主协议；原 known_static_disk 保留为受控结构规划协议，用来隔离测地队列、recovery 和 clearance 等模块，不再冒充在线未知空间探索。
 
 建议贡献：
 
-1. 提出可追踪的全局候选队列，每个角向观测候选均保留生成、碰撞、剪枝、优先级更新和选择结果。
-2. 用障碍感知测地代价替代跨墙欧氏距离，并通过覆盖缺口恢复解决局部队列耗尽问题。
-3. 提供逐决策 trace、完整候选状态、路径、原始数据、视频和网页，实现可审计的探索 benchmark。
-4. 在九类占据栅格环境中与 Uniform、RRT、Frontier、NBV 和公开权重的 ANS-Global 适配基线比较，并报告失败模式与协议差异。
+1. 提出 belief-only、遮挡感知的 SSTG 闭环：多代表 frontier、确定性拓扑视点和有向旋转候选统一进入可追踪候选图。
+2. 设计联合 predicted gain、known-free 测地代价、视点净空和历史视点间距的可审计效用，并保证 cost-map reachability 与禁止斜穿墙角的 A* 一致。
+3. 把候选生成、精确增益预算剪枝、选择、不可达、实际路径扫描和 belief cell update 全部保存，直接导出逐步图、轨迹、视频与网页。
+4. 在 6 组 FOV/range、9 类环境、5 种在线方法和 3 seeds 上报告主结果，并用已知地图 270-run 主表与 315-run 消融提供互补的结构证据。
 
 不要把“脚本完整”单独写成算法贡献，也不要写“全面优于所有方法”；主张必须与最终统计表一致。
 
 ## 2. 系统架构图
 
-可直接用于论文排版的矢量图见 [SSTG-Explorer architecture SVG](figures/sstg_explorer_architecture.svg)。下方 Mermaid 保留为可编辑源式描述：
+论文主图应使用 [unknown-map SSTG-Explorer architecture SVG](figures/sstg_explorer_unknown_architecture.svg)，它明确画出 evaluator-only truth 边界、在线 ray observation、belief-only policy、候选图、SSTG utility、known-free A*、闭环更新和可审计输出：
 
-![SSTG-Explorer architecture](figures/sstg_explorer_architecture.svg)
+![Unknown-map SSTG-Explorer architecture](figures/sstg_explorer_unknown_architecture.svg)
+
+已知地图结构规划图 [known-map architecture SVG](figures/sstg_explorer_architecture.svg) 只用于补充材料或 known-protocol 小图，不宜再作为主 Fig. 2。
 
 ```mermaid
 flowchart LR
-    M[Occupancy grid M] --> I[Obstacle inflation<br/>robot radius + safety]
-    P[Current pose x_t] --> A[Angular candidate generator]
-    I --> A
-    V[Explored viewpoints V_t] --> C[Coverage and overlap model]
-    C --> A
-    A --> E[Candidate event evaluator]
-    E -->|free / soft / hard| Q[(Global frontier queue)]
-    I --> G[One-to-all geodesic cost map]
-    P --> G
-    G --> S[Priority update]
-    I --> Z[Obstacle clearance field]
-    Z --> S
-    C --> S
-    Q --> S
-    S --> Q
-    Q --> X[Select argmax frontier]
-    X --> R[A* reachability and path]
-    R -->|reachable| U[Accept viewpoint and update V_t]
-    R -->|unreachable| T[Trace rejection]
-    U --> C
-    C --> D{Coverage reached<br/>or queue exhausted?}
-    D -->|low coverage| H[Global coverage-gap recovery]
-    H --> Q
-    D -->|done| O[Semantic viewpoint sequence<br/>and decision trace]
+    GT[Hidden truth M*<br/>sensor/evaluator only] --> S[Occlusion-aware ray sensor]
+    S --> B[Belief B_t<br/>unknown/free/occupied]
+    B --> K[Known-free footprint<br/>reachable geodesic map]
+    K --> C[Multi-frontier + FPS vantages<br/>+ orientation candidates]
+    B --> G[Predicted unknown gain]
+    C --> U[SSTG utility<br/>gain/cost/clearance/spacing]
+    G --> U
+    U --> X[Select and trace]
+    X --> A[Known-free A*]
+    A --> E[Execute actual trajectory<br/>scan every 1 m]
+    E --> S
+    E --> O[JSON + belief updates + PNG/GIF/MP4/HTML]
 ```
 
-图中“global queue + geodesic refresh + gap recovery”是方法主体；A*、占据栅格和距离变换是可替换基础模块。
+图中红色虚线 evaluator boundary 是审稿时最重要的信息隔离：policy 不读取 truth。候选 graph + normalized utility + footprint-safe geodesic execution 是方法主体；ray caster 和 A* 是可替换模块。
 
 ## 3. 单步决策状态机
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Generate
-    Generate --> HardRejected: inflated obstacle
-    Generate --> SoftCandidate: overlaps explored view
-    Generate --> FreeCandidate: collision-free
-    SoftCandidate --> StrengthPruned: low novelty
-    SoftCandidate --> Ranked
-    FreeCandidate --> Ranked
-    Ranked --> PriorityPruned: low utility
-    Ranked --> DuplicatePruned: close to queued target
-    Ranked --> Pending: inserted into global queue
-    Pending --> Selected: maximum refreshed priority
-    Selected --> PathRejected: A* unreachable
-    Selected --> Accepted: reachable
-    Accepted --> Generate: update pose and coverage
-    PathRejected --> Pending
-    Pending --> GapRecovery: queue exhausted and coverage low
-    GapRecovery --> Pending: reachable gap maxima
-    Accepted --> [*]: target coverage reached
+    [*] --> Observe
+    Observe --> BeliefUpdate: first-obstacle rays
+    BeliefUpdate --> Generate: footprint-safe reachable set
+    Generate --> BudgetPruned: outside exact-gain shortlist
+    Generate --> GainPruned: predicted gain below threshold
+    Generate --> Pending: informative candidate
+    Pending --> Selected: maximum normalized utility
+    Selected --> PathRejected: known-free A* unreachable
+    Selected --> Execute: reachable
+    PathRejected --> Generate: trace and refresh
+    Execute --> Observe: scan along actual path
+    BeliefUpdate --> [*]: observed-free target reached
 ```
 
-论文 Fig. 2 应使用 `scripts/run_benchmark.py` 产生的真实逐步图，而不是重新手画一个与代码不一致的例子。
+论文中的 decision-trace 图应使用 `scripts/run_unknown_benchmark.py` 产生的真实逐步图：左侧只画 policy belief，右侧 truth 明确标注 evaluation-only；每个候选必须有 ID、kind、heading、gain、geodesic cost、clearance、spacing、priority 和状态，不能只画一个覆盖圆。
 
 ## 4. 六页主文布局
 
@@ -96,30 +80,31 @@ stateDiagram-v2
 
 ### III. Problem Formulation（0.55 页）
 
-定义占据空间、安全自由空间、视野覆盖、观测点序列、路径代价和多目标优化。必须说明仿真使用已知静态栅格，学习基线是 global-policy adapter，而不是完整 RGB ANS。
+定义 hidden truth \(M^\star\)、三值 belief \(B_t\)、first-obstacle ray visibility、observed-free coverage、机器人 footprint 已知自由域、oriented viewpoint 和实际路径代价。用一个红框 invariant 明确：truth 只供 sensor/evaluator；policy 只能读 \(B_t\)。随后用两句话说明 known_static_disk 是受控辅助协议。
 
-### IV. Method（1.65 页）
+### IV. Method（1.70 页）
 
 建议小节：
 
-- A. Safety-aware angular candidates
-- B. Traceable global frontier queue
-- C. Geodesic priority and A* execution
-- D. Coverage-gap recovery and termination
+- A. Occlusion-aware belief update and footprint-safe reachability
+- B. Multi-frontier and topological viewpoint graph
+- C. Gain–geodesic–clearance–spacing utility
+- D. Traceable A* execution and online update
 
-至少包含 Algorithm 1 和优先级主公式。完整公式草案在 `PAPER_WRITING_REFERENCE.md`。
+至少放 observation update、SSTG utility、redundancy 三个主公式和精简 Algorithm 1。圆盘覆盖、known-map recovery 和完整复杂度可压到辅助材料；完整 41 个公式在 `PAPER_WRITING_REFERENCE.md`。
 
-### V. Experiments（1.55 页）
+### V. Experiments（1.45 页）
 
-- Setup：9 环境、6 方法、5 seeds、共同机器人/视野参数、CPU/GPU和软件版本。
-- Main results：coverage、distance、nodes、success rate、runtime。
-- Spatial quality：视点/实际路径的障碍净空、边界净空、安全比例、nearest-neighbor spacing、dispersion。
-- Ablation：Euclidean vs geodesic；without recovery；without clearance utility；localized stale priority；fixed 30° vs adaptive 15° sampling。
-- Failure/trace：至少展示一次被障碍拒绝、一次全局恢复和一个仍有局限的例子。
+- Main unknown setup：9 环境、5 在线方法、3 seeds、360°/240°/120°/90° FOV 与 8/12/16 m range。
+- Main results：observed-free coverage、实际路径、oriented nodes、成功率、runtime；按 sensor–environment cluster 做统计。
+- Spatial quality：mean/median/min nearest-neighbor distance、<1 m 回访率、coverage/view、in-place rotations、视点/实际路径净空。
+- Sensor sensitivity：固定 12 m 的 FOV 曲线与固定 360° 的 range 曲线。
+- Controlled support：已知地图 270-run 主表；315-run 结构消融；新增 single-centroid、unsafe-footprint、no-vantage、no-spacing 消融应作为下一轮论文实验。
+- Failure/trace：展示一次预算剪枝、一次 directional rotation、一次长程 topological vantage，以及仍然存在的 2-D/noise-free 局限。
 
 ### VI. Discussion and Conclusion（0.45 页）
 
-讨论已知地图假设、圆形视野近似、2D 仿真、ANS 适配协议和真实机器人缺失。结论只复述数据支持的结果。
+讨论 2-D 静态/完美位姿/理想射线假设、ANS 和 RRT 的协议适配、无真实机器人/无动态障碍。已知地图 disk proxy 只作为受控证据。结论只复述正式 3-seed 数据支持的结果。
 
 ### References（约 0.5 页）
 
@@ -129,24 +114,27 @@ stateDiagram-v2
 
 | 编号 | 内容 | 目的 |
 |---|---|---|
-| Fig. 1 | 任务定义与语义视点图 | 区分 mapping frontier 与 semantic viewpoint |
-| Fig. 2 | 上述方法架构图 | 解释模块和闭环 |
-| Fig. 3 | 一帧完整 decision trace | 展示候选、拒绝、pending、selected、A* |
-| Fig. 4 | 9 环境 coverage heatmap | 主结果 |
-| Fig. 5 | coverage–distance Pareto 图 | 展示多目标权衡 |
-| Table I | 参数、环境和公平协议 | 可复现性 |
-| Table II | 6 方法主结果 mean ± std/CI | 核心证据 |
-| Table III | 6 项模块消融 | 证明各模块必要性与代价 |
-| Table IV | 视点/路径安全性与边界净空 | 证明安全收益不是只由覆盖率代理 |
+| Fig. 1 | belief/truth、候选和实际轨迹的真实逐步图 | 一图定义任务并展示可追踪性 |
+| Fig. 2 | unknown-map 闭环 SVG 架构图 | 解释信息边界、模块和闭环 |
+| Fig. 3 | FOV/range sensitivity + coverage heatmap | 证明传感器结论不是单配置偶然 |
+| Fig. 4 | clearance–NN spacing–coverage 气泡图 | 展示安全、离散性与覆盖权衡 |
+| Table I | 5 方法、6 sensor configs 与公平协议 | 可复现性 |
+| Table II | unknown 主结果 mean ± std/cluster CI | 核心证据 |
+| Table III | known 结构消融 + unknown failure fixes | 证明模块必要性 |
+| Table IV | NN、冗余率、coverage/view、rotation、净空 | 回答“视点是否离散且不重复” |
 
 如果受 6 页限制，Table I 放入正文紧凑栏，完整逐环境表由代码仓库网页提供；不能把支持核心主张的结果只放网页。
 
 ## 6. 审稿前证据门槛
 
 - 所有数字均能追溯到一个带 Git commit、命令、seed 和 checkpoint hash 的 `manifest.json`。
-- 主结果记录数严格等于 `methods × environments × seeds`。
-- 每个 SSTG run 的 trace 包含所有生成候选及状态，不只包含最终节点。
+- unknown 主结果严格为 \(6\times9\times5\times3=810\) 条；known 结果单独为 270 条。
+- 每个 unknown run 的 trace 可由 `observed_updates` 重放 belief，并包含所有生成候选的 ID、位置、朝向、gain、cost、clearance、spacing、priority 与状态。
 - 显著性检验以 environment–seed 为实验单位，不把候选或节点伪装成独立样本。
 - ANS 结果始终写作 “ANS-Global (adapted)”，并说明没有比较其 RGB mapper/local policy。
-- dense_obstacles 的起点在机器人膨胀后仍可行；narrow_passages 在相同膨胀模型下连通。
+- unknown A* 只经过完整 footprint 已知 free 的栅格；dense、warehouse 和 narrow 不再因把偏好 margin 当硬机器人尺寸而人为断开。
 - 消融必须重新运行，不能从不同代码 commit 的历史结果拼表。
+
+## 7. RAL 多媒体交付
+
+完整 benchmark 网页和原始数据放长期仓库；它们不能替代自包含论文。RAL 当前只允许单个不超过 50 MB 的 multimedia zip，多个片段要编辑成一个视频，并随包提供 ASCII `ReadMe.txt` 与 `Summary.txt`。正式包建议只放：90° dense/warehouse、360° multiple_rooms、一次候选剪枝/拓扑回访的合成 MP4，以及运行环境、播放器版本、联系人和仓库永久链接。不要把 270 个 run-0 视频直接塞进投稿附件。

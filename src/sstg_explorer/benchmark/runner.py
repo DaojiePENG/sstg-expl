@@ -136,6 +136,7 @@ class BenchmarkRunner:
         r_view: float = 2.0,
         path_positions: Optional[List] = None,
         required_clearance: float = 0.5,
+        redundancy_distance: Optional[float] = None,
     ) -> Dict[str, float]:
         """
         Compute spatial quality metrics for exploration node placement.
@@ -168,8 +169,13 @@ class BenchmarkRunner:
             'min_path_boundary_distance': 0.0,
             'path_safe_fraction': 0.0,
             'mean_nn_distance': 0.0,
+            'median_nn_distance': 0.0,
+            'min_nn_distance': 0.0,
             'nn_distance_std': 0.0,
             'dispersion_uniformity': 0.0,
+            'redundant_viewpoint_fraction': 0.0,
+            'viewpoint_separation_ratio': 0.0,
+            'nn_metric_defined': 0.0,
         }
 
         if len(node_positions) == 0:
@@ -232,6 +238,19 @@ class BenchmarkRunner:
         else:
             nn_distances = np.array([0.0])
 
+        if redundancy_distance is None:
+            redundancy_distance = 0.5 * r_view
+        redundant = 0
+        if len(positions_array) >= 2:
+            for index in range(1, len(positions_array)):
+                distance_to_previous = np.linalg.norm(
+                    positions_array[:index] - positions_array[index], axis=1
+                )
+                redundant += int(np.min(distance_to_previous) < redundancy_distance)
+            redundant_fraction = redundant / (len(positions_array) - 1)
+        else:
+            redundant_fraction = 0.0
+
         # --- 3. Compute metrics ---
         avg_obstacle_dist = float(np.mean(obstacle_distances))
         min_obstacle_dist = float(np.min(obstacle_distances))
@@ -260,8 +279,13 @@ class BenchmarkRunner:
             'min_path_boundary_distance': float(np.min(path_boundary)),
             'path_safe_fraction': float(np.mean(path_obstacle + 1e-9 >= required_clearance)),
             'mean_nn_distance': mean_nn,
+            'median_nn_distance': float(np.median(nn_distances)),
+            'min_nn_distance': float(np.min(nn_distances)),
             'nn_distance_std': std_nn,
             'dispersion_uniformity': dispersion_uniformity,
+            'redundant_viewpoint_fraction': float(redundant_fraction),
+            'viewpoint_separation_ratio': float(mean_nn / max(r_view, 1e-9)),
+            'nn_metric_defined': float(len(positions_array) >= 2),
         }
 
     def create_algorithm(self, algorithm_name: str, **kwargs) -> BaseExplorer:

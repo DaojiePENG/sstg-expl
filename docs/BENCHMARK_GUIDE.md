@@ -1,5 +1,7 @@
 # Benchmark 使用、基线出处与结果解释
 
+本文档专门说明已冻结的 `known_static_disk` 圆盘覆盖协议。在线未知地图、遮挡传感器、FOV/range sweep 和 belief trace 请看 [未知地图 Benchmark 指南](UNKNOWN_MAP_BENCHMARK.md)。两套协议使用相同环境家族但输入信息和 coverage 定义不同，禁止混表。
+
 ## 1. 环境准备
 
 ```bash
@@ -31,6 +33,9 @@ python scripts/run_benchmark.py --profile full
 
 # Full SSTG 与五个模块消融
 python scripts/run_benchmark.py --profile ablation --no-frames
+
+# 论文主协议：6 sensors × 9 environments × 5 methods × 3 seeds
+python scripts/run_unknown_benchmark.py --profile paper
 ```
 
 限定范围：
@@ -51,10 +56,10 @@ python scripts/run_benchmark.py --runs 3 \
 | `rrt` | RRT | 安全栅格随机树采样；新增覆盖节点由共同 A* 执行 | LaValle, 1998；Umari and Mukhopadhyay, 2017 | 报告机器人实际执行距离；不是原 ROS multi-RRT 完整复现 |
 | `frontier` | Frontier | 栅格 frontier 聚类，按可达测地距离选择 | Yamauchi, 1997 | 同地图、同起点、同 A*；最小 cluster 为 1 cell，避免窄门漏检 |
 | `nbv` | NBV | 信息增益减去 A* 旅行代价 | Connolly, 1985 | 同安全候选、每步 50 候选、同 A* |
-| `active_neural_slam` | ANS-Global (adapted) | 发布 checkpoint 的 global policy + 共同 A* | Chaplot et al., ICLR 2020 | 只比较 learned global goal；不含 RGB mapper/local policy |
+| `active_neural_slam` | ANS-Global (adapted) | 作者发布 checkpoint 的 global policy + 共同 A* | Chaplot et al., ICLR 2020；[官方项目/代码](https://www.cs.cmu.edu/afs/cs/user/dchaplot/www/projects/neural-slam.html) | 只比较 learned global goal；不含 RGB mapper/local policy |
 | `sstg_explorer` | SSTG-Explorer | 本文完整方法 | 本项目 | 被评估方法 |
 
-BibTeX 在 `docs/REFERENCES.bib`。代码相关的学习方法还有 DRL-Graph（Chen et al., IROS 2020）和 Exploring Exploration（Ramakrishnan et al., ECCV 2020），但它们分别需要 belief-state/GTSAM 或 Habitat RGB 任务，不能无说明地并入已知栅格主表。
+BibTeX 在 `docs/REFERENCES.bib`。本次重新检索后，ANS 仍是能找到作者公开实现和预训练模型、且可把 global goal head 明确适配到本二维协议的学习方法。DRL-Graph（Chen et al., IROS 2020）依赖 landmark-belief graph 与定位不确定性，Exploring Exploration（Ramakrishnan et al., ECCV 2020）依赖 Habitat RGB 任务；不能在没有各自 mapper、训练分布和 checkpoint 的情况下贴标签并入本表。它们保留为 related work，而不是伪复现基线。
 
 ## 4. 环境协议
 
@@ -91,6 +96,8 @@ outputs/benchmark_runs/<timestamp>/
 ├── coverage_distance_tradeoff.png
 ├── safety_comparison.png
 ├── safety_table.{csv,md,tex}
+├── viewpoint_redundancy.png
+├── viewpoint_redundancy_table.{csv,md}
 ├── index.html
 └── artifacts/<env>/<algorithm>/
     ├── run.json

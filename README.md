@@ -5,9 +5,14 @@ SSTG-Explorer（Spatial Semantic Topological Graph Explorer）是在二维占据
 本仓库面向两类读者：
 
 - 使用者可以从零创建环境、调用算法并浏览逐步结果；
-- 论文作者可以复现六方法、九环境、多 seed 的 benchmark，并直接获得原始 JSON、逐步图、视频、统计表、LaTeX 表格和网页。
+- 论文作者可以复现已知协议的六方法和未知协议的五方法、多传感器、多环境、多 seed benchmark，并直接获得原始 JSON/CSV、belief、逐步图、视频、统计表和网页。
 
-> 任务边界：当前实验给定静态二维占据栅格，覆盖率使用圆盘视野 proxy。它不是完整在线 SLAM，也尚未模拟真实相机遮挡和语义识别误差。论文材料明确保留这些限制。
+仓库现在明确区分两套互补协议：
+
+1. `known_static_disk`：算法给定完整静态二维栅格，使用圆盘覆盖 proxy；保留已有 270-run 主表和 315-run 消融。
+2. `unknown_static_occlusion`：算法从全未知 belief map 开始，只接收带 FOV、量程和墙体遮挡的在线射线观测；ground truth 仅供传感器和评价器使用。
+
+两套结果不能混表。未知协议更接近在线建图，但仍假设完美位姿、静态环境和理想无噪声传感器，不等同于完整 RGB SLAM 或真实机器人实验。
 
 ## 1. 安装
 
@@ -62,6 +67,21 @@ print(result["steps"][0])  # 完整候选与决策状态
 
 默认 `SSTGExplorer()` 就是最终方法，不需要选择历史 `optimal` 变体。参数集中在 `src/sstg_explorer/config.py`。
 
+未知地图最小示例：
+
+```python
+from sstg_explorer import SensorConfig, UnknownExplorerConfig, UnknownMapExplorer
+
+unknown = UnknownMapExplorer(UnknownExplorerConfig(
+    strategy="sstg",
+    sensor=SensorConfig(field_of_view_deg=90, max_range=12),
+))
+result = unknown.explore(env.get_occupancy_map(), env.get_start_pose())
+print(result["metadata"]["coverage_ratio"])
+```
+
+这里传入的 occupancy grid 只由 explorer 内部的 sensor/evaluator 持有；策略候选、frontier、信息增益和 A* 只能读取累计 belief。完整 invariant 与传感器配置见 [未知地图 Benchmark 指南](docs/UNKNOWN_MAP_BENCHMARK.md)。
+
 ## 3. 算法概览
 
 ### 3.1 安全角向候选
@@ -82,6 +102,12 @@ print(result["steps"][0])  # 完整候选与决策状态
 
 完整公式、伪代码、复杂度和消融设计见 [论文公式参考](docs/PAPER_WRITING_REFERENCE.md)。
 
+### 3.5 未知地图扩展
+
+Unknown SSTG 是论文主协议下的最终方法。它从 all-unknown belief 开始，将多代表 frontier、确定性 farthest-point 拓扑视点和有向旋转候选统一排序，效用显式联合遮挡预测未知增益、known-free 测地代价、视点净空和与历史视点的最近邻间距。
+
+未知 cell 从不当作 free；A* 只允许机器人完整 0.3 m footprint 已观测为 free 的中心栅格。0.5 m 作为偏好净空和安全率阈值单独报告，不再错误地扩大机器人硬尺寸。机器人沿实际 A* 路径每 1 m 持续扫描；90°/120° 等定向传感器可原地换朝向，该决策计入 oriented viewpoint、总旋转量和空间冗余率。
+
 ## 4. 如何理解一张逐步图
 
 每张 `step_XXXX.png` 同时给出：
@@ -100,6 +126,8 @@ print(result["steps"][0])  # 完整候选与决策状态
 
 右侧面板列出 event、coverage before/after/gain、explored/pending 数量、选择 ID/类型/priority，以及各候选状态计数。逐步图对应的完整数值保存在同目录 `run.json` 和全局 `results.json`。
 
+未知协议逐步图左侧只显示 policy-visible belief，右侧 truth 明确标为 evaluation-only，红色表示未观测真实 free space。pending 点大小反映 priority，并带 heading 箭头；右栏列出 top-3 candidate 的 ID、kind、gain、priority 和 geodesic distance。每个 run 的 `candidates.csv` 逐点保存坐标、朝向、optimistic/predicted gain、cost、clearance、nearest-viewpoint distance、priority、new/selected 标记和最终状态。
+
 ## 5. Benchmark 方法与依据
 
 正式 profile 比较：
@@ -112,6 +140,8 @@ print(result["steps"][0])  # 完整候选与决策状态
 | `nbv` | next-best-view 信息增益 | Connolly 1985 |
 | `active_neural_slam` | ANS-Global (adapted) | Chaplot et al., ICLR 2020 公开 checkpoint |
 | `sstg_explorer` | 完整 SSTG-Explorer | 本项目 |
+
+未知地图主表使用 `Frontier-Unknown`、`NBV-Unknown`、`RRT-Unknown (adapted)`、`ANS-Global Unknown (adapted)` 和 `SSTG-Explorer Unknown`。Uniform Grid 因为需要预先知道全图格点，不满足 unknown-input invariant，只保留在已知协议。每个 adapter 的原论文、输入差异和不能声称的边界见 [未知地图 Benchmark 指南](docs/UNKNOWN_MAP_BENCHMARK.md)。
 
 ANS 只适配发布的 learned global policy；RGB Neural-SLAM mapper 和 learned local controller 不在当前二维协议中。因此所有结果始终标为 `ANS-Global (adapted)`，不能当作完整 ANS 复现。
 
@@ -138,6 +168,18 @@ python scripts/run_benchmark.py --profile full
 ```bash
 python scripts/run_benchmark.py --profile ablation --no-frames
 ```
+
+未知地图论文矩阵：
+
+```bash
+# 6 sensor configs × 9 scenes × 5 methods × 3 seeds
+python scripts/run_unknown_benchmark.py --profile paper
+
+# 5 variants × 4 hard scenes × 3 sensors × 3 seeds
+python scripts/run_unknown_benchmark.py --profile ablation --no-frames
+```
+
+其中包含 360°/240°/120°/90° FOV 和 8/12/16 m 量程敏感性。默认每个配置的 run 0 保存全部逐步媒体，三个 seeds 都保存完整 trace 和最终 belief；使用 `--media-runs all` 可为全部 seeds 编码视频。
 
 自定义范围：
 
@@ -176,16 +218,27 @@ python -m http.server 8000 --directory outputs/benchmark_runs/latest
 
 浏览器访问 `http://127.0.0.1:8000/`。完整目录和核验规则见 [Benchmark 指南](docs/BENCHMARK_GUIDE.md)。
 
+未知地图主结果写入 `outputs/unknown_benchmark_runs/<timestamp>/`，未知消融写入 `outputs/unknown_ablation_runs/<timestamp>/`，两者各自维护 `latest`。主结果网页服务命令为：
+
+```bash
+python -m http.server 8001 --directory outputs/unknown_benchmark_runs/latest
+```
+
+未知协议每个 run 除 `run.json` 和 `belief_final.npy` 外，还保存 `decisions.csv`、`candidates.csv`、`trajectory.csv`、`path_waypoints.csv`、`scan_poses.csv`、全部 step PNG、`final.png`、GIF 和 MP4。runner 结束前自动重放 belief updates、核验 belief/truth 一致性、媒体帧数、HTML 引用和错误日志；结果写入 `audit_report.json`，失败时命令返回非零状态。
+
 ## 8. 指标解释
 
-- `coverage_ratio`：自由栅格被视野圆覆盖的比例；
+- `coverage_ratio`：已知协议是自由栅格圆盘覆盖 proxy；未知协议是真实自由栅格已被射线正确观测为 free 的比例，二者不能混表；
 - `total_distance`：实际 A* 折线路径累计；
 - `coverage_efficiency`：coverage/distance；
 - `avg/min_obstacle_distance`：节点安全裕量；
 - `avg/min_boundary_distance`：节点到地图边界净空；
 - `node_safe_fraction`：满足 0.5 m 机器人+安全裕量的视点比例；
 - `avg/min_path_obstacle_distance`、`path_safe_fraction`：对全部实际 A* 轨迹采样的安全指标；
-- `mean_nn_distance`、`dispersion_uniformity`：节点最近邻间距与规则性；
+- `mean/median/min_nn_distance`：节点最近邻间距，均值越大通常表示空间冗余越少；
+- `redundant_viewpoint_fraction`：与任一历史视点距离小于 1 m 的决策比例；
+- `coverage_per_viewpoint`：每个 oriented viewpoint 对应的最终 coverage；
+- `dispersion_uniformity`：最近邻间距规则性，必须与 coverage 和平均间距联合解释；
 - `success_rate`：达到目标覆盖的 run 比例；
 - `num_generated/rejected/recovery_candidates`：决策过程诊断量。
 
@@ -225,12 +278,16 @@ src/sstg_explorer/
   baselines/            Uniform/RRT/Frontier/NBV/ANS adapter
   benchmark/            统一执行和指标
   environments/         九类可复现二维环境
+  sensing/              FOV/量程/遮挡 ray-casting
+  unknown/              belief-map 在线策略与五种适配方法
   visualization/        最终图与完整 decision-trace 图
 scripts/
-  run_benchmark.py             唯一 benchmark 入口
+  run_benchmark.py             已知地图 benchmark
+  run_unknown_benchmark.py     未知地图与传感器敏感性 benchmark
   setup_learning_baselines.py  学习权重/依赖安装
 docs/
   BENCHMARK_GUIDE.md
+  UNKNOWN_MAP_BENCHMARK.md
   PAPER_STRUCTURE.md
   PAPER_WRITING_REFERENCE.md
   REFERENCES.bib
@@ -244,6 +301,7 @@ environment.yml         核心 Conda 环境
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q
 python examples/basic_exploration.py
 python scripts/run_benchmark.py --profile smoke --no-frames
+python scripts/run_unknown_benchmark.py --profile smoke --no-frames
 ```
 
 常见问题：
@@ -259,6 +317,7 @@ python scripts/run_benchmark.py --profile smoke --no-frames
 - [文章结构、两张 Mermaid 图与可投稿 SVG 架构图](docs/PAPER_STRUCTURE.md)
 - [公式、伪代码、复杂度、消融和写作禁区](docs/PAPER_WRITING_REFERENCE.md)
 - [Benchmark、逐步字段和基线公平性](docs/BENCHMARK_GUIDE.md)
+- [未知地图、遮挡传感器、冗余指标和独立 benchmark](docs/UNKNOWN_MAP_BENCHMARK.md)
 - [BibTeX 文献库](docs/REFERENCES.bib)
 
 当前仓库没有明确许可证文件。公开代码或提交 multimedia/code artifact 前必须补充许可证，并核对第三方 ANS checkpoint/代码的 MIT 许可和引用要求。

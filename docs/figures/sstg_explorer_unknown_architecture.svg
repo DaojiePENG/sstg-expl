@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="760" viewBox="0 0 1400 760">
+  <defs>
+    <style>
+      .title{font:700 28px Arial,sans-serif;fill:#132238}
+      .h{font:700 18px Arial,sans-serif;fill:#132238}
+      .t{font:15px Arial,sans-serif;fill:#26384d}
+      .s{font:13px Arial,sans-serif;fill:#455a64}
+      .box{rx:13;ry:13;stroke-width:2}
+      .arrow{stroke:#365a7c;stroke-width:2.4;fill:none;marker-end:url(#a)}
+      .feedback{stroke:#00897b;stroke-width:2.3;fill:none;stroke-dasharray:7 5;marker-end:url(#g)}
+    </style>
+    <marker id="a" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#365a7c"/>
+    </marker>
+    <marker id="g" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#00897b"/>
+    </marker>
+  </defs>
+  <rect width="1400" height="760" fill="#f8fafc"/>
+  <text x="700" y="42" text-anchor="middle" class="title">Unknown-map SSTG-Explorer: auditable perception–planning loop</text>
+
+  <rect x="30" y="80" width="220" height="205" class="box" fill="#fff3f3" stroke="#d75a5a" stroke-dasharray="8 5"/>
+  <text x="140" y="112" text-anchor="middle" class="h">Evaluator boundary</text>
+  <text x="55" y="145" class="t">Hidden truth M*</text>
+  <text x="55" y="174" class="t">Static 2-D occupancy</text>
+  <text x="55" y="203" class="t">Coverage / collision audit</text>
+  <text x="55" y="243" class="s">Never passed to a policy</text>
+  <text x="55" y="266" class="s">except through ray observations</text>
+
+  <rect x="295" y="80" width="240" height="205" class="box" fill="#e8f4ff" stroke="#1976d2"/>
+  <text x="415" y="112" text-anchor="middle" class="h">Occlusion sensor</text>
+  <text x="320" y="145" class="t">FOV φ ∈ {90,120,240,360}°</text>
+  <text x="320" y="174" class="t">Range R ∈ {8,12,16} m</text>
+  <text x="320" y="203" class="t">First occupied cell stops ray</text>
+  <text x="320" y="232" class="t">Scan every 1 m on actual path</text>
+  <text x="320" y="261" class="s">Output: compact cell updates</text>
+
+  <rect x="580" y="80" width="245" height="205" class="box" fill="#eaf7ef" stroke="#2e8b57"/>
+  <text x="702" y="112" text-anchor="middle" class="h">Belief state B<tspan baseline-shift="sub">t</tspan></text>
+  <text x="605" y="145" class="t">unknown / free / occupied</text>
+  <text x="605" y="174" class="t">Known-free footprint erosion</text>
+  <text x="605" y="203" class="t">Reachable component + cost map</text>
+  <text x="605" y="232" class="t">Known-obstacle clearance field</text>
+  <text x="605" y="261" class="s">Only state visible to policies</text>
+
+  <path d="M250 182 H295" class="arrow"/>
+  <path d="M535 182 H580" class="arrow"/>
+
+  <rect x="865" y="80" width="245" height="205" class="box" fill="#fff8e1" stroke="#d99b13"/>
+  <text x="987" y="112" text-anchor="middle" class="h">Candidate graph</text>
+  <text x="890" y="145" class="t">Multi-point frontier band</text>
+  <text x="890" y="174" class="t">Topological FPS vantages</text>
+  <text x="890" y="203" class="t">Directional in-place rotations</text>
+  <text x="890" y="232" class="t">Stable ID + new/pending/pruned</text>
+  <text x="890" y="261" class="s">All candidates enter the trace</text>
+  <path d="M825 182 H865" class="arrow"/>
+
+  <rect x="1150" y="80" width="220" height="205" class="box" fill="#f3eaff" stroke="#7e57c2"/>
+  <text x="1260" y="112" text-anchor="middle" class="h">SSTG utility</text>
+  <text x="1175" y="145" class="t">Predicted unknown gain</text>
+  <text x="1175" y="174" class="t">Known-free geodesic cost</text>
+  <text x="1175" y="203" class="t">Clearance preference</text>
+  <text x="1175" y="232" class="t">Viewpoint spacing</text>
+  <text x="1175" y="261" class="s">Select maximum scored view</text>
+  <path d="M1110 182 H1150" class="arrow"/>
+
+  <rect x="180" y="355" width="260" height="170" class="box" fill="#e9f7fa" stroke="#008aa6"/>
+  <text x="310" y="389" text-anchor="middle" class="h">Known-free A* execution</text>
+  <text x="205" y="424" class="t">No diagonal corner cutting</text>
+  <text x="205" y="454" class="t">Actual polyline, not view chord</text>
+  <text x="205" y="484" class="t">Translation + rotation accounting</text>
+
+  <rect x="565" y="355" width="270" height="170" class="box" fill="#eaf7ef" stroke="#00897b"/>
+  <text x="700" y="389" text-anchor="middle" class="h">Closed-loop update</text>
+  <text x="590" y="424" class="t">Observe along executed path</text>
+  <text x="590" y="454" class="t">Update B<tspan baseline-shift="sub">t+1</tspan> and coverage</text>
+  <text x="590" y="484" class="t">Accept oriented viewpoint</text>
+
+  <rect x="965" y="355" width="275" height="170" class="box" fill="#edf1f5" stroke="#546e7a"/>
+  <text x="1102" y="389" text-anchor="middle" class="h">Auditable outputs</text>
+  <text x="990" y="424" class="t">Belief update stream + raw JSON</text>
+  <text x="990" y="454" class="t">Every candidate state and score</text>
+  <text x="990" y="484" class="t">Trajectory, PNG, GIF, MP4, HTML</text>
+
+  <path d="M1260 285 V320 H310 V355" class="arrow"/>
+  <path d="M440 440 H565" class="arrow"/>
+  <path d="M835 440 H965" class="arrow"/>
+  <path d="M700 355 V320 H702 V285" class="feedback"/>
+
+  <rect x="80" y="600" width="1240" height="112" rx="13" ry="13" fill="#ffffff" stroke="#90a4ae" stroke-width="1.8"/>
+  <text x="105" y="634" class="h">Two evidence protocols, never mixed</text>
+  <text x="105" y="667" class="t">Main: unknown_static_occlusion — hidden map, online sensing, 6 sensor settings × 9 scenes × 5 methods × 3 seeds.</text>
+  <text x="105" y="695" class="t">Controlled support: known_static_disk — full map and disk-coverage proxy, plus structural ablations and historical failure analysis.</text>
+</svg>
