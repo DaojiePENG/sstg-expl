@@ -45,6 +45,7 @@ class ExplorerConfig:
 
     # Strategy A: Enhanced Distance Weight
     beta: float = 1.0            # Distance penalty coefficient (exponential decay)
+    clearance_priority_weight: float = 2.0  # Prefer safer semantic viewpoints
 
     # Strategy B: Dual Factor Weighting
     lambda_weight: float = 0.5   # Exploration quality weight [0, 1]
@@ -68,9 +69,10 @@ class ExplorerConfig:
     # Path planning options
     use_astar: bool = True       # Use A* path planning instead of straight lines (default True for robustness)
     astar_max_iterations: int = 10000  # Max iterations for A* search
+    use_geodesic_priority: bool = True  # Rank across rooms by obstacle-aware cost
 
     # Adaptive sampling options
-    use_adaptive_sampling: bool = True   # Final SSTG-Explorer: refine sampling in narrow passages
+    use_adaptive_sampling: bool = False  # Fixed 30° is the final ablation-selected method
     narrow_threshold: float = 1.5        # Passage width threshold (meters)
     min_d_theta: float = 15.0            # Minimum angular interval for narrow passages
 
@@ -81,6 +83,17 @@ class ExplorerConfig:
     adaptive_threshold: bool = True       # Adapt threshold based on environment density
     density_threshold: float = 0.20       # Environment density threshold for adaptation (20%)
 
+    # Global coverage-gap recovery. When local angular frontiers are exhausted,
+    # re-seed the queue in large reachable uncovered components.
+    enable_global_recovery: bool = True
+    recovery_min_coverage: float = 0.95
+    recovery_min_gap_area: float = 0.20   # m²
+    recovery_max_candidates: int = 12
+    recovery_max_rounds: int = 20
+    recovery_clearance_weight: float = 0.20
+    recovery_gain_weight: float = 1.0
+    recovery_cost_weight: float = 0.35
+
     # Phase 1 Optimization: Aggressive Frontier Pruning
     enable_aggressive_pruning: bool = True    # Enable aggressive frontier pruning
     frontier_min_strength: float = 0.3        # Minimum exploration strength (降低from 0.4 to 0.3)
@@ -89,7 +102,7 @@ class ExplorerConfig:
     frontier_priority_factor: float = 0.3     # Minimum priority factor (降低from 0.5 to 0.3)
 
     # Phase 1 Optimization: Localized Priority Updates
-    enable_localized_updates: bool = True     # Only update nearby frontiers
+    enable_localized_updates: bool = False    # Final method refreshes all geodesic costs
     priority_update_radius: float = 4.0       # Update frontiers within radius (meters, default 2*r_view)
 
     # Map parameters

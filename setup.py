@@ -28,6 +28,7 @@ setup(
     install_requires=requirements,
     extras_require={
         "dev": ["black", "pylint", "flake8", "mypy"],
+        "learning": ["torch>=2.0", "gdown>=5.0"],
         "ros": ["rclpy"],
     },
 )

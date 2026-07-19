@@ -78,5 +78,6 @@ outputs/
 *.jpg
 *.gif
 *.mp4
+/models/checkpoints/
 
 .claude/*

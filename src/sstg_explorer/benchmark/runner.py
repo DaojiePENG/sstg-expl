@@ -21,6 +21,7 @@ from sstg_explorer.baselines import (
     FrontierExplorer,
     NextBestViewExplorer
 )
+from sstg_explorer.baselines import ActiveNeuralSLAMExplorer
 from sstg_explorer.core.explorer import SSTGExplorer
 from sstg_explorer.config import ExplorerConfig, FrontierSelectionStrategy
 
@@ -108,10 +109,33 @@ class BenchmarkRunner:
         self.results = []
 
     @staticmethod
+    def sample_execution_paths(paths: List, resolution: float) -> List[List[float]]:
+        """Sample every executed path segment at map resolution for safety metrics."""
+        samples: List[List[float]] = []
+        for path in paths or []:
+            if not path:
+                continue
+            normalized = [
+                point.get('position', point) if isinstance(point, dict) else point
+                for point in path
+            ]
+            if len(normalized) == 1:
+                samples.append([float(normalized[0][0]), float(normalized[0][1])])
+                continue
+            for start, end in zip(normalized[:-1], normalized[1:]):
+                start = np.asarray(start[:2], dtype=float)
+                end = np.asarray(end[:2], dtype=float)
+                count = max(2, int(np.ceil(np.linalg.norm(end - start) / resolution)) + 1)
+                samples.extend(np.linspace(start, end, count).tolist())
+        return samples
+
+    @staticmethod
     def compute_spatial_metrics(
         node_positions: List,
         occupancy_grid_obj,
-        r_view: float = 2.0
+        r_view: float = 2.0,
+        path_positions: Optional[List] = None,
+        required_clearance: float = 0.5,
     ) -> Dict[str, float]:
         """
         Compute spatial quality metrics for exploration node placement.
@@ -135,12 +159,20 @@ class BenchmarkRunner:
         default_metrics = {
             'avg_obstacle_distance': 0.0,
             'min_obstacle_distance': 0.0,
+            'avg_boundary_distance': 0.0,
+            'min_boundary_distance': 0.0,
+            'node_safe_fraction': 0.0,
+            'avg_path_obstacle_distance': 0.0,
+            'min_path_obstacle_distance': 0.0,
+            'avg_path_boundary_distance': 0.0,
+            'min_path_boundary_distance': 0.0,
+            'path_safe_fraction': 0.0,
             'mean_nn_distance': 0.0,
             'nn_distance_std': 0.0,
             'dispersion_uniformity': 0.0,
         }
 
-        if len(node_positions) < 2:
+        if len(node_positions) == 0:
             return default_metrics
 
         # --- 1. Distance to nearest obstacle ---
@@ -160,20 +192,28 @@ class BenchmarkRunner:
         dist_field = distance_transform_edt(~obstacle_mask) * resolution  # Convert to meters
 
         # Query distance for each node
-        obstacle_distances = []
-        for pos in node_positions:
-            if isinstance(pos, dict):
-                pos = pos.get('position', pos)
-            x, y = pos[0], pos[1]
-            # World to grid
-            j = int((x - origin[0]) / resolution)
-            i = int((y - origin[1]) / resolution)
-            # Clamp to grid bounds
-            i = max(0, min(i, grid_data.shape[0] - 1))
-            j = max(0, min(j, grid_data.shape[1] - 1))
-            obstacle_distances.append(dist_field[i, j])
+        def query_clearance(positions):
+            obstacle_distances = []
+            boundary_distances = []
+            world_width = grid_data.shape[1] * resolution
+            world_height = grid_data.shape[0] * resolution
+            for pos in positions:
+                if isinstance(pos, dict):
+                    pos = pos.get('position', pos)
+                x, y = float(pos[0]), float(pos[1])
+                j = int((x - origin[0]) / resolution)
+                i = int((y - origin[1]) / resolution)
+                i = max(0, min(i, grid_data.shape[0] - 1))
+                j = max(0, min(j, grid_data.shape[1] - 1))
+                obstacle_distances.append(float(dist_field[i, j]))
+                boundary_distances.append(max(0.0, min(
+                    x - origin[0], origin[0] + world_width - x,
+                    y - origin[1], origin[1] + world_height - y,
+                )))
+            return np.asarray(obstacle_distances), np.asarray(boundary_distances)
 
-        obstacle_distances = np.array(obstacle_distances)
+        obstacle_distances, boundary_distances = query_clearance(node_positions)
+        path_obstacle, path_boundary = query_clearance(path_positions or node_positions)
 
         # --- 2. Node-to-node nearest neighbor distances ---
         positions_array = []
@@ -211,6 +251,14 @@ class BenchmarkRunner:
         return {
             'avg_obstacle_distance': avg_obstacle_dist,
             'min_obstacle_distance': min_obstacle_dist,
+            'avg_boundary_distance': float(np.mean(boundary_distances)),
+            'min_boundary_distance': float(np.min(boundary_distances)),
+            'node_safe_fraction': float(np.mean(obstacle_distances + 1e-9 >= required_clearance)),
+            'avg_path_obstacle_distance': float(np.mean(path_obstacle)),
+            'min_path_obstacle_distance': float(np.min(path_obstacle)),
+            'avg_path_boundary_distance': float(np.mean(path_boundary)),
+            'min_path_boundary_distance': float(np.min(path_boundary)),
+            'path_safe_fraction': float(np.mean(path_obstacle + 1e-9 >= required_clearance)),
             'mean_nn_distance': mean_nn,
             'nn_distance_std': std_nn,
             'dispersion_uniformity': dispersion_uniformity,
@@ -238,6 +286,8 @@ class BenchmarkRunner:
             return FrontierExplorer(**kwargs)
         elif algorithm_name == 'nbv':
             return NextBestViewExplorer(**kwargs)
+        elif algorithm_name == 'active_neural_slam':
+            return ActiveNeuralSLAMExplorer(**kwargs)
         elif algorithm_name == 'sstg':
             # SSTG with baseline strategy
             config = ExplorerConfig(
@@ -264,12 +314,33 @@ class BenchmarkRunner:
             config = ExplorerConfig(
                 frontier_strategy=FrontierSelectionStrategy.ENHANCED_DISTANCE,
                 use_astar=True,
-                use_adaptive_sampling=True,
+                use_adaptive_sampling=False,
                 **kwargs
             )
             explorer = SSTGExplorer(config=config)
             explorer.name = 'SSTG-Explorer'
             return explorer
+        elif algorithm_name.startswith('sstg_'):
+            variants = {
+                'sstg_euclidean': ('SSTG w/ Euclidean Priority', {'use_geodesic_priority': False}),
+                'sstg_no_recovery': ('SSTG w/o Recovery', {'enable_global_recovery': False}),
+                'sstg_local_updates': ('SSTG w/ Local Updates', {'enable_localized_updates': True}),
+                'sstg_adaptive_sampling': ('SSTG w/ Adaptive Sampling', {'use_adaptive_sampling': True}),
+                'sstg_fixed_sampling': ('SSTG-Explorer', {'use_adaptive_sampling': False}),
+                'sstg_no_pruning': ('SSTG w/o Aggressive Pruning', {'enable_aggressive_pruning': False}),
+                'sstg_no_clearance': ('SSTG w/o Clearance Utility', {'clearance_priority_weight': 0.0}),
+            }
+            if algorithm_name in variants:
+                display_name, overrides = variants[algorithm_name]
+                overrides.update(kwargs)
+                config = ExplorerConfig(
+                    frontier_strategy=FrontierSelectionStrategy.ENHANCED_DISTANCE,
+                    **overrides,
+                )
+                explorer = SSTGExplorer(config=config)
+                explorer.name = display_name
+                return explorer
+            raise ValueError(f"Unknown SSTG variant: {algorithm_name}")
         else:
             raise ValueError(f"Unknown algorithm: {algorithm_name}")
 
@@ -298,15 +369,9 @@ class BenchmarkRunner:
         occupancy_grid_obj = env.get_occupancy_map()
         start_pose = env.get_start_pose()
 
-        # SSTG Explorer needs OccupancyGrid object, others need numpy array
-        if 'sstg' in algorithm.name.lower():
-            occupancy_grid = occupancy_grid_obj
-        else:
-            # Convert to numpy array for baseline algorithms
-            if hasattr(occupancy_grid_obj, 'data'):
-                occupancy_grid = occupancy_grid_obj.data
-            else:
-                occupancy_grid = occupancy_grid_obj
+        # All methods receive the same metric OccupancyGrid. Their adapters
+        # then use the common inflated-grid A* execution protocol.
+        occupancy_grid = occupancy_grid_obj
 
         # Run exploration
         start_time = time.time()
@@ -324,8 +389,14 @@ class BenchmarkRunner:
 
         # Compute spatial quality metrics (obstacle distance + node dispersion)
         node_positions = [node['position'] for node in result.get('nodes', [])]
+        paths = metadata.get('paths') or [
+            step.get('path', []) for step in result.get('steps', [])
+            if step.get('path')
+        ]
+        path_positions = self.sample_execution_paths(paths, occupancy_grid_obj.resolution)
         spatial_metrics = self.compute_spatial_metrics(
-            node_positions, occupancy_grid_obj, r_view=2.0
+            node_positions, occupancy_grid_obj, r_view=2.0,
+            path_positions=path_positions, required_clearance=0.5,
         )
 
         # Create benchmark result
@@ -342,7 +413,7 @@ class BenchmarkRunner:
             additional_metrics={
                 **{k: v for k, v in metadata.items()
                    if k not in ['total_distance', 'coverage_ratio', 'num_nodes',
-                               'computation_time', 'success']},
+                               'computation_time', 'success', 'paths']},
                 **spatial_metrics,
             }
         )

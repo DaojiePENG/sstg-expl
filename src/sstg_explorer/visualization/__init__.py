@@ -2,6 +2,7 @@
 
 from .static import (
     visualize_exploration,
+    visualize_exploration_step,
     visualize_coverage_map,
     plot_exploration_metrics,
     create_exploration_animation,
@@ -9,7 +10,7 @@ from .static import (
 from .realtime import RealtimeVisualizer, ExplorationLogger
 
 __all__ = [
-    "visualize_exploration", "visualize_coverage_map",
+    "visualize_exploration", "visualize_exploration_step", "visualize_coverage_map",
     "plot_exploration_metrics", "create_exploration_animation",
     "RealtimeVisualizer", "ExplorationLogger",
 ]

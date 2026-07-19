@@ -27,6 +27,7 @@ class Frontier:
     angle: float = field(compare=False)
     target: Tuple[float, float] = field(compare=False)
     frontier_id: int = field(default=0, compare=False)
+    kind: str = field(default="angular", compare=False)
 
     def __repr__(self) -> str:
         return (
@@ -34,7 +35,7 @@ class Frontier:
             f"pos=({self.position[0]:.2f}, {self.position[1]:.2f}), "
             f"angle={self.angle:.1f}°, "
             f"target=({self.target[0]:.2f}, {self.target[1]:.2f}), "
-            f"priority={self.priority:.3f})"
+            f"priority={self.priority:.3f}, kind={self.kind})"
         )
 
 
@@ -59,7 +60,8 @@ class FrontierQueue:
         self._REMOVED = "REMOVED"  # Marker for removed entries
 
     def add(self, position: Tuple[float, float], angle: float,
-            target: Tuple[float, float], priority: float) -> int:
+            target: Tuple[float, float], priority: float,
+            kind: str = "angular") -> int:
         """
         Add a new frontier to the queue.
 
@@ -80,7 +82,8 @@ class FrontierQueue:
             position=position,
             angle=angle,
             target=target,
-            frontier_id=frontier_id
+            frontier_id=frontier_id,
+            kind=kind,
         )
 
         heapq.heappush(self._heap, frontier)
@@ -99,7 +102,9 @@ class FrontierQueue:
             frontier = heapq.heappop(self._heap)
 
             # Check if this entry was marked as removed
-            if frontier.frontier_id in self._entry_map:
+            # An updated frontier reuses its id, so id membership alone cannot
+            # distinguish the stale heap object from the current entry.
+            if self._entry_map.get(frontier.frontier_id) is frontier:
                 del self._entry_map[frontier.frontier_id]
 
                 # Restore original priority (un-negate)
@@ -120,7 +125,7 @@ class FrontierQueue:
             frontier = self._heap[0]
 
             # Check if this entry was marked as removed
-            if frontier.frontier_id not in self._entry_map:
+            if self._entry_map.get(frontier.frontier_id) is not frontier:
                 heapq.heappop(self._heap)
                 continue
 
@@ -130,7 +135,8 @@ class FrontierQueue:
                 position=frontier.position,
                 angle=frontier.angle,
                 target=frontier.target,
-                frontier_id=frontier.frontier_id
+                frontier_id=frontier.frontier_id,
+                kind=frontier.kind,
             )
 
         return None
@@ -159,7 +165,8 @@ class FrontierQueue:
             position=old_frontier.position,
             angle=old_frontier.angle,
             target=old_frontier.target,
-            frontier_id=frontier_id
+            frontier_id=frontier_id,
+            kind=old_frontier.kind,
         )
 
         heapq.heappush(self._heap, new_frontier)
@@ -198,7 +205,8 @@ class FrontierQueue:
                 position=frontier.position,
                 angle=frontier.angle,
                 target=frontier.target,
-                frontier_id=frontier.frontier_id
+                frontier_id=frontier.frontier_id,
+                kind=frontier.kind,
             ))
         return frontiers
 

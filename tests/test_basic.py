@@ -38,6 +38,21 @@ def test_frontier_queue():
     print("✓ FrontierQueue tests passed!")
 
 
+def test_frontier_queue_does_not_pop_stale_priority_after_update():
+    """A stale heap object with a reused id must never win after an update."""
+    queue = FrontierQueue()
+    stale_id = queue.add((0, 0), 0, (1, 0), priority=1.0)
+    current_id = queue.add((0, 0), 90, (0, 1), priority=0.5)
+    assert queue.update_priority(stale_id, 0.1)
+
+    first = queue.pop()
+    second = queue.pop()
+    assert first.frontier_id == current_id
+    assert first.priority == 0.5
+    assert second.frontier_id == stale_id
+    assert second.priority == 0.1
+
+
 def test_geometry():
     """Test geometry utilities."""
     print("Testing geometry utilities...")

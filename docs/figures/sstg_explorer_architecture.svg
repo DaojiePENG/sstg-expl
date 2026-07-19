@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="760" viewBox="0 0 1400 760" role="img" aria-labelledby="title desc">
+  <title id="title">SSTG-Explorer system architecture</title>
+  <desc id="desc">Safety-aware viewpoint generation, traceable frontier queue, geodesic scoring, A-star execution, coverage recovery, and auditable outputs.</desc>
+  <defs>
+    <linearGradient id="header" x1="0" x2="1">
+      <stop offset="0" stop-color="#0d47a1"/><stop offset="1" stop-color="#00838f"/>
+    </linearGradient>
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="140%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#102a43" flood-opacity="0.18"/>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#35556f"/>
+    </marker>
+    <marker id="arrowCyan" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#00838f"/>
+    </marker>
+    <style>
+      .box{rx:14;filter:url(#shadow);stroke-width:2}
+      .label{font:600 20px 'DejaVu Sans',Arial,sans-serif;fill:#102a43;text-anchor:middle}
+      .small{font:15px 'DejaVu Sans',Arial,sans-serif;fill:#334e68;text-anchor:middle}
+      .tiny{font:13px 'DejaVu Sans',Arial,sans-serif;fill:#486581;text-anchor:middle}
+      .section{font:700 17px 'DejaVu Sans',Arial,sans-serif;fill:#627d98;letter-spacing:1.2px}
+      .edge{fill:none;stroke:#35556f;stroke-width:2.5;marker-end:url(#arrow)}
+      .loop{fill:none;stroke:#00838f;stroke-width:3;stroke-dasharray:8 6;marker-end:url(#arrowCyan)}
+    </style>
+  </defs>
+  <rect width="1400" height="760" fill="#f7fafc"/>
+  <rect x="0" y="0" width="1400" height="76" fill="url(#header)"/>
+  <text x="700" y="37" font-family="DejaVu Sans,Arial" font-size="28" font-weight="700" fill="white" text-anchor="middle">SSTG-Explorer: Traceable Geodesic Viewpoint Exploration</text>
+  <text x="700" y="61" font-family="DejaVu Sans,Arial" font-size="14" fill="#d9f3f5" text-anchor="middle">common safety constraint · explicit clearance utility · complete decision provenance</text>
+
+  <text class="section" x="55" y="118">INPUT &amp; SAFETY MODEL</text>
+  <rect class="box" x="55" y="138" width="220" height="112" fill="#e3f2fd" stroke="#1976d2"/>
+  <text class="label" x="165" y="176">Occupancy Grid</text>
+  <text class="small" x="165" y="204">M, resolution ρ</text>
+  <text class="small" x="165" y="228">current pose xₜ</text>
+
+  <rect class="box" x="330" y="120" width="245" height="72" fill="#fff3e0" stroke="#ef6c00"/>
+  <text class="label" x="452" y="151">Safety Inflation</text>
+  <text class="small" x="452" y="176">O ⊕ B(rᵣ + dₛ)</text>
+  <rect class="box" x="330" y="210" width="245" height="72" fill="#fff3e0" stroke="#ef6c00"/>
+  <text class="label" x="452" y="241">Clearance Field</text>
+  <text class="small" x="452" y="266">D<tspan baseline-shift="sub">O</tspan>(x)</text>
+
+  <text class="section" x="640" y="118">TRACEABLE DECISION CORE</text>
+  <rect class="box" x="630" y="138" width="220" height="112" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text class="label" x="740" y="174">Angular Candidates</text>
+  <text class="small" x="740" y="201">fixed Δθ = 30° (ablation-selected)</text>
+  <text class="small" x="740" y="225">new / soft / blocked</text>
+
+  <rect class="box" x="910" y="138" width="220" height="112" fill="#f3e5f5" stroke="#7b1fa2"/>
+  <text class="label" x="1020" y="174">Event Evaluator</text>
+  <text class="small" x="1020" y="201">strength · duplicate</text>
+  <text class="small" x="1020" y="225">priority · rejection reason</text>
+
+  <rect class="box" x="1170" y="138" width="180" height="112" fill="#fff8e1" stroke="#f9a825"/>
+  <text class="label" x="1260" y="174">Global Queue</text>
+  <text class="small" x="1260" y="201">pending frontiers</text>
+  <text class="small" x="1260" y="225">stale-safe max heap</text>
+
+  <path class="edge" d="M275 173 H330"/><path class="edge" d="M275 215 C300 215 300 246 330 246"/>
+  <path class="edge" d="M575 156 C600 156 600 175 630 175"/>
+  <path class="edge" d="M575 246 C600 246 600 215 630 215"/>
+  <path class="edge" d="M850 194 H910"/><path class="edge" d="M1130 194 H1170"/>
+
+  <rect class="box" x="200" y="348" width="275" height="126" fill="#e0f7fa" stroke="#00838f"/>
+  <text class="label" x="338" y="382">One-to-All Geodesic Map</text>
+  <text class="small" x="338" y="409">d<tspan baseline-shift="sub">G</tspan>(xₜ, f) on safe grid</text>
+  <text class="tiny" x="338" y="440">refreshed after each accepted viewpoint</text>
+
+  <rect class="box" x="545" y="330" width="365" height="162" fill="#e8eaf6" stroke="#3949ab"/>
+  <text class="label" x="728" y="365">Safety-Aware Geodesic Priority</text>
+  <text x="728" y="405" font-family="DejaVu Serif,serif" font-size="19" fill="#283593" text-anchor="middle">Pₜ(f) = s(f) exp[−β d<tspan baseline-shift="sub">G</tspan>/rᵥ]</text>
+  <text x="728" y="435" font-family="DejaVu Serif,serif" font-size="19" fill="#283593" text-anchor="middle">× [1 + w<tspan baseline-shift="sub">S</tspan> q<tspan baseline-shift="sub">S</tspan>(f)] b(ρ<tspan baseline-shift="sub">O</tspan>)</text>
+  <text class="tiny" x="728" y="467">select f* = arg max Pₜ(f)</text>
+
+  <rect class="box" x="980" y="348" width="240" height="126" fill="#ffebee" stroke="#c62828"/>
+  <text class="label" x="1100" y="382">A* Execution</text>
+  <text class="small" x="1100" y="411">reachability + actual path π*</text>
+  <text class="tiny" x="1100" y="442">no wall-crossing distance proxy</text>
+
+  <path class="edge" d="M275 250 C275 300 310 300 310 348"/>
+  <path class="edge" d="M475 411 H545"/><path class="edge" d="M575 246 C575 300 630 300 630 330"/>
+  <path class="edge" d="M1170 250 C1170 300 855 290 855 330"/>
+  <path class="edge" d="M910 411 H980"/>
+
+  <rect class="box" x="110" y="570" width="275" height="126" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text class="label" x="248" y="606">Coverage Update</text>
+  <text class="small" x="248" y="634">accept viewpoint · append π*</text>
+  <text class="small" x="248" y="660">update Vₜ and coverage C(Vₜ)</text>
+
+  <rect class="box" x="480" y="570" width="275" height="126" fill="#fff3e0" stroke="#ef6c00"/>
+  <text class="label" x="618" y="606">Coverage-Gap Recovery</text>
+  <text class="small" x="618" y="634">uncovered components + maxima</text>
+  <text class="small" x="618" y="660">reachable global re-seeding</text>
+
+  <rect class="box" x="850" y="548" width="440" height="168" fill="#eceff1" stroke="#455a64"/>
+  <text class="label" x="1070" y="584">Auditable Outputs</text>
+  <text class="small" x="1070" y="615">semantic viewpoint graph · actual trajectory</text>
+  <text class="small" x="1070" y="642">all candidates / pending / selected / rejected states</text>
+  <text class="small" x="1070" y="669">JSON · per-step PNG · GIF · MP4 · HTML · statistics</text>
+  <text class="tiny" x="1070" y="695">manifest: command · seed · source hash · checkpoint hash</text>
+
+  <path class="edge" d="M1100 474 C1100 515 385 515 385 600"/>
+  <path class="edge" d="M385 633 H480"/>
+  <path class="edge" d="M755 633 H850"/>
+  <path class="edge" d="M385 600 C600 520 800 520 850 585"/>
+  <path class="loop" d="M248 570 C248 520 72 530 72 315 C72 285 600 300 685 250"/>
+  <path class="loop" d="M618 570 C618 530 1260 535 1260 250"/>
+
+  <rect x="55" y="720" width="16" height="6" fill="#35556f"/><text x="82" y="728" font-family="DejaVu Sans,Arial" font-size="13" fill="#486581">data/control flow</text>
+  <line x1="210" y1="723" x2="244" y2="723" stroke="#00838f" stroke-width="3" stroke-dasharray="8 6"/><text x="254" y="728" font-family="DejaVu Sans,Arial" font-size="13" fill="#486581">closed-loop update / recovery</text>
+</svg>

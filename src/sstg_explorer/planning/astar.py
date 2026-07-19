@@ -21,6 +21,7 @@ class AStarPlanner:
         self,
         occupancy_grid: OccupancyGrid,
         robot_radius: float = 0.3,
+        safety_margin: float = 0.0,
         obstacle_threshold: int = 50
     ):
         """
@@ -29,11 +30,16 @@ class AStarPlanner:
         Args:
             occupancy_grid: Occupancy grid map.
             robot_radius: Robot radius in meters (for inflation).
+            safety_margin: Additional obstacle clearance in meters.
             obstacle_threshold: Occupancy value threshold (0-100).
         """
         self.grid = occupancy_grid
         self.robot_radius = robot_radius
+        self.safety_margin = safety_margin
         self.obstacle_threshold = obstacle_threshold
+        self.planning_grid = occupancy_grid.inflate_obstacles(
+            robot_radius + safety_margin
+        )
 
         # 8-connected neighbors (including diagonals)
         self.neighbors_8 = [
@@ -43,8 +49,8 @@ class AStarPlanner:
         ]
 
         # Movement costs (diagonal = sqrt(2) ≈ 1.414)
-        self.move_cost_straight = 1.0
-        self.move_cost_diagonal = 1.414
+        self.move_cost_straight = self.grid.resolution
+        self.move_cost_diagonal = np.sqrt(2.0) * self.grid.resolution
 
     def plan(
         self,
@@ -172,6 +178,15 @@ class AStarPlanner:
             new_row = row + dr
             new_col = col + dc
 
+            if not self._is_valid_cell(new_row, new_col):
+                continue
+
+            # Do not cut diagonally through the corner of inflated obstacles.
+            if dr != 0 and dc != 0:
+                if (not self._is_valid_cell(row + dr, col) or
+                        not self._is_valid_cell(row, col + dc)):
+                    continue
+
             if self._is_valid_cell(new_row, new_col):
                 neighbors.append((new_row, new_col))
 
@@ -186,7 +201,7 @@ class AStarPlanner:
             return False
 
         # Check occupancy
-        if self.grid.data[row, col] >= self.obstacle_threshold:
+        if self.planning_grid.data[row, col] >= self.obstacle_threshold:
             return False
 
         return True
@@ -359,6 +374,24 @@ class AStarPlanner:
 
         return total_length
 
+    def compute_cost_map(self, start: Tuple[float, float]) -> np.ndarray:
+        """Compute obstacle-aware shortest-path cost from start to every cell."""
+        from skimage.graph import MCP_Geometric
+
+        start_cell = self.grid.world_to_grid(start[0], start[1])
+        costs = np.ones(self.planning_grid.data.shape, dtype=float)
+        costs[self.planning_grid.data >= self.obstacle_threshold] = np.inf
+        # A benchmark start may lie just inside inflation due to discretization;
+        # make only that cell traversable, without relaxing neighboring cells.
+        costs[start_cell] = 1.0
+        solver = MCP_Geometric(
+            costs,
+            fully_connected=True,
+            sampling=(self.grid.resolution, self.grid.resolution),
+        )
+        cumulative, _ = solver.find_costs([start_cell])
+        return cumulative
+
     def check_path_feasibility(
         self,
         start: Tuple[float, float],
@@ -391,6 +424,7 @@ class AStarPlanner:
 def create_astar_planner(
     occupancy_grid: OccupancyGrid,
     robot_radius: float = 0.3,
+    safety_margin: float = 0.0,
     obstacle_threshold: int = 50
 ) -> AStarPlanner:
     """
@@ -399,9 +433,12 @@ def create_astar_planner(
     Args:
         occupancy_grid: Occupancy grid map.
         robot_radius: Robot radius in meters.
+        safety_margin: Additional obstacle clearance in meters.
         obstacle_threshold: Occupancy threshold.
 
     Returns:
         Configured A* planner instance.
     """
-    return AStarPlanner(occupancy_grid, robot_radius, obstacle_threshold)
+    return AStarPlanner(
+        occupancy_grid, robot_radius, safety_margin, obstacle_threshold
+    )

@@ -451,7 +451,10 @@ class DenseObstacles(Environment):
         map_data[:, -wc:] = 100
 
         start_x, start_y, _ = self.get_start_pose()
-        safe_radius = 0.8
+        # Keep the complete robot footprint and safety margin clear around the
+        # common start pose. Checking rectangle centers alone can place an edge
+        # inside the inflated planning footprint.
+        safe_radius = 1.0
 
         placed = 0
         attempts = 0
@@ -463,8 +466,9 @@ class DenseObstacles(Environment):
             x = np.random.uniform(margin, self.width - margin - obs_w)
             y = np.random.uniform(margin, self.height - margin - obs_h)
 
-            cx, cy = x + obs_w/2, y + obs_h/2
-            if np.sqrt((cx - start_x)**2 + (cy - start_y)**2) < safe_radius:
+            nearest_x = np.clip(start_x, x, x + obs_w)
+            nearest_y = np.clip(start_y, y, y + obs_h)
+            if np.hypot(nearest_x - start_x, nearest_y - start_y) < safe_radius:
                 continue
 
             i0 = int(y / self.resolution)
@@ -484,7 +488,7 @@ class NarrowPassages(Environment):
         self,
         width: float = 15.0,
         height: float = 10.0,
-        door_width: float = 0.8,
+        door_width: float = 1.2,
         wall_thickness: float = 0.3,
         resolution: float = 0.05
     ):
@@ -507,7 +511,10 @@ class NarrowPassages(Environment):
         # Vertical wall at 1/3 width (full height, narrow door at center)
         x1 = W // 3
         map_data[:, x1:x1+wc] = 100
-        door_c = H // 2
+        # Offset the vertical doorway from the horizontal wall intersection;
+        # co-locating both openings creates a diagonal pinhole that disappears
+        # after physically correct robot-footprint inflation.
+        door_c = 3 * H // 4
         map_data[door_c - dw//2:door_c + dw//2, x1:x1+wc] = 0
 
         # Vertical wall at 2/3 width (full height, narrow door at 1/3 height)

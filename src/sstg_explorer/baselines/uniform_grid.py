@@ -12,9 +12,11 @@ with fixed spacing, visiting each grid point that is in free space.
 import time
 from typing import Dict, List, Optional, Tuple
 import numpy as np
+from scipy.spatial import cKDTree
 
 from .base_explorer import BaseExplorer
 from ..map.occupancy_grid import OccupancyGrid
+from ..planning.astar import AStarPlanner
 
 
 class UniformGridExplorer(BaseExplorer):
@@ -38,6 +40,9 @@ class UniformGridExplorer(BaseExplorer):
         grid_spacing: float = 2.0,
         r_view: float = 2.0,
         visit_order: str = 'row',
+        target_coverage: float = 0.95,
+        r_robot: float = 0.3,
+        d_safe: float = 0.2,
         **kwargs
     ):
         """Initialize Uniform Grid Explorer."""
@@ -52,6 +57,9 @@ class UniformGridExplorer(BaseExplorer):
         self.grid_spacing = grid_spacing
         self.r_view = r_view
         self.visit_order = visit_order
+        self.target_coverage = target_coverage
+        self.r_robot = r_robot
+        self.d_safe = d_safe
 
     def explore(
         self,
@@ -80,8 +88,9 @@ class UniformGridExplorer(BaseExplorer):
             # occupancy_grid is numpy array
             grid = OccupancyGrid(data=occupancy_grid, resolution=0.05, origin=(0.0, 0.0))
 
-        # Generate grid points
-        grid_points = self._generate_grid_points(grid)
+        # All benchmark methods use the same inflated planning map and A*.
+        planner = AStarPlanner(grid, self.r_robot, self.d_safe)
+        grid_points = self._generate_grid_points(planner.planning_grid)
 
         if len(grid_points) == 0:
             return {
@@ -102,15 +111,31 @@ class UniformGridExplorer(BaseExplorer):
             grid_points, start_pose[:2], method=self.visit_order
         )
 
-        # Visit each grid point
+        # Visit each grid point through executable A* paths.
         current_pos = np.array(start_pose[:2])
-        coverage_map = np.zeros_like(occupancy_grid, dtype=bool)
+        coverage_map = np.zeros_like(grid.data, dtype=bool)
+        self._mark_coverage(coverage_map, grid, current_pos, self.r_view)
+        self.nodes.append({
+            'position': tuple(current_pos),
+            'theta': start_pose[2],
+            'coverage_area': np.sum(coverage_map) * (grid.resolution ** 2),
+        })
+        paths = []
+        rejected_goals = 0
 
         for i, point in enumerate(ordered_points):
-            # Travel to point
-            distance = np.linalg.norm(point - current_pos)
-            self.total_distance += distance
+            if np.linalg.norm(point - current_pos) < grid.resolution:
+                continue
+            path = planner.plan(
+                tuple(current_pos), tuple(point),
+                max_iterations=max(10000, grid.data.size),
+            )
+            if path is None:
+                rejected_goals += 1
+                continue
+            self.total_distance += planner.get_path_length(path)
             current_pos = point
+            paths.append(path)
 
             # Mark coverage
             self._mark_coverage(coverage_map, grid, point, self.r_view)
@@ -134,6 +159,10 @@ class UniformGridExplorer(BaseExplorer):
                     )
                 )
 
+            self.coverage_ratio = self._compute_coverage_ratio(coverage_map, grid)
+            if self.coverage_ratio >= self.target_coverage:
+                break
+
         # Compute final coverage
         self.coverage_ratio = self._compute_coverage_ratio(coverage_map, grid)
 
@@ -146,9 +175,12 @@ class UniformGridExplorer(BaseExplorer):
                 'coverage_ratio': self.coverage_ratio,
                 'num_nodes': len(self.nodes),
                 'computation_time': computation_time,
-                'success': True
+                'success': self.coverage_ratio >= self.target_coverage,
+                'paths': paths,
+                'rejected_unreachable_goals': rejected_goals,
+                'execution_protocol': 'shared inflated-grid A*',
             },
-            'success': True,
+            'success': self.coverage_ratio >= self.target_coverage,
             'algorithm': self.name
         }
 
@@ -170,18 +202,30 @@ class UniformGridExplorer(BaseExplorer):
         height = grid.height * grid.resolution
 
         # Generate grid coordinates
-        x_coords = np.arange(0, width, self.grid_spacing)
-        y_coords = np.arange(0, height, self.grid_spacing)
+        # Center the lattice cells instead of anchoring points on wall cells.
+        x_coords = np.arange(self.grid_spacing / 2.0, width, self.grid_spacing)
+        y_coords = np.arange(self.grid_spacing / 2.0, height, self.grid_spacing)
+
+        safe_indices = np.argwhere(grid.data < 50)
+        if len(safe_indices) == 0:
+            return []
+        safe_points = np.asarray([
+            grid.grid_to_world(int(row), int(col))
+            for row, col in safe_indices
+        ])
+        safe_tree = cKDTree(safe_points)
 
         # Create grid mesh
         grid_points = []
         for x in x_coords:
             for y in y_coords:
-                # Check if point is in free space
-                row, col = grid.world_to_grid(x, y)
-                if (0 <= row < grid.height and 0 <= col < grid.width and
-                    grid.data[row, col] < 50):  # Free space
-                    grid_points.append(np.array([x, y]))
+                # Project an obstructed ideal lattice point to the closest
+                # safe cell, but never farther than one half-cell diagonal.
+                distance, index = safe_tree.query([x, y])
+                if distance <= self.grid_spacing / np.sqrt(2.0):
+                    point = safe_points[int(index)].copy()
+                    if not any(np.linalg.norm(point - old) < grid.resolution for old in grid_points):
+                        grid_points.append(point)
 
         return grid_points
 

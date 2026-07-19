@@ -7,6 +7,7 @@ from .uniform_grid import UniformGridExplorer
 from .rrt_explorer import RRTExplorer
 from .frontier_explorer import FrontierExplorer
 from .nbv_explorer import NextBestViewExplorer
+from .active_neural_slam import ActiveNeuralSLAMExplorer
 
 __all__ = [
     'BaseExplorer',
@@ -14,4 +15,5 @@ __all__ = [
     'RRTExplorer',
     'FrontierExplorer',
     'NextBestViewExplorer',
+    'ActiveNeuralSLAMExplorer',
 ]

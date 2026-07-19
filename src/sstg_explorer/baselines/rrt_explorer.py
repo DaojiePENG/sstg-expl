@@ -20,6 +20,7 @@ import numpy as np
 
 from .base_explorer import BaseExplorer
 from ..map.occupancy_grid import OccupancyGrid
+from ..planning.astar import AStarPlanner
 
 
 class RRTExplorer(BaseExplorer):
@@ -45,6 +46,8 @@ class RRTExplorer(BaseExplorer):
         r_view: float = 2.0,
         goal_sample_rate: float = 0.1,
         target_coverage: float = 0.95,
+        r_robot: float = 0.3,
+        d_safe: float = 0.2,
         **kwargs
     ):
         """Initialize RRT Explorer."""
@@ -63,6 +66,8 @@ class RRTExplorer(BaseExplorer):
         self.r_view = r_view
         self.goal_sample_rate = goal_sample_rate
         self.target_coverage = target_coverage
+        self.r_robot = r_robot
+        self.d_safe = d_safe
 
         self.tree_nodes = []  # RRT tree nodes
         self.tree_parents = []  # Parent indices
@@ -96,12 +101,18 @@ class RRTExplorer(BaseExplorer):
 
         # Initialize tree with start node
         start_pos = np.array(start_pose[:2])
+        planner = AStarPlanner(grid, self.r_robot, self.d_safe)
+        planning_grid = planner.planning_grid
         self.tree_nodes = [start_pos]
         self.tree_parents = [-1]  # Root has no parent
 
         # Initialize coverage map
-        coverage_map = np.zeros_like(occupancy_grid, dtype=bool)
+        coverage_map = np.zeros_like(grid.data, dtype=bool)
         self._mark_coverage(coverage_map, grid, start_pos, self.r_view)
+        self.coverage_ratio = self._compute_coverage_ratio(coverage_map, grid)
+        current_pos = start_pos.copy()
+        paths = []
+        rejected_goals = 0
 
         # Record start node
         self.nodes.append({
@@ -115,10 +126,10 @@ class RRTExplorer(BaseExplorer):
             # Sample random point
             if np.random.random() < self.goal_sample_rate:
                 # Sample towards frontier (unexplored boundary)
-                sample = self._sample_frontier(coverage_map, grid)
+                sample = self._sample_frontier(coverage_map, planning_grid)
             else:
                 # Uniform random sample
-                sample = self._sample_free_space(grid)
+                sample = self._sample_free_space(planning_grid)
 
             if sample is None:
                 continue
@@ -131,24 +142,32 @@ class RRTExplorer(BaseExplorer):
             new_node = self._extend(nearest, sample, self.step_size)
 
             # Check collision
-            if not self._is_collision_free(grid, nearest, new_node):
+            if not self._is_collision_free(planning_grid, nearest, new_node):
                 continue
 
             # Add to tree
             self.tree_nodes.append(new_node)
             self.tree_parents.append(nearest_idx)
 
-            # Update travel distance
-            dist = np.linalg.norm(new_node - nearest)
-            self.total_distance += dist
-
-            # Mark coverage
-            old_coverage = np.sum(coverage_map)
-            self._mark_coverage(coverage_map, grid, new_node, self.r_view)
-            new_coverage = np.sum(coverage_map)
+            # Evaluate whether this tree extension adds useful sensor coverage.
+            trial_coverage = coverage_map.copy()
+            old_coverage = int(np.sum(coverage_map))
+            self._mark_coverage(trial_coverage, grid, new_node, self.r_view)
+            new_coverage = int(np.sum(trial_coverage))
 
             # Record node if it added new coverage
             if new_coverage > old_coverage:
+                path = planner.plan(
+                    tuple(current_pos), tuple(new_node),
+                    max_iterations=max(10000, grid.data.size),
+                )
+                if path is None:
+                    rejected_goals += 1
+                    continue
+                self.total_distance += planner.get_path_length(path)
+                current_pos = new_node.copy()
+                coverage_map = trial_coverage
+                paths.append(path)
                 self.nodes.append({
                     'position': tuple(new_node),
                     'theta': 0.0,
@@ -183,10 +202,13 @@ class RRTExplorer(BaseExplorer):
                 'coverage_ratio': self.coverage_ratio,
                 'num_nodes': len(self.nodes),
                 'computation_time': computation_time,
-                'success': True,
-                'iterations': iteration + 1
+                'success': self.coverage_ratio >= self.target_coverage,
+                'iterations': iteration + 1,
+                'paths': paths,
+                'rejected_unreachable_goals': rejected_goals,
+                'execution_protocol': 'inflated RRT edges + shared A* execution',
             },
-            'success': True,
+            'success': self.coverage_ratio >= self.target_coverage,
             'algorithm': self.name
         }
 
@@ -300,6 +322,8 @@ class RRTExplorer(BaseExplorer):
         Returns:
             True if collision-free, False otherwise
         """
+        distance = float(np.linalg.norm(to_pos - from_pos))
+        num_checks = max(num_checks, int(np.ceil(distance / grid.resolution)))
         for i in range(num_checks + 1):
             t = i / num_checks
             pos = from_pos * (1 - t) + to_pos * t

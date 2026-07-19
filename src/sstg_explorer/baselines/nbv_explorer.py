@@ -24,6 +24,7 @@ import numpy as np
 
 from .base_explorer import BaseExplorer
 from ..map.occupancy_grid import OccupancyGrid
+from ..planning.astar import AStarPlanner
 
 
 class NextBestViewExplorer(BaseExplorer):
@@ -51,6 +52,8 @@ class NextBestViewExplorer(BaseExplorer):
         max_iterations: int = 1000,
         info_weight: float = 1.0,
         dist_weight: float = 0.1,
+        r_robot: float = 0.3,
+        d_safe: float = 0.2,
         **kwargs
     ):
         """Initialize NBV Explorer."""
@@ -71,6 +74,8 @@ class NextBestViewExplorer(BaseExplorer):
         self.max_iterations = max_iterations
         self.info_weight = info_weight
         self.dist_weight = dist_weight
+        self.r_robot = r_robot
+        self.d_safe = d_safe
 
     def explore(
         self,
@@ -101,10 +106,15 @@ class NextBestViewExplorer(BaseExplorer):
 
         # Initialize with start position
         current_pos = np.array(start_pose[:2])
+        planner = AStarPlanner(grid, self.r_robot, self.d_safe)
+        safe_mask = planner.planning_grid.get_free_space_mask()
 
         # Initialize coverage map
-        coverage_map = np.zeros_like(occupancy_grid, dtype=bool)
+        coverage_map = np.zeros_like(grid.data, dtype=bool)
         self._mark_coverage(coverage_map, grid, current_pos, self.r_view)
+        self.coverage_ratio = self._compute_coverage_ratio(coverage_map, grid)
+        paths = []
+        rejected_goals = 0
 
         # Record start node
         self.nodes.append({
@@ -116,24 +126,26 @@ class NextBestViewExplorer(BaseExplorer):
         # NBV exploration loop
         for iteration in range(self.max_iterations):
             # Generate candidate viewpoints
-            candidates = self._generate_candidates(coverage_map, grid, self.n_candidates)
+            candidates = self._generate_candidates(
+                coverage_map, grid, self.n_candidates, safe_mask=safe_mask
+            )
 
             if len(candidates) == 0:
                 # No more candidates, exploration complete
                 break
 
             # Evaluate candidates and select best
-            best_candidate = self._select_best_view(
-                candidates, current_pos, coverage_map, grid
+            best_candidate, path = self._select_best_view(
+                candidates, current_pos, coverage_map, grid, planner
             )
 
-            if best_candidate is None:
+            if best_candidate is None or path is None:
                 break
 
-            # Travel to best viewpoint
-            travel_dist = np.linalg.norm(best_candidate - current_pos)
-            self.total_distance += travel_dist
+            # Execute the selected goal through the common safe A* layer.
+            self.total_distance += planner.get_path_length(path)
             current_pos = best_candidate
+            paths.append(path)
 
             # Mark coverage from new position
             self._mark_coverage(coverage_map, grid, current_pos, self.r_view)
@@ -169,10 +181,13 @@ class NextBestViewExplorer(BaseExplorer):
                 'coverage_ratio': self.coverage_ratio,
                 'num_nodes': len(self.nodes),
                 'computation_time': computation_time,
-                'success': True,
-                'iterations': iteration + 1
+                'success': self.coverage_ratio >= self.target_coverage,
+                'iterations': iteration + 1,
+                'paths': paths,
+                'rejected_unreachable_goals': rejected_goals,
+                'execution_protocol': 'shared inflated-grid A*',
             },
-            'success': True,
+            'success': self.coverage_ratio >= self.target_coverage,
             'algorithm': self.name
         }
 
@@ -180,7 +195,8 @@ class NextBestViewExplorer(BaseExplorer):
         self,
         coverage_map: np.ndarray,
         grid: OccupancyGrid,
-        n_candidates: int
+        n_candidates: int,
+        safe_mask: Optional[np.ndarray] = None,
     ) -> List[np.ndarray]:
         """
         Generate candidate viewpoints in uncovered free space.
@@ -193,7 +209,7 @@ class NextBestViewExplorer(BaseExplorer):
         Returns:
             List of candidate positions (x, y)
         """
-        free_mask = grid.data < 50
+        free_mask = safe_mask if safe_mask is not None else grid.data < 50
         uncovered_mask = ~coverage_map
 
         # Find uncovered free cells
@@ -221,8 +237,9 @@ class NextBestViewExplorer(BaseExplorer):
         candidates: List[np.ndarray],
         current_pos: np.ndarray,
         coverage_map: np.ndarray,
-        grid: OccupancyGrid
-    ) -> Optional[np.ndarray]:
+        grid: OccupancyGrid,
+        planner: AStarPlanner,
+    ) -> Tuple[Optional[np.ndarray], Optional[List[Tuple[float, float]]]]:
         """
         Select best viewpoint based on information gain vs. travel cost.
 
@@ -241,10 +258,11 @@ class NextBestViewExplorer(BaseExplorer):
             Best candidate position or None
         """
         if len(candidates) == 0:
-            return None
+            return None, None
 
         best_utility = -np.inf
         best_candidate = None
+        cost_map = planner.compute_cost_map(tuple(current_pos))
 
         for candidate in candidates:
             # Compute information gain (expected new coverage)
@@ -252,8 +270,10 @@ class NextBestViewExplorer(BaseExplorer):
                 candidate, coverage_map, grid, self.r_view
             )
 
-            # Compute travel distance
-            distance = np.linalg.norm(candidate - current_pos)
+            row, col = grid.world_to_grid(*candidate)
+            distance = float(cost_map[row, col])
+            if not np.isfinite(distance):
+                continue
 
             # Compute utility
             utility = self.info_weight * info_gain - self.dist_weight * distance
@@ -262,7 +282,13 @@ class NextBestViewExplorer(BaseExplorer):
                 best_utility = utility
                 best_candidate = candidate
 
-        return best_candidate
+        if best_candidate is None:
+            return None, None
+        path = planner.plan(
+            tuple(current_pos), tuple(best_candidate),
+            max_iterations=max(10000, grid.data.size),
+        )
+        return best_candidate, path
 
     def _compute_information_gain(
         self,

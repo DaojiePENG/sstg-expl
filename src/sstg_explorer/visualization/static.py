@@ -6,8 +6,176 @@ from typing import List, Tuple, Optional
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 import matplotlib.animation as animation
+from collections import Counter
+from matplotlib.lines import Line2D
 
 from sstg_explorer.map.occupancy_grid import OccupancyGrid
+
+
+def visualize_exploration_step(
+    occupancy_grid: OccupancyGrid,
+    step: dict,
+    r_view: float,
+    save_path: Optional[str] = None,
+    figsize: Tuple[int, int] = (11, 7),
+    dpi: int = 120,
+    title: Optional[str] = None,
+):
+    """Render one complete SSTG decision state for analysis and publication.
+
+    The view distinguishes the explored trajectory, current pose, all active
+    frontiers, candidates newly generated in this decision, their rejection
+    reasons, the selected target, and its collision-free A* path.
+    """
+    from sstg_explorer.core.coverage_analyzer import CoverageAnalyzer
+
+    fig, (ax, info_ax) = plt.subplots(
+        1, 2, figsize=figsize, dpi=dpi,
+        gridspec_kw={'width_ratios': [4.2, 1.35]},
+    )
+    extent = [
+        occupancy_grid.origin[0],
+        occupancy_grid.origin[0] + occupancy_grid.world_width,
+        occupancy_grid.origin[1],
+        occupancy_grid.origin[1] + occupancy_grid.world_height,
+    ]
+    ax.imshow(occupancy_grid.data, cmap='gray_r', origin='lower', extent=extent, alpha=0.9)
+
+    explored = [tuple(point) for point in step.get('explored_nodes', [])]
+    if explored:
+        coverage = CoverageAnalyzer(occupancy_grid).compute_coverage_map(explored, r_view)
+        overlay = np.ma.masked_where(~coverage, coverage)
+        ax.imshow(overlay, cmap='Blues', origin='lower', extent=extent,
+                  alpha=0.18, vmin=0, vmax=1)
+        ax.scatter([p[0] for p in explored], [p[1] for p in explored],
+                   c='#1976d2', s=34, edgecolors='white', linewidths=0.6,
+                   zorder=6, label='Explored viewpoints')
+
+    executed_paths = step.get('executed_paths', [])
+    for path_index, executed_path in enumerate(executed_paths):
+        if len(executed_path) > 1:
+            ax.plot(
+                [p[0] for p in executed_path], [p[1] for p in executed_path],
+                color='#1565c0', linewidth=2.2, alpha=0.82, zorder=4,
+                label='Executed trajectory' if path_index == 0 else None,
+            )
+
+    active = step.get('active_frontiers', [])
+    if active:
+        points = [frontier['target'] for frontier in active]
+        priorities = np.asarray([frontier.get('priority', 0.0) for frontier in active])
+        sizes = 38 + 85 * priorities / max(float(np.max(priorities)), 1e-6)
+        ax.scatter([p[0] for p in points], [p[1] for p in points],
+                   c='#f9a825', marker='^', s=sizes, edgecolors='#5d4037',
+                   linewidths=0.7, alpha=0.78, zorder=7,
+                   label='Pending frontiers')
+
+    style = {
+        'added': ('#00c853', 'D'),
+        'added_soft': ('#64dd17', 'D'),
+        'recovery_added': ('#00b8d4', 'P'),
+        'blocked_obstacle': ('#d50000', 'x'),
+        'pruned_strength': ('#ff6d00', 'x'),
+        'pruned_priority': ('#aa00ff', 'x'),
+        'pruned_duplicate': ('#616161', 'x'),
+        'pruned_nonpositive': ('#795548', 'x'),
+        'recovery_unreachable': ('#212121', 'X'),
+        'recovery_duplicate': ('#607d8b', 'x'),
+    }
+    candidates = step.get('generated_candidates', [])
+    for candidate in candidates:
+        target = candidate['target']
+        origin = candidate.get('origin')
+        status = candidate.get('status', 'generated')
+        color, marker = style.get(status, ('#9e9e9e', '.'))
+        if origin is not None:
+            ax.plot([origin[0], target[0]], [origin[1], target[1]],
+                    color=color, linewidth=0.55, alpha=0.28, zorder=2)
+        ax.scatter([target[0]], [target[1]], c=color, marker=marker,
+                   s=64 if 'added' in status else 46, linewidths=1.5,
+                   zorder=9)
+
+    selected = step.get('selected_frontier')
+    if selected:
+        target = selected['target']
+        ax.scatter([target[0]], [target[1]], c='#e91e63', marker='*',
+                   s=260, edgecolors='black', linewidths=0.9, zorder=12,
+                   label='Selected frontier')
+
+    path = step.get('path', [])
+    if len(path) > 1:
+        ax.plot([p[0] for p in path], [p[1] for p in path],
+                color='#00acc1', linewidth=3.0, alpha=0.9, zorder=10,
+                label='A* path')
+
+    current = step.get('current_position')
+    if current:
+        ax.scatter([current[0]], [current[1]], c='#76ff03', marker='o',
+                   s=72, edgecolors='#1b5e20', linewidths=1.2, zorder=13,
+                   label='Current pose')
+
+    ax.set_xlabel('x [m]')
+    ax.set_ylabel('y [m]')
+    ax.set_aspect('equal', adjustable='box')
+    ax.grid(alpha=0.18)
+    ax.set_title(title or f"SSTG decision trace {step.get('trace_id', 0)}")
+    handles, labels = ax.get_legend_handles_labels()
+    handles.extend([
+        Line2D([0], [0], marker='D', linestyle='None', markerfacecolor='#00c853',
+               markeredgecolor='#00c853', label='New candidate'),
+        Line2D([0], [0], marker='x', linestyle='None', color='#d50000',
+               label='Rejected: obstacle'),
+        Line2D([0], [0], marker='x', linestyle='None', color='#ff6d00',
+               label='Pruned: low gain'),
+        Line2D([0], [0], marker='x', linestyle='None', color='#aa00ff',
+               label='Pruned: low priority'),
+        Line2D([0], [0], marker='P', linestyle='None', color='#00b8d4',
+               label='Recovery candidate'),
+    ])
+    labels.extend([
+        'New candidate', 'Rejected: obstacle', 'Pruned: low gain',
+        'Pruned: low priority', 'Recovery candidate',
+    ])
+    if handles:
+        ax.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, -0.09),
+                  ncol=3, fontsize=8, frameon=False)
+
+    counts = Counter(candidate.get('status', 'generated') for candidate in candidates)
+    selected_text = 'none'
+    if selected:
+        selected_text = (
+            f"id={selected.get('frontier_id')}\n"
+            f"type={selected.get('kind')}\n"
+            f"priority={selected.get('priority', 0):.3f}"
+        )
+    lines = [
+        'DECISION STATE',
+        f"trace: {step.get('trace_id', 0)}",
+        f"iteration: {step.get('iteration', 0)}",
+        f"event: {step.get('event', '-')}",
+        '',
+        f"coverage: {step.get('coverage_before', 0):.1%}",
+        f"       → {step.get('coverage_after', 0):.1%}",
+        f"gain: {step.get('coverage_gain', 0):+.2%}",
+        f"explored: {len(explored)}",
+        f"pending: {step.get('queue_size', len(active))}",
+        '',
+        'SELECTED', selected_text,
+        '', 'GENERATED',
+    ]
+    lines.extend(f"{key}: {value}" for key, value in sorted(counts.items()))
+    info_ax.axis('off')
+    info_ax.text(0.02, 0.98, '\n'.join(lines), va='top', ha='left',
+                 family='monospace', fontsize=8.4,
+                 bbox=dict(boxstyle='round,pad=0.7', facecolor='#fafafa',
+                           edgecolor='#bdbdbd'))
+    fig.subplots_adjust(bottom=0.16, wspace=0.05)
+    if save_path:
+        fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
+        plt.close(fig)
+    else:
+        plt.show()
+        plt.close(fig)
 
 
 def visualize_exploration(
@@ -16,6 +184,7 @@ def visualize_exploration(
     r_view: float,
     show_coverage: bool = True,
     show_connections: bool = False,
+    execution_paths: Optional[List[List[Tuple[float, float]]]] = None,
     save_path: Optional[str] = None,
     figsize: Tuple[int, int] = (12, 10),
     dpi: int = 100,
@@ -30,6 +199,7 @@ def visualize_exploration(
         r_view: View radius in meters.
         show_coverage: Whether to show coverage circles.
         show_connections: Whether to show connections between sequential nodes.
+        execution_paths: Actual collision-free path segments executed so far.
         save_path: Path to save figure (None = display only).
         figsize: Figure size.
         dpi: Figure DPI.
@@ -69,12 +239,24 @@ def visualize_exploration(
             ax.add_patch(circle)
 
     # Plot connections
+    if execution_paths:
+        for path_index, path in enumerate(execution_paths):
+            if len(path) > 1:
+                ax.plot(
+                    [point[0] for point in path], [point[1] for point in path],
+                    color='#1565c0', alpha=0.8, linewidth=2.0, zorder=2,
+                    label='Executed trajectory' if path_index == 0 else None,
+                )
+
+    # Optional straight viewpoint-order links are diagnostic only and are
+    # deliberately distinct from the actual executed trajectory.
     if show_connections and len(positions) > 1:
         for i in range(len(positions) - 1):
             ax.plot(
                 [positions[i][0], positions[i+1][0]],
                 [positions[i][1], positions[i+1][1]],
-                'b-', alpha=0.3, linewidth=1, zorder=2
+                linestyle='--', color='#90a4ae', alpha=0.5,
+                linewidth=1, zorder=2
             )
 
     # Plot nodes

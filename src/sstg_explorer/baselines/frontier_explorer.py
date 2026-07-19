@@ -22,6 +22,7 @@ from scipy import ndimage
 
 from .base_explorer import BaseExplorer
 from ..map.occupancy_grid import OccupancyGrid
+from ..planning.astar import AStarPlanner
 
 
 class FrontierExplorer(BaseExplorer):
@@ -45,6 +46,8 @@ class FrontierExplorer(BaseExplorer):
         target_coverage: float = 0.95,
         max_iterations: int = 1000,
         frontier_min_size: int = 5,
+        r_robot: float = 0.3,
+        d_safe: float = 0.2,
         **kwargs
     ):
         """Initialize Frontier Explorer."""
@@ -61,6 +64,8 @@ class FrontierExplorer(BaseExplorer):
         self.target_coverage = target_coverage
         self.max_iterations = max_iterations
         self.frontier_min_size = frontier_min_size
+        self.r_robot = r_robot
+        self.d_safe = d_safe
 
     def explore(
         self,
@@ -91,13 +96,17 @@ class FrontierExplorer(BaseExplorer):
 
         # Initialize with start position
         current_pos = np.array(start_pose[:2])
+        planner = AStarPlanner(grid, self.r_robot, self.d_safe)
 
         # Initialize coverage and explored maps
-        coverage_map = np.zeros_like(occupancy_grid, dtype=bool)
-        explored_map = np.zeros_like(occupancy_grid, dtype=bool)
+        coverage_map = np.zeros_like(grid.data, dtype=bool)
+        explored_map = np.zeros_like(grid.data, dtype=bool)
+        paths = []
+        rejected_goals = 0
 
         # Mark initial coverage
         self._mark_coverage(coverage_map, explored_map, grid, current_pos, self.r_view)
+        self.coverage_ratio = self._compute_coverage_ratio(coverage_map, grid)
 
         # Record start node
         self.nodes.append({
@@ -110,7 +119,8 @@ class FrontierExplorer(BaseExplorer):
         for iteration in range(self.max_iterations):
             # Detect frontiers
             frontiers = self._detect_frontiers(
-                explored_map, grid, self.frontier_min_size
+                explored_map, grid, self.frontier_min_size,
+                safe_mask=planner.planning_grid.get_free_space_mask(),
             )
 
             if len(frontiers) == 0:
@@ -118,15 +128,17 @@ class FrontierExplorer(BaseExplorer):
                 break
 
             # Select nearest frontier
-            frontier_pos = self._select_nearest_frontier(frontiers, current_pos)
+            frontier_pos, path = self._select_nearest_frontier(
+                frontiers, current_pos, planner
+            )
 
-            if frontier_pos is None:
+            if frontier_pos is None or path is None:
                 break
 
-            # Travel to frontier
-            travel_dist = np.linalg.norm(frontier_pos - current_pos)
-            self.total_distance += travel_dist
+            # Travel to frontier through the common executable planner.
+            self.total_distance += planner.get_path_length(path)
             current_pos = frontier_pos
+            paths.append(path)
 
             # Mark coverage from new position
             self._mark_coverage(coverage_map, explored_map, grid, current_pos, self.r_view)
@@ -162,10 +174,13 @@ class FrontierExplorer(BaseExplorer):
                 'coverage_ratio': self.coverage_ratio,
                 'num_nodes': len(self.nodes),
                 'computation_time': computation_time,
-                'success': True,
-                'iterations': iteration + 1
+                'success': self.coverage_ratio >= self.target_coverage,
+                'iterations': iteration + 1,
+                'paths': paths,
+                'rejected_unreachable_goals': rejected_goals,
+                'execution_protocol': 'shared inflated-grid A*',
             },
-            'success': True,
+            'success': self.coverage_ratio >= self.target_coverage,
             'algorithm': self.name
         }
 
@@ -173,7 +188,8 @@ class FrontierExplorer(BaseExplorer):
         self,
         explored_map: np.ndarray,
         grid: OccupancyGrid,
-        min_size: int = 5
+        min_size: int = 5,
+        safe_mask: Optional[np.ndarray] = None,
     ) -> List[np.ndarray]:
         """
         Detect frontier points (boundary of explored region).
@@ -191,7 +207,7 @@ class FrontierExplorer(BaseExplorer):
         Returns:
             List of frontier positions (x, y) in world coordinates
         """
-        free_mask = grid.data < 50
+        free_mask = safe_mask if safe_mask is not None else grid.data < 50
         unexplored_mask = ~explored_map
 
         # Frontier candidates: free AND unexplored
@@ -215,8 +231,10 @@ class FrontierExplorer(BaseExplorer):
             if cluster_size >= min_size:
                 # Find centroid of cluster
                 indices = np.argwhere(cluster_mask)
-                centroid_idx = np.mean(indices, axis=0).astype(int)
-                row, col = centroid_idx
+                centroid = np.mean(indices, axis=0)
+                row, col = indices[
+                    int(np.argmin(np.sum((indices - centroid) ** 2, axis=1)))
+                ]
                 x, y = grid.grid_to_world(row, col)
                 frontiers.append(np.array([x, y]))
 
@@ -225,8 +243,9 @@ class FrontierExplorer(BaseExplorer):
     def _select_nearest_frontier(
         self,
         frontiers: List[np.ndarray],
-        current_pos: np.ndarray
-    ) -> Optional[np.ndarray]:
+        current_pos: np.ndarray,
+        planner: AStarPlanner,
+    ) -> Tuple[Optional[np.ndarray], Optional[List[Tuple[float, float]]]]:
         """
         Select the nearest frontier to current position.
 
@@ -238,11 +257,23 @@ class FrontierExplorer(BaseExplorer):
             Selected frontier position or None
         """
         if len(frontiers) == 0:
-            return None
+            return None, None
 
-        distances = [np.linalg.norm(f - current_pos) for f in frontiers]
-        nearest_idx = np.argmin(distances)
-        return frontiers[nearest_idx]
+        cost_map = planner.compute_cost_map(tuple(current_pos))
+        ranked = []
+        for frontier in frontiers:
+            row, col = planner.grid.world_to_grid(*frontier)
+            cost = float(cost_map[row, col])
+            if np.isfinite(cost):
+                ranked.append((cost, frontier))
+        for _, frontier in sorted(ranked, key=lambda item: item[0]):
+            path = planner.plan(
+                tuple(current_pos), tuple(frontier),
+                max_iterations=max(10000, planner.grid.data.size),
+            )
+            if path is not None:
+                return frontier, path
+        return None, None
 
     def _mark_coverage(
         self,
