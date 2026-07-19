@@ -121,3 +121,13 @@ outputs/unknown_benchmark_runs/<timestamp>/
 runner 结束前会逐 run 重放 `observed_updates` 并与 `belief_final.npy` 比较，再核验所有已知 belief cell 与 truth 一致、媒体帧数等于 decision step 数、HTML 引用存在且日志无错误；任一项失败会写出 `audit_report.json` 并以非零状态退出。
 
 完整 observation、belief update、footprint-safe set、SSTG utility、冗余率公式与在线伪代码见 [RAL 公式参考](PAPER_WRITING_REFERENCE.md#11-未知地图在线-sstg-explorer)。
+
+## 7. 已冻结结果与可写结论
+
+- 主实验：`outputs/unknown_benchmark_runs/20260719_141122/`，810/810 records、2,199/2,199 step PNG、270/270 GIF、270/270 MP4，`audit_report.json` 为 `passed=true`。
+- 消融：`outputs/unknown_ablation_runs/20260719_141132/`，180/180 records，按设计无媒体，belief/truth/HTML/log 审计全部通过。
+- 两者均来自干净 commit `502afcd791f8314461802929a91fc2d6c57ad98b`，experiment-source SHA-256 为 `2385e87afd5f5bb601de27a73fd88620d7422c7131ed03f965081e9c3bb4b5a4`，ANS checkpoint SHA-256 为 `616fd1485e1f0ba9673db08340d586c050f001f171890d966809c0b9f0320314`。
+- SSTG 为 98.38% coverage、15.73 m、4.57 oriented views、3.69 m mean NN、26.5% redundant views、1.45 m clearance、100% success。
+- SSTG 相对 Frontier/NBV/RRT 的 coverage cluster 差为 `+4.12/+0.64/+0.64 pp`，Holm `p=0.00023/0.0169/0.0169`；相对 ANS 为 `+1.28 pp` 但 Holm `p=0.0756`，不能声称显著。
+- SSTG 与全部 baseline 的 distance cluster CI 均跨 0；应写 comparable travel，而不是 shortest path。
+- single frontier centroid 使 hard-set coverage 从 98.32% 降至 96.43%、success 从 100% 降至 91.7%；with-spacing utility 的 coverage/distance/views/clearance/NN/redundancy 点估计均不优于最终 FPS-only 方法。

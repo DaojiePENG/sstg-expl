@@ -99,7 +99,7 @@ stateDiagram-v2
 - Main results：observed-free coverage、实际路径、oriented nodes、成功率、runtime；按 sensor–environment cluster 做统计。
 - Spatial quality：mean/median/min nearest-neighbor distance、<1 m 回访率、coverage/view、in-place rotations、视点/实际路径净空。
 - Sensor sensitivity：固定 12 m 的 FOV 曲线与固定 360° 的 range 曲线。
-- Controlled support：已知地图 270-run 主表；315-run 结构消融；新增 single-centroid、unsafe-footprint、no-vantage、no-spacing 消融应作为下一轮论文实验。
+- Controlled support：已知地图 270-run 主表与 315-run 结构消融；未知 hard-set 的 180-run single-centroid、unsafe-footprint、no-vantage、with-spacing 消融。
 - Failure/trace：展示一次预算剪枝、一次 directional rotation、一次长程 topological vantage，以及仍然存在的 2-D/noise-free 局限。
 
 ### VI. Discussion and Conclusion（0.45 页）
@@ -138,3 +138,9 @@ stateDiagram-v2
 ## 7. RAL 多媒体交付
 
 完整 benchmark 网页和原始数据放长期仓库；它们不能替代自包含论文。RAL 当前只允许单个不超过 50 MB 的 multimedia zip，多个片段要编辑成一个视频，并随包提供 ASCII `ReadMe.txt` 与 `Summary.txt`。正式包建议只放：90° dense/warehouse、360° multiple_rooms、一次候选剪枝/拓扑回访的合成 MP4，以及运行环境、播放器版本、联系人和仓库永久链接。不要把 270 个 run-0 视频直接塞进投稿附件。
+
+## 8. 冻结证据对应主张
+
+主表用 `outputs/unknown_benchmark_runs/20260719_141122/`：SSTG 为 98.38% coverage、15.73 m、4.57 views、3.69 m NN、26.5% redundancy、100% success。摘要可以写“相对 Frontier/NBV/RRT 显著更高 coverage，travel distance 无显著差异，同时使用更少且更离散的 oriented viewpoints”；不能写相对 ANS 显著，也不能写净空或路径全面最优。
+
+模块证据用 `outputs/unknown_ablation_runs/20260719_141132/`：single-centroid 使 coverage 降 1.89 pp、success 降 8.3 pp；额外 spacing score 没有改善宏平均，因此 FPS-only 是最终方案。已知地图 270+315 runs 只用于证明 geodesic/recovery/clearance 的受控结构作用，不与 observed-free coverage 数字合并。

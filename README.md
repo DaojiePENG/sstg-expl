@@ -246,6 +246,28 @@ python -m http.server 8001 --directory outputs/unknown_benchmark_runs/latest
 
 ## 9. 当前正式结果（2026-07-19）
 
+### 9.1 未知地图主协议
+
+最终目录 `outputs/unknown_benchmark_runs/20260719_141122/` 包含 6 sensor configs × 9 环境 × 5 方法 × 3 seeds，共 810 条记录；`audit_report.json` 已核验 810 个 belief/JSON/CSV、2,199 张逐步图、270 个 GIF 和 270 个 MP4，所有 belief update 均可无差异重放，且已知 cell 与 truth 完全一致。实验来自干净 commit `502afcd`，源码 SHA-256 为 `2385e87afd5f5bb601de27a73fd88620d7422c7131ed03f965081e9c3bb4b5a4`。
+
+| 方法 | Observed-free coverage | Distance | Oriented views | Mean NN | Redundant views | Clearance | Success |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| SSTG-Explorer Unknown | **98.38%** | 15.73 m | **4.57** | **3.69 m** | **26.5%** | 1.45 m | **100%** |
+| NBV-Unknown | 97.74% | **14.75 m** | 6.38 | 2.31 m | 28.8% | **1.53 m** | 97.5% |
+| RRT-Unknown (adapted) | 97.74% | 15.26 m | 6.88 | 2.12 m | 30.9% | 1.48 m | 96.3% |
+| ANS-Global Unknown (adapted) | 97.11% | 15.27 m | 7.43 | 2.24 m | 32.9% | 1.40 m | 94.4% |
+| Frontier-Unknown | 94.26% | 17.17 m | 14.96 | 1.51 m | 54.7% | 1.14 m | 75.9% |
+
+以 54 个 sensor–environment 为 cluster 的 bootstrap/Wilcoxon/Holm 显示：SSTG 相对 Frontier、NBV、RRT 的 coverage 分别为 `+4.12 pp [2.13, 6.41]`、`+0.64 pp [0.20, 1.14]`、`+0.64 pp [0.21, 1.07]`，Holm `p=0.00023/0.0169/0.0169`；相对 ANS 为 `+1.28 pp [0.09, 2.92]`，但 Holm `p=0.0756`，不能写显著。全部 distance 差值 CI 跨 0。
+
+空间质量不是用少量远点伪造：SSTG 同时取得最高 coverage、最低节点数、最大 NN 间距、最低回访率和最高 coverage/view。其平均净空 1.45 m 低于 NBV/RRT 的 1.53/1.48 m，但高于 ANS/Frontier 的 1.40/1.14 m。90°/120° 的空间冗余主要来自必要的同点多朝向观测，因此必须与 `in_place_rotations` 和总旋转量联合解释。
+
+原短板在全部 6 个传感器配置上的均值已改善为：`multiple_rooms` 98.62%、`dense_obstacles` 97.57%、`warehouse` 98.28%。最难的 90° 条件仍分别达到 98.85%/98.28%/99.57%；360°×12 m 则为 100%/97.47%/99.90%。SSTG 在 8/12/16 m 的 360° range sweep 为 98.81%/98.78%/98.49%，在 360°/240°/120°/90° 的 12 m FOV sweep 为 98.78%/98.14%/98.22%/97.87%。
+
+未知消融目录 `outputs/unknown_ablation_runs/20260719_141132/` 含 180/180 条并通过审计。single-centroid 使 coverage 降 1.89 pp、success 降至 91.7%，证明多 frontier 代表点解决 warehouse/dense 遮挡短板；额外 `+0.30 spacing` score 的所有宏平均点估计均不优于 FPS-only，因此最终 SSTG 使用候选层 FPS 离散性和 `spacing_weight=0`。
+
+### 9.2 已知地图受控协议
+
 最终目录 `outputs/benchmark_runs/20260719_043528/` 包含 6 方法 × 9 环境 × 5 runs，共 270 条记录；受控消融在 `outputs/ablation_runs/20260719_043544/`，共 315 条。跨环境/run 汇总：
 
 | 方法 | Coverage | Distance | Nodes | Success |

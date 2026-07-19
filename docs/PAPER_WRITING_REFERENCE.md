@@ -528,6 +528,21 @@ O\!\left(T\left[N\log N+C_tN+C_eKS\right]\right),
 
 ## 15. 当前可直接引用的实验事实
 
+### 15.1 Unknown static occlusion 主证据
+
+数据源：`outputs/unknown_benchmark_runs/20260719_141122/`（810 runs）与 `outputs/unknown_ablation_runs/20260719_141132/`（180 runs）。两者均为 commit `502afcd`、source SHA-256 `2385e87afd5f5bb601de27a73fd88620d7422c7131ed03f965081e9c3bb4b5a4`，且自动 audit 全部通过。
+
+- SSTG coverage 98.38%、distance 15.73 m、4.57 oriented views、3.69 m mean NN、26.5% redundant views、1.45 m clearance、100% success。
+- 相对 Frontier，coverage 为 `+4.12 pp [2.13, 6.41]`、Holm `p=0.00023`；distance `-1.45 m [-3.10, 0.23]` 不显著。
+- 相对 NBV/RRT，coverage 均高约 0.64 pp，cluster CI 不跨 0，Holm 均 `p=0.0169`；distance 分别为 `+0.97/+0.46 m`，CI 均跨 0。
+- 相对 ANS-Global Unknown (adapted)，coverage 为 `+1.28 pp [0.09, 2.92]`，但 Holm `p=0.0756`；不能把未校正 CI 不跨 0 写成多重比较后显著。
+- SSTG 的 NN distance 相对 Frontier/NBV/RRT/ANS 高 `2.18/1.37/1.57/1.44 m`，回访率低 `28.16/2.32/4.35/6.39 pp`；同时节点数最低且 coverage 最高，因此不是失败 run 造成的虚假大间距。
+- SSTG 视点净空 1.45 m 低于 NBV/RRT 的 1.53/1.48 m，但高于 ANS/Frontier 的 1.40/1.14 m。不要写 safety 全面最佳。
+- 在 90° 条件，SSTG coverage 97.87%、distance 20.19 m、7.67 views、59.45% spatial redundancy；同点多朝向属于窄 FOV 的必要代价，必须同时报告旋转。360°×12 m 则为 98.78%、13.48 m、3.22 views、0% redundancy。
+- hard-set 消融中，single-centroid coverage/success 为 96.43%/91.7%，Full 为 98.32%/100%；额外 spacing score 的宏平均点估计全部不优于 FPS-only，故最终方法使用 `spacing_weight=0`。
+
+### 15.2 Known static disk 受控证据
+
 数据源：`outputs/benchmark_runs/20260719_043528/results.json`（270 runs）与 `outputs/ablation_runs/20260719_043544/results.json`（315 runs）。二者的 experiment-source SHA-256 均为 `efa1828c62bac7ca0f33849449e1363a3ff14bd0079a5e9668764b8ade7e8642`，ANS checkpoint SHA-256 为 `616fd1485e1f0ba9673db08340d586c050f001f171890d966809c0b9f0320314`。
 
 - SSTG-Explorer 宏平均 coverage 为 98.52%，Frontier 为 96.92%。环境 cluster bootstrap 差值为 `+1.61 pp [0.90, 2.45]`，环境级 Wilcoxon 经 Holm 校正 `p=0.0234`。
