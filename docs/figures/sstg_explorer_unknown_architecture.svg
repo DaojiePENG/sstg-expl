@@ -56,11 +56,11 @@
   <path d="M825 182 H865" class="arrow"/>
 
   <rect x="1150" y="80" width="220" height="205" class="box" fill="#f3eaff" stroke="#7e57c2"/>
-  <text x="1260" y="112" text-anchor="middle" class="h">SSTG utility</text>
+  <text x="1260" y="112" text-anchor="middle" class="h">Utility + diagnostics</text>
   <text x="1175" y="145" class="t">Predicted unknown gain</text>
   <text x="1175" y="174" class="t">Known-free geodesic cost</text>
   <text x="1175" y="203" class="t">Clearance preference</text>
-  <text x="1175" y="232" class="t">Viewpoint spacing</text>
+  <text x="1175" y="232" class="t">NN spacing traced/evaluated</text>
   <text x="1175" y="261" class="s">Select maximum scored view</text>
   <path d="M1110 182 H1150" class="arrow"/>
 

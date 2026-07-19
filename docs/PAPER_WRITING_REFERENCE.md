@@ -430,12 +430,12 @@ G_t(f)=|\widehat{\mathcal Z}(f;B_t)\cap\mathcal U_t|.
 \[
 P_t^{U}(f)=
 1.20\bar g_t(f)-0.15\bar\ell_t(f)
-+0.30\bar s_t(f)+0.20w_S\bar c_t(f),
++0.20w_S\bar c_t(f),
 \qquad w_S=1.5.
 \tag{38}
 \]
 
-加性形式避免远端高增益门洞被乘性 travel decay 压成近零。对于原地朝向候选，代码令 \(\bar s_t=0.35\)；它不增加平移路程，但作为新的 oriented viewpoint 计入节点数、旋转量和空间冗余率。
+加性形式避免远端高增益门洞被乘性 travel decay 压成近零。空间离散性由 Eq. (34) 的 FPS 候选层实现，\(\bar s_t\) 仍写入每个 candidate trace 并用于 Eq. (39–40) 的结果解释。受控消融给 Eq. (38) 额外加入 \(+0.30\bar s_t\) 后，coverage、distance、nodes、clearance、NN distance 和 redundancy 的宏平均点估计均未改善，因此最终方法遵循最简且表现最好的 spacing_weight=0。原地换朝向不增加平移路程，但仍作为 oriented viewpoint 计入节点数、旋转量和空间冗余率。
 
 ### 11.4 视点离散性与冗余指标
 
@@ -502,7 +502,7 @@ O\!\left(T\left[N\log N+C_tN+C_eKS\right]\right),
 | Single frontier centroid | 每个连通 frontier 只留一个代表点 | warehouse/dense 的遮挡短板是否复现 |
 | Known-obstacle-only safety | 不要求整个 footprint 已知 free | 是否出现新观测后被障碍困住 |
 | No topology vantages | 只保留 frontier band | aisle/doorway 的视点是否丢失 |
-| No spacing utility | Eq. (38) 去掉 \(\bar s_t\) | 空间回访率与 coverage/view 的变化 |
+| With spacing utility | Eq. (38) 加 \(+0.30\bar s_t\) | 显式 score 是否优于 FPS-only 的最终方法 |
 
 旧 priority queue bug 是实现错误，应修复并通过单测保证，不应把修 bug 包装成贡献。
 

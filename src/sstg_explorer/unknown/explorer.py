@@ -41,7 +41,7 @@ class UnknownExplorerConfig:
     random_candidates: int = 24
     exact_gain_budget: int = 18
     clearance_weight: float = 1.5
-    spacing_weight: float = 0.30
+    spacing_weight: float = 0.0
     multi_frontier: bool = True
     use_topological_vantages: bool = True
     require_known_footprint: bool = True

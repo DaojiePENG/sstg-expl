@@ -43,7 +43,7 @@ from sstg_explorer.visualization import reconstruct_beliefs, visualize_unknown_s
 MAIN_ALGORITHMS = ["frontier", "nbv", "rrt", "ans", "sstg"]
 ABLATION_ALGORITHMS = [
     "sstg", "sstg_single_centroid", "sstg_known_obstacle_only",
-    "sstg_no_vantage", "sstg_no_spacing",
+    "sstg_no_vantage", "sstg_with_spacing",
 ]
 ALGORITHMS = MAIN_ALGORITHMS + [
     key for key in ABLATION_ALGORITHMS if key not in MAIN_ALGORITHMS
@@ -52,7 +52,7 @@ ABLATION_NAMES = {
     "sstg_single_centroid": "SSTG Unknown: single frontier centroid",
     "sstg_known_obstacle_only": "SSTG Unknown: known-obstacle-only safety",
     "sstg_no_vantage": "SSTG Unknown: no topological vantages",
-    "sstg_no_spacing": "SSTG Unknown: no spacing utility",
+    "sstg_with_spacing": "SSTG Unknown: with spacing utility",
 }
 SENSORS = {
     "fov360_r8": SensorConfig(360.0, 8.0, 0.25),
@@ -147,7 +147,7 @@ def create_algorithm(key, sensor, seed, max_decisions):
         multi_frontier=key != "sstg_single_centroid",
         require_known_footprint=key != "sstg_known_obstacle_only",
         use_topological_vantages=key != "sstg_no_vantage",
-        spacing_weight=0.0 if key == "sstg_no_spacing" else 0.30,
+        spacing_weight=0.30 if key == "sstg_with_spacing" else 0.0,
     )
     algorithm = UnknownMapExplorer(config)
     if key in ABLATION_NAMES:
@@ -904,13 +904,13 @@ def main():
             "random_candidates": 24,
             "exact_gain_budget": 18,
             "clearance_weight": 1.5,
-            "spacing_weight": 0.30,
+            "spacing_weight": 0.0,
         },
         "ablation_definitions": {
             "sstg_single_centroid": "multi_frontier=False",
             "sstg_known_obstacle_only": "require_known_footprint=False",
             "sstg_no_vantage": "use_topological_vantages=False",
-            "sstg_no_spacing": "spacing_weight=0.0",
+            "sstg_with_spacing": "spacing_weight=0.30",
         },
         "ground_truth_access": "sensor and evaluator only",
         "planning": (

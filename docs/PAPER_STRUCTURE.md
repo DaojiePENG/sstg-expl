@@ -13,7 +13,7 @@
 建议贡献：
 
 1. 提出 belief-only、遮挡感知的 SSTG 闭环：多代表 frontier、确定性拓扑视点和有向旋转候选统一进入可追踪候选图。
-2. 设计联合 predicted gain、known-free 测地代价、视点净空和历史视点间距的可审计效用，并保证 cost-map reachability 与禁止斜穿墙角的 A* 一致。
+2. 设计 FPS 空间离散候选与联合 predicted gain、known-free 测地代价、视点净空的可审计效用，并保证 cost-map reachability 与禁止斜穿墙角的 A* 一致。
 3. 把候选生成、精确增益预算剪枝、选择、不可达、实际路径扫描和 belief cell update 全部保存，直接导出逐步图、轨迹、视频与网页。
 4. 在 6 组 FOV/range、9 类环境、5 种在线方法和 3 seeds 上报告主结果，并用已知地图 270-run 主表与 315-run 消融提供互补的结构证据。
 
@@ -34,7 +34,7 @@ flowchart LR
     B --> K[Known-free footprint<br/>reachable geodesic map]
     K --> C[Multi-frontier + FPS vantages<br/>+ orientation candidates]
     B --> G[Predicted unknown gain]
-    C --> U[SSTG utility<br/>gain/cost/clearance/spacing]
+    C --> U[SSTG utility<br/>gain/cost/clearance]
     G --> U
     U --> X[Select and trace]
     X --> A[Known-free A*]
@@ -88,7 +88,7 @@ stateDiagram-v2
 
 - A. Occlusion-aware belief update and footprint-safe reachability
 - B. Multi-frontier and topological viewpoint graph
-- C. Gain–geodesic–clearance–spacing utility
+- C. Gain–geodesic–clearance utility and FPS spacing
 - D. Traceable A* execution and online update
 
 至少放 observation update、SSTG utility、redundancy 三个主公式和精简 Algorithm 1。圆盘覆盖、known-map recovery 和完整复杂度可压到辅助材料；完整 41 个公式在 `PAPER_WRITING_REFERENCE.md`。

@@ -104,7 +104,7 @@ print(result["metadata"]["coverage_ratio"])
 
 ### 3.5 未知地图扩展
 
-Unknown SSTG 是论文主协议下的最终方法。它从 all-unknown belief 开始，将多代表 frontier、确定性 farthest-point 拓扑视点和有向旋转候选统一排序，效用显式联合遮挡预测未知增益、known-free 测地代价、视点净空和与历史视点的最近邻间距。
+Unknown SSTG 是论文主协议下的最终方法。它从 all-unknown belief 开始，以确定性 farthest-point sampling 在候选层保证空间离散，再将多代表 frontier、拓扑视点和有向旋转候选按遮挡预测未知增益、known-free 测地代价与视点净空排序。最近历史视点距离仍逐候选记录并作为核心评价指标，但受控消融显示把它再加入 utility 没有收益，因此最终方法不保留多余的显式 spacing 项。
 
 未知 cell 从不当作 free；A* 只允许机器人完整 0.3 m footprint 已观测为 free 的中心栅格。0.5 m 作为偏好净空和安全率阈值单独报告，不再错误地扩大机器人硬尺寸。机器人沿实际 A* 路径每 1 m 持续扫描；90°/120° 等定向传感器可原地换朝向，该决策计入 oriented viewpoint、总旋转量和空间冗余率。
 

@@ -29,7 +29,7 @@
 
 cost map 的 reachable set 使用四连通 start component，实际 A* 使用禁止斜穿墙角的八连通搜索；因而被标记为 reachable 的 candidate 一定具有合法执行路径。每条实际路径首点保留真实 current pose，不以栅格中心替代。
 
-frontier center 位于与 unknown 相距至多 `r_robot + 2 cells = 0.4 m` 的 footprint-safe band；`target_spacing=2 m` 只用于 SSTG 的 farthest-point 离散采样和 spacing utility，不用来人为加厚经典 Frontier 的边界。
+frontier center 位于与 unknown 相距至多 `r_robot + 2 cells = 0.4 m` 的 footprint-safe band；`target_spacing=2 m` 用于 SSTG 的 farthest-point 离散采样和逐候选 spacing 诊断，不用来人为加厚经典 Frontier 的边界。正式 utility 不再重复加入 spacing 权重。
 
 地图画布尺寸对算法已知，栅格内容未知。动态扩张地图、定位漂移、传感器噪声和动态障碍不在本协议内。
 
@@ -41,7 +41,7 @@ frontier center 位于与 unknown 相距至多 `r_robot + 2 cells = 0.4 m` 的 f
 | `nbv` | NBV-Unknown | 对 frontier 与已知安全采样点计算遮挡感知未知增益–路径代价 | Connolly 1985；Bircher et al. 2016 |
 | `rrt` | RRT-Unknown (adapted) | 在当前可达 known-free 区域随机采样，按增益/代价随机化选择；不是完整 multi-RRT ROS 系统 | LaValle 1998；Umari and Mukhopadhyay 2017 |
 | `ans` | ANS-Global Unknown (adapted) | 公开 pretrained global policy 只读取 belief occupancy/explored channels，共同 A* 执行 | Chaplot et al., ICLR 2020 |
-| `sstg` | SSTG-Explorer Unknown | 多代表 frontier、确定性拓扑视点、有向转向、测地代价、净空、视点间距与未知增益联合排序 | 本文；测地执行依据 Hart et al. 1968 |
+| `sstg` | SSTG-Explorer Unknown | 多代表 frontier、确定性拓扑视点、有向转向；未知增益、测地代价与净空排序；FPS 保证候选离散性 | 本文；测地执行依据 Hart et al. 1968 |
 
 Uniform Grid 需要预先知道全地图格点布局，不满足 unknown-input invariant，因此不放入未知主表；它仍保留在已知地图主表。所有 `(adapted)` 名称均表示公共二维协议适配，不能冒充原论文完整传感器/局部控制栈。
 
@@ -84,7 +84,7 @@ python scripts/run_unknown_benchmark.py --profile ablation --no-frames
 
 `paper` 默认对每个 sensor–environment–algorithm 的 run 0 生成完整逐步 PNG/GIF/MP4，其余 seeds 保存同样完整的数值 trace、belief updates 和 `belief_final.npy`。需要所有 seeds 的媒体时加 `--media-runs all`。
 
-`ablation` 比较 Full、single frontier centroid、known-obstacle-only safety、no topological vantages 与 no spacing utility。前两项直接复现 dense/warehouse 的已定位失败机制；后两项检验 SSTG 的空间离散性贡献。消融默认不生成媒体，上述命令显式使用 `--no-frames`，但所有数值 trace 仍保留。
+`ablation` 比较 Full、single frontier centroid、known-obstacle-only safety、no topological vantages 与 with spacing utility。前两项直接复现 dense/warehouse 的已定位失败机制；后两项检验 FPS 与额外 spacing score 的作用。冻结前消融显示显式 spacing score 没有改善任何宏平均点估计，因此最终 Full 采用更简洁的 `spacing_weight=0`，但仍保留 FPS 候选间距和全部 NN/冗余评价。消融默认不生成媒体，上述命令显式使用 `--no-frames`，但所有数值 trace 仍保留。
 
 主实验默认写入 `outputs/unknown_benchmark_runs/`，消融默认写入独立的 `outputs/unknown_ablation_runs/`，各自维护 `latest`，不会互相覆盖网页入口。
 
