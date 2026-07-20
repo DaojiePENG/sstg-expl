@@ -1,345 +1,314 @@
 # SSTG-Explorer
 
-SSTG-Explorer（Spatial Semantic Topological Graph Explorer）是在二维占据栅格上生成视觉语义观测节点序列的可追踪探索算法。它不仅输出最终路径，还记录每次决策中所有候选点、拒绝原因、待探索 frontier、所选目标、A* 路径、覆盖增量和全局恢复过程。
+SSTG-Explorer（Spatial Semantic Topological Graph Explorer）面向未知室内环境，在线生成安全、稀疏、可供后续语义感知或巡检任务使用的观测拓扑。它解决的核心问题不是“雷达是否已经把地图看全”，而是：
 
-本仓库面向两类读者：
+> 长量程传感器已经完成占据建图时，机器人是否仍以规定的任务半径（正式实验为 2 m）覆盖了整个自由空间，并留下非冗余的空间观测节点？
 
-- 使用者可以从零创建环境、调用算法并浏览逐步结果；
-- 论文作者可以复现已知协议的六方法和未知协议的五方法、多传感器、多环境、多 seed benchmark，并直接获得原始 JSON/CSV、belief、逐步图、视频、统计表和网页。
+本仓库提供算法库、Conda 环境、已知/未知地图基线、逐步候选 trace、完整 benchmark、统计分析、图片/视频和可浏览网页。当前实现是静态二维占据栅格仿真；“SSTG”中的 semantic 表示这些空间节点将来可承载语义证据，当前版本不声称已完成语义识别或真实机器人验证。
 
-仓库现在明确区分两套互补协议：
+## 1. 三种实验语义
 
-1. `known_static_disk`：算法给定完整静态二维栅格，使用圆盘覆盖 proxy；保留已有 270-run 主表和 315-run 消融。
-2. `unknown_static_occlusion`：算法从全未知 belief map 开始，只接收带 FOV、量程和墙体遮挡的在线射线观测；ground truth 仅供传感器和评价器使用。
+| 协议 | 策略可读信息 | 覆盖定义 | 用途 |
+|---|---|---|---|
+| `known_static_disk` | 完整静态地图 | 观测节点 2 m 圆盘覆盖 | 全知结构参考与模块消融 |
+| `unknown_static_grid_occlusion_aware` | 在线三值 belief | 遮挡射线已正确观测的 free cells | 旧 sensor-only 诊断协议 |
+| `unknown_static_grid_joint_topological_coverage` | 在线三值 belief | 同时满足 sensor coverage 与 2 m topology coverage | 论文主协议 |
 
-两套结果不能混表。未知协议更接近在线建图，但仍假设完美位姿、静态环境和理想无噪声传感器，不等同于完整 RGB SLAM 或真实机器人实验。
+三者不能混作同一随机变量做显著性检验。已知地图是全知参考；旧 unknown 结果用于证明“sensor 看全不等于拓扑看全”；joint unknown 是新算法与基线的公平主任务。
 
-## 1. 安装
+正式结果说明这个区别非常大：旧 sensor-only SSTG 的 sensor coverage 为 98.38%，但把其探索点按 2 m 重新评价后，topological coverage 只有 33.02%。新 joint SSTG 在线继续生成 coverage-gap candidates，最终达到 99.99% sensor coverage、96.14% topological coverage 和 100% success。
 
-需要 Conda、Git 和 Python 3.10。所有命令在仓库根目录执行。
+## 2. 安装与测试
+
+需要 Conda、Git、FFmpeg 和 Linux/macOS。仓库提供 Python 3.10 环境：
 
 ```bash
 conda env create -f environment.yml
 conda activate sstg-explorer
+python -m pip install -e .
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q
 ```
 
-更新已有环境：
+本机 ROS Jazzy 会把 Python 3.12 的 pytest 插件注入项目的 Python 3.10 环境，因此测试命令显式关闭第三方插件自动加载。当前回归结果为 `18 passed`。
 
-```bash
-conda env update -n sstg-explorer -f environment.yml --prune
-python -m pip install -e .
-```
-
-完整 benchmark 包含公开预训练学习基线，首次使用额外执行：
+学习基线首次使用前运行：
 
 ```bash
 python scripts/setup_learning_baselines.py --install-dependencies
 ```
 
-这会安装 CPU PyTorch、下载 Active Neural SLAM global-policy checkpoint，并校验 SHA-256；权重不会提交到 Git。
+该脚本安装 CPU PyTorch、下载 Active Neural SLAM global-policy checkpoint 并校验 SHA-256。权重不提交到 Git；正式 manifest 记录其来源和哈希。
 
-## 2. 最小使用示例
+## 3. 最小使用示例
+
+### 3.1 在线 joint SSTG-Explorer（默认/推荐）
+
+```python
+from sstg_explorer import SensorConfig, UnknownExplorerConfig, UnknownMapExplorer
+from sstg_explorer.environments import create_environment
+
+environment = create_environment("multiple_rooms")
+explorer = UnknownMapExplorer(UnknownExplorerConfig(
+    strategy="sstg",
+    coverage_objective="joint",
+    sensor=SensorConfig(
+        field_of_view_deg=120,
+        max_range=12,
+        angular_resolution_deg=0.25,
+    ),
+    topological_radius=2.0,
+    target_coverage=0.95,              # sensor coverage target
+    target_topological_coverage=0.95,
+))
+
+result = explorer.explore(
+    environment.get_occupancy_map(),  # 内部仅由 sensor/evaluator 持有
+    environment.get_start_pose(),
+)
+
+print(result["success"])
+print(result["metadata"]["sensor_coverage_ratio"])
+print(result["metadata"]["topological_coverage_ratio"])
+print(result["metadata"]["topological_node_count"])
+print(result["metadata"]["oriented_view_count"])
+print(result["nodes"])                 # 空间拓扑节点
+print(result["oriented_views"])        # 带朝向的感知动作
+print(result["steps"][0])              # 完整候选和 belief update
+```
+
+传入的 occupancy grid 是仿真 hidden truth。策略候选生成、gain、reachability、utility 和 A* 只能读取逐步积累的 `belief`；truth 只进入 ray sensor 和 evaluator。
+
+`UnknownExplorerConfig()` 默认即为最终 `coverage_objective="joint"`、`spacing_weight=0.30`。如需复现冻结的旧诊断协议，必须显式设置 `coverage_objective="sensor"`；它不代表最终 SSTG-Explorer。
+
+### 3.2 已知地图结构规划
 
 ```python
 from sstg_explorer import SSTGExplorer
 from sstg_explorer.environments import create_environment
 
-env = create_environment("maze", width=12.0, height=12.0)
-explorer = SSTGExplorer()
-result = explorer.explore(
-    env.get_occupancy_map(),
-    env.get_start_pose(),
+environment = create_environment("maze")
+result = SSTGExplorer().explore(
+    environment.get_occupancy_map(),
+    environment.get_start_pose(),
 )
-
-print(result["success"])
 print(result["metadata"])
-print(result["nodes"])
-print(result["steps"][0])  # 完整候选与决策状态
 ```
 
-`start_pose` 是 `(x, y, theta_deg)`。返回值：
+默认 `SSTGExplorer()` 是已知地图最终版本；历史实验变体只在 benchmark profile 中暴露。
 
-- `nodes`：已接受观测节点；
-- `steps`：逐决策 trace，包括失败选择和恢复事件；
-- `metadata`：覆盖、A* 路径距离、全部实际 `paths`、节点数、时间、恢复轮次和终止原因；
-- `success`：是否达到目标覆盖率。
+## 4. Joint SSTG-Explorer 算法
 
-默认 `SSTGExplorer()` 就是最终方法，不需要选择历史 `optimal` 变体。参数集中在 `src/sstg_explorer/config.py`。
+令 hidden truth 为 \(M^\star\)，策略 belief 为 \(B_t\in\{-1,0,100\}\)。算法同时报告：
 
-未知地图最小示例：
+\[
+C_t^I=\frac{|\{c:M^\star(c)=0\land B_t(c)=0\}|}{|\{c:M^\star(c)=0\}|},
+\]
 
-```python
-from sstg_explorer import SensorConfig, UnknownExplorerConfig, UnknownMapExplorer
+\[
+C_t^T=\frac{|\{c:M^\star(c)=0,\ \min_{v_i\in V_t}\|x_c-p_i\|\le r_v\}|}
+{|\{c:M^\star(c)=0\}|},\qquad C_t^J=\min(C_t^I,C_t^T).
+\]
 
-unknown = UnknownMapExplorer(UnknownExplorerConfig(
-    strategy="sstg",
-    sensor=SensorConfig(field_of_view_deg=90, max_range=12),
-))
-result = unknown.explore(env.get_occupancy_map(), env.get_start_pose())
-print(result["metadata"]["coverage_ratio"])
+正式任务要求 \(C_t^I\ge0.95\) 且 \(C_t^T\ge0.95\)，其中 \(r_v=2\) m。2 m disk 是与已知地图 benchmark 一致的任务距离 proxy，不等于真实相机可见性或语义识别置信度。
+
+每轮包含五步：
+
+1. 以 0.3 m 机器人 footprint 腐蚀 `known_free`，只在当前起点四连通安全区规划；unknown cell 从不当作 free。
+2. 从 frontier band、reachable-space FPS vantages 和已知自由空间拓扑缺口生成候选。即使 sensor 已经没有 unknown gain，coverage-gap candidates 仍继续生成。
+3. 对候选计算信息增益 (G_t^I)、2 m 边际拓扑增益 (G_t^T)、known-free 测地代价和障碍净空。
+4. SSTG 使用与代码一致的联合效用：
+
+   \[
+   \bar g_t=0.4\bar G_t^I+0.6\bar G_t^T,\qquad
+   U_t(f)=\frac{1.20\bar g_t(f)}{1+0.60\,d_G(p_t,f)/r_v}
+   +0.30\bar c_t(f)+0.30\bar s_t(f),
+   \]
+
+   其中 \(\bar s_t\) 是候选到已有空间节点的截断归一化距离。全矩阵配对选择实验表明该项在不损失 coverage、success 或 clearance 的情况下减少路程、节点和动作，因此进入最终配置。
+
+5. 执行 known-free A*，沿实际路径每 1 m 扫描并在最终朝向补一帧；更新 belief、节点、朝向动作和两类 coverage。
+
+同一位置附近的不同朝向不是多个空间点：若动作与已有节点距离不超过 0.25 m，它关联到该节点但仍保留为 oriented action。这样可以分别评价拓扑冗余和窄 FOV 的旋转代价。
+
+完整公式、伪代码、复杂度和论文表述边界见 [论文写作参考](docs/PAPER_WRITING_REFERENCE.md)。
+
+## 5. 如何理解逐步可视化
+
+Joint 图同时给出 policy belief、evaluation-only truth、实际 A* 轨迹、每个 2 m 节点圆盘和全部候选生命周期。
+
+- 蓝色节点/折线：已接受空间节点与实际执行轨迹；
+- 橙色区域：当前 belief 中已知自由但尚未被 2 m 节点覆盖；
+- 右侧 truth 红/橙/紫/蓝：neither / sensor-only / topology-only / both；
+- 橙色三角：pending candidates；
+- 绿色菱形：本轮新生成候选；
+- 蓝色空心方块：topology gap candidates；
+- 星形：selected candidate；
+- 各色叉号：gain、预算、重复或已执行剪枝；
+- 右栏：sensor/topology/joint coverage、候选 ID/type、两类 gain、priority、cost、clearance 和状态计数。
+
+图不是数据的替代品。每个 run 同时保存 `run.json`、`decisions.csv`、`candidates.csv`、`trajectory.csv`、`path_waypoints.csv`、`scan_poses.csv`、`oriented_views.csv` 和 `belief_final.npy`。
+
+## 6. 运行 benchmark
+
+先验证链路：
+
+```bash
+python scripts/run_unknown_benchmark.py \
+  --profile smoke --coverage-objective joint
 ```
 
-这里传入的 occupancy grid 只由 explorer 内部的 sensor/evaluator 持有；策略候选、frontier、信息增益和 A* 只能读取累计 belief。完整 invariant 与传感器配置见 [未知地图 Benchmark 指南](docs/UNKNOWN_MAP_BENCHMARK.md)。
+论文主矩阵：
 
-## 3. 算法概览
+```bash
+# 6 sensors × 9 environments × 5 methods × 3 seeds = 810 runs
+python scripts/run_unknown_benchmark.py \
+  --profile paper --coverage-objective joint
+```
 
-### 3.1 安全角向候选
+联合困难场景消融：
 
-在当前节点周围以 `r_view` 为半径、固定 `d_theta=30°` 产生候选。候选依次经过机器人外形膨胀碰撞、已覆盖区域强度、最低优先级和队列重复检查。正式消融显示固定 30° 在覆盖、路程、净空和运行时间上均不差于窄通道 15° 增密，因此 adaptive sampling 只保留为消融，不属于最终 SSTG-Explorer。
+```bash
+# 5 SSTG variants × 4 hard scenes × 3 sensors × 3 seeds = 180 runs
+python scripts/run_unknown_benchmark.py \
+  --profile ablation --coverage-objective joint --no-frames
+```
 
-### 3.2 可追踪全局队列
+扩展统计与 sensor 饱和后 gap 分析：
 
-所有存活候选进入全局 max-priority queue。每次 priority 更新都会让旧 heap entry 失效，避免 stale priority 造成跨房间来回跳转。每个候选保留稳定 ID、来源、分数和状态。
+```bash
+python scripts/analyze_joint_benchmark.py \
+  outputs/joint_benchmark_runs/latest
+```
 
-### 3.3 测地、安全优先级与 A*
-
-算法从当前节点计算 one-to-all 安全栅格测地 cost map。候选联合障碍感知距离、探索强度和障碍净空排序，而不是可能穿墙的欧氏距离；选中后再用按 `r_robot+d_safe=0.5 m` 膨胀的 A* 输出实际折线路径。A* 搜索预算至少覆盖整张栅格，避免把预算耗尽误判成不可达。
-
-### 3.4 覆盖缺口恢复
-
-若局部队列耗尽但覆盖仍不足，算法在未覆盖安全自由空间上计算距离变换，选择大缺口的局部极大值，经 A* 可达性验证后重新播种队列。最终同 commit 消融中，关闭该机制会使 `sparse_obstacles` 停在 95% 门槛以下；不要把它限定描述为某一个窄通道特例。
-
-完整公式、伪代码、复杂度和消融设计见 [论文公式参考](docs/PAPER_WRITING_REFERENCE.md)。
-
-### 3.5 未知地图扩展
-
-Unknown SSTG 是论文主协议下的最终方法。它从 all-unknown belief 开始，以确定性 farthest-point sampling 在候选层保证空间离散，再将多代表 frontier、拓扑视点和有向旋转候选按遮挡预测未知增益、known-free 测地代价与视点净空排序。最近历史视点距离仍逐候选记录并作为核心评价指标，但受控消融显示把它再加入 utility 没有收益，因此最终方法不保留多余的显式 spacing 项。
-
-未知 cell 从不当作 free；A* 只允许机器人完整 0.3 m footprint 已观测为 free 的中心栅格。0.5 m 作为偏好净空和安全率阈值单独报告，不再错误地扩大机器人硬尺寸。机器人沿实际 A* 路径每 1 m 持续扫描；90°/120° 等定向传感器可原地换朝向，该决策计入 oriented viewpoint、总旋转量和空间冗余率。
-
-## 4. 如何理解一张逐步图
-
-每张 `step_XXXX.png` 同时给出：
-
-- 蓝色圆点：已探索观测点；蓝色连续折线：累计实际 A* 执行轨迹；
-- 黄色三角：当前待探索 global frontiers，大小反映 priority；
-- 绿色菱形：本步新加入候选；
-- 红色 ×：机器人膨胀后碰撞；
-- 橙色 ×：探索强度不足；
-- 紫色 ×：优先级不足；
-- 灰色 ×：与队列候选重复；
-- 粉色星形：本步 selected frontier；
-- 绿色实心点：当前机器人位置；
-- 青色折线：实际 A* 路径；
-- 青色 P：全局覆盖缺口恢复候选。
-
-右侧面板列出 event、coverage before/after/gain、explored/pending 数量、选择 ID/类型/priority，以及各候选状态计数。逐步图对应的完整数值保存在同目录 `run.json` 和全局 `results.json`。
-
-未知协议逐步图左侧只显示 policy-visible belief，右侧 truth 明确标为 evaluation-only，红色表示未观测真实 free space。pending 点大小反映 priority，并带 heading 箭头；右栏列出 top-3 candidate 的 ID、kind、gain、priority 和 geodesic distance。每个 run 的 `candidates.csv` 逐点保存坐标、朝向、optimistic/predicted gain、cost、clearance、nearest-viewpoint distance、priority、new/selected 标记和最终状态。
-
-## 5. Benchmark 方法与依据
-
-正式 profile 比较：
-
-| CLI 名称 | 方法 | 依据 |
-|---|---|---|
-| `uniform_grid` | 均匀覆盖网格 | coverage path planning 文献 |
-| `rrt` | RRT 视点采样 | LaValle；multi-RRT exploration |
-| `frontier` | 栅格 frontier | Yamauchi 1997 |
-| `nbv` | next-best-view 信息增益 | Connolly 1985 |
-| `active_neural_slam` | ANS-Global (adapted) | Chaplot et al., ICLR 2020 公开 checkpoint |
-| `sstg_explorer` | 完整 SSTG-Explorer | 本项目 |
-
-未知地图主表使用 `Frontier-Unknown`、`NBV-Unknown`、`RRT-Unknown (adapted)`、`ANS-Global Unknown (adapted)` 和 `SSTG-Explorer Unknown`。Uniform Grid 因为需要预先知道全图格点，不满足 unknown-input invariant，只保留在已知协议。每个 adapter 的原论文、输入差异和不能声称的边界见 [未知地图 Benchmark 指南](docs/UNKNOWN_MAP_BENCHMARK.md)。
-
-ANS 只适配发布的 learned global policy；RGB Neural-SLAM mapper 和 learned local controller 不在当前二维协议中。因此所有结果始终标为 `ANS-Global (adapted)`，不能当作完整 ANS 复现。
-
-六种方法都在相同的 0.5 m 膨胀栅格上执行 A*，统一报告实际路径长度。Uniform 的障碍格点投影到最近安全格，Frontier 按可达测地距离选择，NBV 的旅行代价来自 cost map，RRT 的新增覆盖节点也由机器人实际访问；不会再让 baseline 用跨墙直线或树边总长获得虚假优势。
-
-逐基线出处、公平性边界与 BibTeX 见 [Benchmark 指南](docs/BENCHMARK_GUIDE.md) 和 [REFERENCES.bib](docs/REFERENCES.bib)。
-
-## 6. 运行实验
-
-先验证数值和媒体链路：
+已知地图参考：
 
 ```bash
 python scripts/run_benchmark.py --profile smoke
-```
-
-论文级完整实验：
-
-```bash
 python scripts/run_benchmark.py --profile full
-```
-
-论文消融实验：
-
-```bash
 python scripts/run_benchmark.py --profile ablation --no-frames
 ```
 
-未知地图论文矩阵：
+自定义方法、场景、传感器和 seeds 可用 `--algorithms`、`--environments`、`--sensors`、`--runs`。调试才使用 `--no-frames`；正式 profile 的三个 seeds 都保留完整数值 trace，run 0 额外编码全部 PNG/GIF/MP4。
 
-```bash
-# 6 sensor configs × 9 scenes × 5 methods × 3 seeds
-python scripts/run_unknown_benchmark.py --profile paper
+## 7. 输出、审计与网页
 
-# 5 variants × 4 hard scenes × 3 sensors × 3 seeds
-python scripts/run_unknown_benchmark.py --profile ablation --no-frames
-```
-
-其中包含 360°/240°/120°/90° FOV 和 8/12/16 m 量程敏感性。默认每个配置的 run 0 保存全部逐步媒体，三个 seeds 都保存完整 trace 和最终 belief；使用 `--media-runs all` 可为全部 seeds 编码视频。
-
-自定义范围：
-
-```bash
-python scripts/run_benchmark.py --runs 3 \
-  --algorithms frontier active_neural_slam sstg_explorer \
-  --environments multiple_rooms dense_obstacles narrow_passages
-```
-
-调试时可用 `--no-frames`；正式实验默认保存每个 run 的所有决策帧、GIF 和 MP4。
-
-## 7. 输出与网页
-
-结果写入 `outputs/benchmark_runs/<timestamp>/`，`latest` 指向最近结果。核心文件：
+主结果位于：
 
 ```text
-manifest.json                     命令、参数、Git、环境和 checkpoint
-run.log                           逐实验日志
-results.json                      全部 trajectory、decision trace 和指标
-summary.csv                       逐环境 mean/std/95% CI
-aggregate.csv                     跨环境汇总
-results_table.md / .tex           论文表格草稿
-coverage_heatmap.png
-coverage_distance_tradeoff.png
-safety_comparison.png / safety_table.{csv,md,tex}
-artifacts/<env>/<algo>/steps/     每一个决策状态截图
-artifacts/<env>/<algo>/video.mp4
-index.html
+outputs/joint_benchmark_runs/<timestamp>/
+├── manifest.json                         命令、参数、依赖、Git、源码/checkpoint hash
+├── results.json                          810 条结果
+├── summary.csv / aggregate.csv           分组与宏平均
+├── pairwise_all_metrics.csv              8 个指标族的 CI/Wilcoxon/Holm/effect size
+├── post_sensor_gap_closure*.csv           sensor 达标后拓扑补全分析
+├── hard_scene_analysis.csv               dense/rooms/warehouse
+├── three_protocol_comparison.{csv,md}     三种覆盖语义
+├── statistical_analysis.{json,md}
+├── VALIDATION_REPORT.md                   11/11 统计谬误扫描与复现结论
+├── audit_report.json
+├── index.html
+└── artifacts/<sensor>/<env>/<method>/
+    ├── run.json / belief_final.npy
+    ├── decisions.csv / candidates.csv
+    ├── trajectory.csv / path_waypoints.csv / scan_poses.csv
+    ├── oriented_views.csv
+    ├── steps/step_XXXX.png / final.png
+    └── animation.gif / video.mp4
 ```
+
+最终发布集 `outputs/joint_benchmark_selected/20260719_223630/` 由 648 个未受 utility 选择影响的冻结基线和 162 个最终 SSTG runs 组成；manifest 保存两部分的路径、结果 SHA-256、源码 SHA-256 与选择报告。自动审计为：
+
+- 810/810 run JSON、belief 和六类 CSV 完整；
+- 6,270 张 step PNG、270 GIF、270 MP4；
+- belief replay mismatch = 0；known-cell/truth mismatch = 0；
+- media error、HTML missing reference、log error marker 均为 0；
+- 最终 SSTG 的 162-run 重跑删除算法标签和 wall-clock 字段后与选择实验 162/162 精确匹配；冻结基线另有 20/20 完整 normalized run JSON 精确复现。
 
 打开网页：
 
 ```bash
-python -m http.server 8000 --directory outputs/benchmark_runs/latest
+python -m http.server 8002 \
+  --directory outputs/joint_benchmark_selected/latest
 ```
 
-浏览器访问 `http://127.0.0.1:8000/`。完整目录和核验规则见 [Benchmark 指南](docs/BENCHMARK_GUIDE.md)。
+浏览器访问 `http://127.0.0.1:8002/`。
 
-未知地图主结果写入 `outputs/unknown_benchmark_runs/<timestamp>/`，未知消融写入 `outputs/unknown_ablation_runs/<timestamp>/`，两者各自维护 `latest`。主结果网页服务命令为：
+## 8. 正式主结果
 
-```bash
-python -m http.server 8001 --directory outputs/unknown_benchmark_runs/latest
-```
+| 方法 | Sensor | Topology 2 m | Distance | Nodes | Actions | NN | Redundant nodes | Clearance | Success |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ANS-Global Joint (adapted) | 99.98% | 96.42% | 63.20 m | 19.00 | 21.41 | 1.96 m | 4.5% | 0.72 m | 98.1% |
+| Frontier Joint | 99.96% | **97.04%** | 54.08 m | 32.02 | 39.46 | 1.27 m | 29.6% | 0.79 m | 96.3% |
+| NBV Joint | 99.78% | 94.28% | **46.78 m** | 17.46 | 20.29 | 1.73 m | 15.0% | **0.99 m** | 90.7% |
+| RRT Joint (adapted) | 99.99% | 96.19% | 57.64 m | **14.81** | **16.66** | 2.07 m | 3.5% | **0.99 m** | **100%** |
+| **SSTG-Explorer Joint** | **99.99%** | 96.14% | 63.99 m | 15.76 | 17.30 | **2.15 m** | **0.1%** | 0.95 m | **100%** |
 
-未知协议每个 run 除 `run.json` 和 `belief_final.npy` 外，还保存 `decisions.csv`、`candidates.csv`、`trajectory.csv`、`path_waypoints.csv`、`scan_poses.csv`、全部 step PNG、`final.png`、GIF 和 MP4。runner 结束前自动重放 belief updates、核验 belief/truth 一致性、媒体帧数、HTML 引用和错误日志；结果写入 `audit_report.json`，失败时命令返回非零状态。
+以 54 个 sensor–environment 为 cluster：
 
-## 8. 指标解释
+- SSTG 相对 ANS/Frontier/NBV/RRT 的空间节点冗余分别低 4.38/29.56/14.96/3.41 pp，所有 95% CI 不跨 0，所有 Holm `p < 1.8e-5`；
+- SSTG 节点和动作显著少于 ANS、Frontier、NBV，但比 RRT 多 0.94 nodes / 0.64 actions；
+- SSTG 净空显著高于 ANS 和 Frontier；相对 NBV/RRT 的小幅净空劣势经 Holm 后不显著；
+- SSTG 和 RRT 均 100% success；SSTG 相对 NBV 高 9.26 pp（Holm `p=0.0266`）；
+- SSTG 的明确代价是 travel：相对 Frontier/NBV/RRT 长 9.91/17.22/6.36 m，均显著。
 
-- `coverage_ratio`：已知协议是自由栅格圆盘覆盖 proxy；未知协议是真实自由栅格已被射线正确观测为 free 的比例，二者不能混表；
-- `total_distance`：实际 A* 折线路径累计；
-- `coverage_efficiency`：coverage/distance；
-- `avg/min_obstacle_distance`：节点安全裕量；
-- `avg/min_boundary_distance`：节点到地图边界净空；
-- `node_safe_fraction`：满足 0.5 m 机器人+安全裕量的视点比例；
-- `avg/min_path_obstacle_distance`、`path_safe_fraction`：对全部实际 A* 轨迹采样的安全指标；
-- `mean/median/min_nn_distance`：节点最近邻间距，均值越大通常表示空间冗余越少；
-- `redundant_viewpoint_fraction`：与任一历史视点距离小于 1 m 的决策比例；
-- `coverage_per_viewpoint`：每个 oriented viewpoint 对应的最终 coverage；
-- `dispersion_uniformity`：最近邻间距规则性，必须与 coverage 和平均间距联合解释；
-- `success_rate`：达到目标覆盖的 run 比例；
-- `num_generated/rejected/recovery_candidates`：决策过程诊断量。
+因此最终算法定位是“可靠完成双覆盖、空间节点极少重复、净空较高的观测拓扑”，不是 shortest-path 算法，也不是所有指标全面第一。
 
-论文应报告所有环境、mean ± std/CI、失败数和硬件信息。不能从不同 commit 拼结果，也不能只展示 SSTG 获胜环境。
+最终配置选择也保留完整负结果。12-cluster hard set 中 single-centroid 的点估计一度更好，因此又补跑了 162-run 全矩阵；multi-frontier 最终以 +0.361 pp topology（95% CI [0.108, 0.634]，三个开发变体保守校正 `p=0.0487`）胜出，但多 0.46 nodes / 0.70 actions。Spacing 项相对 `w_s=0` 保持 coverage/success/clearance，并减少 2.00 m travel 与 0.33 actions。选择过程见最终网页的 `VARIANT_SELECTION.md`，这些属于透明的 development evidence，不冒充独立验证。
 
-## 9. 当前正式结果（2026-07-19）
+困难场景全部六传感器下，SSTG 在 `multiple_rooms` / `dense_obstacles` / `warehouse` 达到 95.47% / 96.16% / 95.61% topological coverage，54/54 成功；节点冗余为 0% / 0% / 0.67%。warehouse 仍有 110.27 m 的平均路程，是当前主要短板。
 
-### 9.1 未知地图主协议
-
-最终目录 `outputs/unknown_benchmark_runs/20260719_141122/` 包含 6 sensor configs × 9 环境 × 5 方法 × 3 seeds，共 810 条记录；`audit_report.json` 已核验 810 个 belief/JSON/CSV、2,199 张逐步图、270 个 GIF 和 270 个 MP4，所有 belief update 均可无差异重放，且已知 cell 与 truth 完全一致。实验来自干净 commit `502afcd`，源码 SHA-256 为 `2385e87afd5f5bb601de27a73fd88620d7422c7131ed03f965081e9c3bb4b5a4`。
-
-| 方法 | Observed-free coverage | Distance | Oriented views | Mean NN | Redundant views | Clearance | Success |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| SSTG-Explorer Unknown | **98.38%** | 15.73 m | **4.57** | **3.69 m** | **26.5%** | 1.45 m | **100%** |
-| NBV-Unknown | 97.74% | **14.75 m** | 6.38 | 2.31 m | 28.8% | **1.53 m** | 97.5% |
-| RRT-Unknown (adapted) | 97.74% | 15.26 m | 6.88 | 2.12 m | 30.9% | 1.48 m | 96.3% |
-| ANS-Global Unknown (adapted) | 97.11% | 15.27 m | 7.43 | 2.24 m | 32.9% | 1.40 m | 94.4% |
-| Frontier-Unknown | 94.26% | 17.17 m | 14.96 | 1.51 m | 54.7% | 1.14 m | 75.9% |
-
-以 54 个 sensor–environment 为 cluster 的 bootstrap/Wilcoxon/Holm 显示：SSTG 相对 Frontier、NBV、RRT 的 coverage 分别为 `+4.12 pp [2.13, 6.41]`、`+0.64 pp [0.20, 1.14]`、`+0.64 pp [0.21, 1.07]`，Holm `p=0.00023/0.0169/0.0169`；相对 ANS 为 `+1.28 pp [0.09, 2.92]`，但 Holm `p=0.0756`，不能写显著。全部 distance 差值 CI 跨 0。
-
-空间质量不是用少量远点伪造：SSTG 同时取得最高 coverage、最低节点数、最大 NN 间距、最低回访率和最高 coverage/view。其平均净空 1.45 m 低于 NBV/RRT 的 1.53/1.48 m，但高于 ANS/Frontier 的 1.40/1.14 m。90°/120° 的空间冗余主要来自必要的同点多朝向观测，因此必须与 `in_place_rotations` 和总旋转量联合解释。
-
-原短板在全部 6 个传感器配置上的均值已改善为：`multiple_rooms` 98.62%、`dense_obstacles` 97.57%、`warehouse` 98.28%。最难的 90° 条件仍分别达到 98.85%/98.28%/99.57%；360°×12 m 则为 100%/97.47%/99.90%。SSTG 在 8/12/16 m 的 360° range sweep 为 98.81%/98.78%/98.49%，在 360°/240°/120°/90° 的 12 m FOV sweep 为 98.78%/98.14%/98.22%/97.87%。
-
-未知消融目录 `outputs/unknown_ablation_runs/20260719_141132/` 含 180/180 条并通过审计。single-centroid 使 coverage 降 1.89 pp、success 降至 91.7%，证明多 frontier 代表点解决 warehouse/dense 遮挡短板；额外 `+0.30 spacing` score 的所有宏平均点估计均不优于 FPS-only，因此最终 SSTG 使用候选层 FPS 离散性和 `spacing_weight=0`。
-
-### 9.2 已知地图受控协议
-
-最终目录 `outputs/benchmark_runs/20260719_043528/` 包含 6 方法 × 9 环境 × 5 runs，共 270 条记录；受控消融在 `outputs/ablation_runs/20260719_043544/`，共 315 条。跨环境/run 汇总：
-
-| 方法 | Coverage | Distance | Nodes | Success |
-|---|---:|---:|---:|---:|
-| SSTG-Explorer | **98.52 ± 1.27%** | 48.13 ± 23.49 m | 20.56 | 100% |
-| Frontier | 96.92 ± 1.69% | **45.28 ± 20.16 m** | 19.44 | 100% |
-| ANS-Global (adapted) | 96.48 ± 0.97% | 79.49 ± 46.43 m | 19.00 | 100% |
-| NBV | 96.11 ± 0.94% | 89.96 ± 50.59 m | **12.24** | 100% |
-| RRT | 96.32 ± 1.57% | 214.56 ± 150.92 m | 51.24 | 100% |
-| Uniform Grid | 96.93 ± 1.65% | 60.23 ± 29.99 m | 25.22 | 100% |
-
-以环境为 cluster 的 10,000 次 bootstrap 与环境级 Wilcoxon/Holm 显示：SSTG 相对 Frontier 覆盖高 `+1.61 pp [0.90, 2.45]`（Holm `p=0.0234`），路径差 `+2.85 m [-2.80, 8.92]` 不显著。相对 ANS/NBV/RRT/Uniform，覆盖优势分别为 `+2.05/+2.42/+2.20/+1.60 pp`，Holm 校正后均显著；路径分别短 `31.36/41.83/166.43/12.10 m`。
-
-旧短板已经重新验证：
-
-- `multiple_rooms`：97.11%，66.19 m，平均视点净空 1.411 m；
-- `dense_obstacles`：99.59%，48.38 m，六方法中覆盖、路程与视点净空均为最佳点估计；
-- `narrow_passages`：98.00%，75.73 m，覆盖与视点净空均为最佳点估计。
-
-SSTG 平均视点净空 1.160 m，仅低于路径代价极高的 RRT 1.188 m；它相对 Frontier 的净空增量为 `+0.097 m [0.032, 0.157]`（Holm `p=0.0469`），相对 ANS/NBV/Uniform 也显著更高。平均的“每个 run 最小路径净空”0.597 m 为最高点估计，所有方法安全视点比例均为 100%。消融中去掉净空效用会使视点净空下降 `0.140 m [0.074, 0.213]`（Holm `p=0.0469`）且覆盖下降 1.56 pp；关闭 recovery 使 success 降至 88.9%。
-
-最终 fixed-30° 与 adaptive-15° 的差异未达统计显著；选择 fixed 是因为它的 coverage/distance/clearance/runtime 宏平均点估计同时不差。结论应定位为“显著更高覆盖、可比于 Frontier 的路程、较安全且可审计的语义视点”，而不是“所有指标全面最优”。
-
-## 10. 项目结构
+## 9. 项目结构
 
 ```text
 src/sstg_explorer/
-  core/                 SSTG 核心、frontier queue、碰撞与覆盖
-  planning/             A* 与 one-to-all geodesic cost
-  baselines/            Uniform/RRT/Frontier/NBV/ANS adapter
-  benchmark/            统一执行和指标
-  environments/         九类可复现二维环境
-  sensing/              FOV/量程/遮挡 ray-casting
-  unknown/              belief-map 在线策略与五种适配方法
-  visualization/        最终图与完整 decision-trace 图
+  core/                 known-map SSTG、frontier queue、coverage
+  unknown/              belief-only joint explorer 与 adapters
+  sensing/              FOV/range/first-obstacle ray casting
+  planning/             A* 和 one-to-all geodesic map
+  baselines/            Frontier/NBV/RRT/ANS/Uniform adapters
+  benchmark/            公共执行和指标
+  environments/         九类可复现二维场景
+  visualization/        belief/truth/candidate/coverage 图
 scripts/
-  run_benchmark.py             已知地图 benchmark
-  run_unknown_benchmark.py     未知地图与传感器敏感性 benchmark
-  setup_learning_baselines.py  学习权重/依赖安装
+  run_unknown_benchmark.py
+  analyze_joint_benchmark.py
+  compare_joint_variants.py
+  assemble_joint_benchmark.py
+  finalize_unknown_benchmark.py
+  run_benchmark.py
+  setup_learning_baselines.py
 docs/
   BENCHMARK_GUIDE.md
-  UNKNOWN_MAP_BENCHMARK.md
   PAPER_STRUCTURE.md
   PAPER_WRITING_REFERENCE.md
   REFERENCES.bib
-tests/                  单元与公共 API 回归测试
-environment.yml         核心 Conda 环境
+tests/
+environment.yml
 ```
 
-## 11. 测试与复现检查
+## 10. 论文与投稿材料
 
-```bash
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q
-python examples/basic_exploration.py
-python scripts/run_benchmark.py --profile smoke --no-frames
-python scripts/run_unknown_benchmark.py --profile smoke --no-frames
-```
+- [Benchmark 协议、字段、公平性和结果解释](docs/BENCHMARK_GUIDE.md)
+- [11 页扩展主稿、RA-L 压缩路线与 T-RO 扩展门槛](docs/PAPER_STRUCTURE.md)
+- [完整公式、算法、统计表述和写作禁区](docs/PAPER_WRITING_REFERENCE.md)
+- [基线与相关工作 BibTeX](docs/REFERENCES.bib)
+- [11 页英文扩展稿 PDF](../SSTGExplorerPaper/root.pdf)
+- [从冻结数据生成全部论文图表的脚本](../SSTGExplorerPaper/figures/generate_paper_figures.py)
+- [五算法 × 六阶段的 30-panel 同场景过程对照](../SSTGExplorerPaper/figures/algorithm_process_dense_comparison.pdf)
+- [SSTG 候选生成、拒绝、选择与 gap closure 六阶段专图](../SSTGExplorerPaper/figures/sstg_candidate_lifecycle_dense.pdf)
+- [同一 dense 场景五算法全部 123 个决策帧的 14 页联系表](../SSTGExplorerPaper/figures/algorithm_process_dense_all_steps.pdf)
+- [Round-2 学术审稿与剩余风险](../SSTGExplorerPaper/REVIEW_ROUND2.md)
+- [最终引用、数据、图表与原创性完整性报告](../SSTGExplorerPaper/FINAL_INTEGRITY_REPORT.md)
+- [图表逐项来源与主张追踪](../SSTGExplorerPaper/FIGURE_TABLE_TRACE.yaml)
+- [实验、负结果、限制和主张来源声明](../SSTGExplorerPaper/EXPERIMENT_PROVENANCE.yaml)
+- [论文高影响数值防漂移检查脚本](scripts/verify_paper_claims.py)
 
-常见问题：
+论文仓库位于同级 `../SSTGExplorerPaper/`。当前正文用一张 17 列总表统一三协议与全部方法，另含 cluster effect、困难场景和消融三张表，以及真实三阶段动机图、图义完整解释的三协议 trade-off、五算法各 6 阶段共 30 个过程画面、SSTG 候选生成/拒绝/选择 6 阶段专图和完整 270-cell atlas。trace、网页和视频仍只作为可复现性证据，不作为科研创新点。
 
-- 无桌面环境可以运行，绘图使用 Matplotlib `Agg`。
-- MP4 需要 `imageio-ffmpeg`；错误写入 `video_error.txt`。
-- 完整 trace 占用大量磁盘，调试才使用 `--media-runs representative`。
-- checkpoint 校验失败时重新运行 setup 脚本，不要使用未知权重。
-- Pytest 若加载系统 ROS 插件，使用上述 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`。
+## 11. 局限与发布前事项
 
-## 12. RAL 写作材料
-
-- [文章结构、两张 Mermaid 图与可投稿 SVG 架构图](docs/PAPER_STRUCTURE.md)
-- [公式、伪代码、复杂度、消融和写作禁区](docs/PAPER_WRITING_REFERENCE.md)
-- [Benchmark、逐步字段和基线公平性](docs/BENCHMARK_GUIDE.md)
-- [未知地图、遮挡传感器、冗余指标和独立 benchmark](docs/UNKNOWN_MAP_BENCHMARK.md)
-- [BibTeX 文献库](docs/REFERENCES.bib)
-
-当前仓库没有明确许可证文件。公开代码或提交 multimedia/code artifact 前必须补充许可证，并核对第三方 ANS checkpoint/代码的 MIT 许可和引用要求。
+- 2 m disk 只表示任务距离 proxy；没有模拟可见性、入射角、分辨率或语义置信度；
+- 静态 2-D、理想射线、完美位姿，不等同于 SLAM/真实机器人安全性；
+- ANS 和 RRT 为公共 belief/sensor/planner 接口下的 adapters，不是原完整系统复现；
+- 每个配置 3 seeds，参数开发未预注册；正式验证报告整体置信度为 `CAUTION`；
+- 当前仓库没有明确 LICENSE。公开发布代码、checkpoint adapter 或投稿 artifact 前必须补充许可证并复核第三方许可。

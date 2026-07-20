@@ -1,6 +1,6 @@
 # SSTG-Explorer：RAL 论文公式、算法与写作参考
 
-本文档给出与当前实现一致的双协议数学表述：Sec. 1–10 对应已冻结的 `known_static_disk` 结构规划实验；Sec. 11 对应论文主实验 `unknown_static_occlusion`。两者共享图结构、测地执行与空间质量指标，但覆盖定义和可用信息不同，投稿时绝不能混成一张主表。公式可压缩，不能保留代码中不存在的虚构目标项。
+本文档给出与当前实现一致的三类证据数学表述：Sec. 1–10 对应 `known_static_disk` 结构参考；Sec. 11 对应论文主算法 `unknown_static_grid_joint_topological_coverage`；Sec. 12 保留冻结 `sensor-only unknown` 的诊断公式。三者共享部分图结构与测地执行，但 coverage、终止和可用信息不同，投稿时绝不能混作同一统计变量。公式可压缩，不能保留代码中不存在的虚构目标项。
 
 ## 1. 符号与问题定义
 
@@ -292,9 +292,296 @@ R_{\pi}^{\mathrm{safe}}=\frac{1}{|\Pi|}\sum_{\mathbf p\in\Pi}
 
 另报告 success rate、runtime、节点数、恢复次数、候选总数与各拒绝原因计数。
 
-## 11. 未知地图在线 SSTG-Explorer
+## 11. Joint unknown-map SSTG-Explorer（论文主算法）
 
-### 11.1 Truth–belief 分离与遮挡观测
+### 11.1 两种覆盖 construct
+
+令真实自由栅格集合为
+
+\[
+\mathcal F^\star=\{c\in\mathcal C\mid M^\star(c)=0\}.
+\tag{26}
+\]
+
+Occlusion-aware sensor coverage 是被 ray observation 正确写为 free 的比例：
+
+\[
+C_t^I=
+\frac{|\{c\in\mathcal F^\star\mid B_t(c)=0\}|}
+{|\mathcal F^\star|}.
+\tag{27}
+\]
+
+令空间拓扑节点集合为 \(V_t=\{v_i\}_{i=0}^{N_t}\)，节点位置为 \(p_i\)，任务有效半径为 \(r_v\)。Topology coverage 定义为
+
+\[
+C_t^T=
+\frac{\left|\left\{c\in\mathcal F^\star\middle|
+\min_{v_i\in V_t}\|x_c-p_i\|_2\le r_v\right\}\right|}
+{|\mathcal F^\star|}.
+\tag{28}
+\]
+
+正式实验 \(r_v=2\) m，与 known-map disk benchmark 完全相同。它是 task-distance proxy，不包含 wall occlusion、incidence angle、pixel resolution 或 recognition uncertainty。部署时应把 Euclidean disk \(\mathcal D(p_i,r_v)\) 替换为 calibrated task-valid observation set。
+
+保守 joint scalar 与真正终止条件分别为
+
+\[
+C_t^J=\min(C_t^I,C_t^T),
+\tag{29}
+\]
+
+\[
+\text{success}
+\Longleftrightarrow
+C_t^I\ge\tau_I\ \land\ C_t^T\ge\tau_T,
+\qquad \tau_I=\tau_T=0.95.
+\tag{30}
+\]
+
+不能只对 \(C^J\) 写一个阈值而隐藏两个 component。表、图、JSON 和摘要都分别报告 \(C^I,C^T\)。
+
+### 11.2 Truth–belief 分离与观测更新
+
+策略 belief 为
+
+\[
+B_t:\mathcal C\rightarrow\{-1,0,100\},
+\qquad B_0(c)=-1.
+\tag{31}
+\]
+
+对位姿 \(q_t=(p_t,\theta_t)\)，FOV \(\phi\)、量程 \(R\) 的 first-obstacle visible set 记作 \(\mathcal Z(q_t;M^\star)\)。更新：
+
+\[
+B_{t+1}(c)=
+\begin{cases}
+M^\star(c), & c\in\mathcal Z(q_t;M^\star),\\
+B_t(c), & \text{otherwise}.
+\end{cases}
+\tag{32}
+\]
+
+\(M^\star\) 只在 Eq. (32) 的 ray sensor 与 Eqs. (27–28) 的 evaluator 中出现。Candidate generator、gain predictor、ANS adapter、cost map 和 A* 的函数签名都只接收 \(B_t\)。
+
+### 11.3 Known-free safety 与可达性
+
+机器人中心的硬可行域要求半径 \(r_r=0.3\) m footprint 全部已知 free：
+
+\[
+\mathcal F_t^K=
+\left\{x\middle|
+B_t(c)=0,\ \forall c\in\mathcal B(x,r_r)
+\right\}.
+\tag{33}
+\]
+
+四连通 start component 定义 reachable set \(\mathfrak R_t\subseteq\mathcal F_t^K\)。One-to-all geodesic \(d_G(p_t,x)\) 与执行 A* 共用该 mask，且禁止 diagonal corner cutting。Preferred clearance \(d_{pref}=0.5\) m 只进入排序和报告，不扩大硬机器人尺寸。
+
+### 11.4 在线拓扑缺口
+
+已接受节点在当前 belief 的已知自由空间上产生 disk union：
+
+\[
+\widehat{\mathcal C}_t^T=
+\left(\bigcup_{v_i\in V_t}\mathcal D(p_i,r_v)\right)
+\cap\{c\mid B_t(c)=0\}.
+\tag{34}
+\]
+
+Policy-visible、reachable 的未覆盖集合为
+
+\[
+\widehat{\mathcal U}_t^T=
+\left(\mathfrak R_t\cap\{c\mid B_t(c)=0\}\right)
+\setminus\widehat{\mathcal C}_t^T.
+\tag{35}
+\]
+
+关键性质：当 \(\mathcal U_t=\{B_t=-1\}=\varnothing\) 时，Eq. (35) 仍可能非空。因此 sensor gain 为零以后，算法继续从当前 known-free gap 生成候选，而不是读取 truth uniform grid。
+
+Gap source 同时保留：
+
+- \(\widehat{\mathcal U}_t^T\) 上 nearest reachable local gap；
+- 确定性 FPS representatives；
+- frontier band；
+- full reachable-space topological vantages；
+- \(\phi<360^\circ\) 时的 current-position rotations。
+
+FPS 为
+
+\[
+f_1=\arg\max_{x\in\mathcal S}
+\left[d_G(p_t,x)+0.25D_O^t(x)\right],
+\qquad
+f_k=\arg\max_{x\in\mathcal S}
+\min_{j<k}\|x-f_j\|_2,
+\tag{36}
+\]
+
+下一候选与集合距离小于 \(d_{rep}=2\) m 时停止。
+
+### 11.5 双增益与联合效用
+
+候选 \(f=(x,\theta)\) 的 belief-only information gain：
+
+\[
+G_t^I(f)=
+|\widehat{\mathcal Z}(f;B_t)\cap\mathcal U_t|,
+\qquad \mathcal U_t=\{c\mid B_t(c)=-1\}.
+\tag{37}
+\]
+
+边际拓扑增益：
+
+\[
+G_t^T(f)=
+|\mathcal D(x,r_v)\cap\widehat{\mathcal U}_t^T|.
+\tag{38}
+\]
+
+候选只要 \(G_t^I\ge g_{min}^I\) 或 \(G_t^T\ge g_{min}^T\) 就可保持 active。这样 Eq. (37) 为零不会把 topology-only action 错误剪掉。
+
+在 active set \(\mathcal Q_t\) 内分别 max-normalize：
+
+\[
+\bar G_t^k(f)=
+\frac{G_t^k(f)}{\max_{h\in\mathcal Q_t}G_t^k(h)},
+\qquad k\in\{I,T\},
+\tag{39}
+\]
+
+若分母为零则取 1。Joint task gain：
+
+\[
+\bar g_t(f)=0.4\bar G_t^I(f)+0.6\bar G_t^T(f).
+\tag{40}
+\]
+
+归一化 cost 与 clearance：
+
+\[
+\bar\ell_t(f)=\frac{d_G(p_t,x)}{r_v},
+\qquad
+\bar c_t(f)=\min\left(\frac{D_O^t(x)}{d_{pref}},1\right).
+\tag{41}
+\]
+
+候选相对已有空间节点的截断间距为
+
+\[
+\bar s_t(f)=\min\!\left(
+\frac{\min_{v_i\in V_t}\|x-p_i\|_2}{d_{rep}},1
+\right),\qquad d_{rep}=2\text{ m}.
+\]
+
+原地旋转不创建空间分离，代码使用常数 0.35，避免完全压制窄 FOV 下必要的 heading action。
+
+最终 SSTG-Explorer joint utility 与实现一致：
+
+\[
+U_t(f)=
+\frac{1.20\bar g_t(f)}{1+0.60\bar\ell_t(f)}
++0.20w_c\bar c_t(f)+w_s\bar s_t(f),
+\qquad w_c=1.5,\quad w_s=0.30.
+\tag{42}
+\]
+
+即 clearance 项系数为 0.30。分母式 travel penalty 避免远端 absolute gain 造成跨地图振荡；spacing 项在候选层直接偏好非冗余空间动作。54-cluster 全矩阵配对选择实验中，加入该项没有可检测的 coverage、success 或 clearance 损失，同时相对无该项版本减少 2.00 m 路程、0.17 个节点和 0.33 个动作；因此最终配置采用 \(w_s=0.30\)。该比较属于开发阶段的配置选择而非独立 confirmatory test。
+
+### 11.6 空间节点与朝向动作
+
+感知动作 \(a_k=(p_k,\theta_k)\)。它创建新 node 当且仅当
+
+\[
+\min_{v_i\in V_t}\|p_k-p_i\|_2>\delta_m,
+\qquad \delta_m=0.25\text{ m}.
+\tag{43}
+\]
+
+否则 action 关联到最近节点。分别报告：
+
+\[
+N_T=|V_T|,\qquad A_T=|\{a_k\}|,
+\qquad N_T\le A_T.
+\tag{44}
+\]
+
+按空间节点顺序的 redundancy：
+
+\[
+R_{red}=\frac{1}{N_T-1}
+\sum_{i=1}^{N_T-1}
+\mathbb 1\left[
+\min_{0\le j<i}\|p_i-p_j\|_2<1\text{ m}
+\right].
+\tag{45}
+\]
+
+Rotation 不进入 Eq. (45)，而进入 \(A_T\)、`in_place_rotations` 和 `total_rotation_deg`。这是最终算法与旧文档最重要的语义修正之一。
+
+### 11.7 精确增益预算与已执行剪枝
+
+候选先用 range/FOV optimistic count 和局部 disk gain 排序。精确 ray gain shortlist 包含：
+
+- joint preliminary top 18；
+- top information 6；
+- top topology 8；
+- nearest 6；
+- 所有 rotation；
+- ANS predicted goal 最近候选。
+
+所有候选仍进入 trace。`execution_key=(row,col,rounded_heading,kind)` 已执行后，后续状态为 `pruned_executed`，不会被重复选择。
+
+### 11.8 Algorithm 2：最终在线闭环
+
+```text
+Input: hidden M* (sensor/evaluator only), all-unknown B0, start q0
+OBSERVE(q0); V ← {start node}; A ← {start action}
+while CI < τI or CT < τT, and decisions < Tmax:
+    FK ← erode(known_free(B), robot footprint)
+    R  ← start-connected(FK); compute dG and clearance
+    UT ← reachable known-free minus union of node disks
+    C  ← multi-frontier ∪ gap FPS ∪ vantages ∪ rotations/samples
+    trace optimistic GI, GT, cost, clearance, ID and lifecycle
+    shortlist C; compute exact belief-ray GI; retain if GI or GT is useful
+    f* ← argmax Eq. (42)
+    π* ← known-free A*(q, f*)
+    execute π*; observe every 1 m and at final heading
+    associate action to a node using Eq. (43)
+    update B, CI, CT; store updates, scans, path, node and action
+return B, V, A, executed trajectory, complete trace
+```
+
+### 11.9 复杂度
+
+令栅格数 \(N\)，raw candidates \(C_t\)，exact candidates \(C_e\)，每候选射线 \(K=\lceil\phi/\delta_\alpha\rceil\)，每束 ray steps \(S=\lceil R/(\rho/2)\rceil\)，disk window cells \(W=O((r_v/\rho)^2)\)。主项：
+
+\[
+O\left(
+T\left[N\log N+C_tN+C_tW+C_eKS\right]
+\right).
+\tag{46}
+\]
+
+\(C_tN\) 来自当前 deterministic FPS worst case；实现通过 local-window disk gain 避免对每个候选复制全图 coverage map。
+
+### 11.10 Post-sensor gap 指标
+
+令 \(t_I=\min\{t:C_t^I\ge0.95\}\)。报告：
+
+\[
+\Delta C_{post}^T=C_T^T-C_{t_I}^T,
+\qquad
+A_{post}=|\{a_k:k>t_I\}|.
+\tag{47}
+\]
+
+正式 SSTG 为 \(C_{t_I}^T=48.31\%\)、\(\Delta C_{post}^T=47.83\) pp、\(A_{post}=10.76\)。其中 7.09 个是 selected `coverage_gap`，7.13 个 `new_observed_count=0`。这些是 topology-building actions，不是 sensor stagnation。
+
+## 12. Sensor-only unknown 诊断公式（冻结旧证据）
+
+### 12.1 Truth–belief 分离与遮挡观测
 
 令静态 ground-truth 占据栅格为 \(M^\star:\mathcal C\rightarrow\{0,100\}\)，策略可读 belief 为
 
@@ -362,7 +649,7 @@ R_O(t)=\frac{\sum_c\mathbb 1[M^\star(c)=100\land B_t(c)=100]}
 \tag{31}
 \]
 
-### 11.2 已知安全区、frontier band 与拓扑候选
+### 12.2 已知安全区、frontier band 与拓扑候选
 
 未知障碍不能被当成 free。机器人中心的硬可行域要求整个 footprint 已观测为自由：
 
@@ -398,7 +685,7 @@ d(\mathbf x,\mathcal U_t)\le d_{band}\},
 
 并在最近间距小于 \(d_{rep}=2\,\mathrm m\) 时停止。这里 \(\mathcal S\) 完全来自 belief 的已知安全区域，不是预先读取 truth 的 uniform grid。
 
-### 11.3 遮挡预测增益与最终优先级
+### 12.3 遮挡预测增益与 sensor-only 优先级
 
 候选 \(f=(\mathbf x,\theta)\) 的 optimistic gain 只把 belief 中已知 occupied cell 当作射线终点：
 
@@ -425,7 +712,7 @@ G_t(f)=|\widehat{\mathcal Z}(f;B_t)\cap\mathcal U_t|.
 \tag{37}
 \]
 
-最终 Unknown SSTG-Explorer 使用与代码一致的加性归一化效用
+冻结的旧 sensor-only SSTG 版本使用如下加性归一化效用
 
 \[
 P_t^{U}(f)=
@@ -435,9 +722,9 @@ P_t^{U}(f)=
 \tag{38}
 \]
 
-加性形式避免远端高增益门洞被乘性 travel decay 压成近零。空间离散性由 Eq. (34) 的 FPS 候选层实现，\(\bar s_t\) 仍写入每个 candidate trace 并用于 Eq. (39–40) 的结果解释。受控消融给 Eq. (38) 额外加入 \(+0.30\bar s_t\) 后，coverage、distance、nodes、clearance、NN distance 和 redundancy 的宏平均点估计均未改善，因此最终方法遵循最简且表现最好的 spacing_weight=0。原地换朝向不增加平移路程，但仍作为 oriented viewpoint 计入节点数、旋转量和空间冗余率。
+加性形式避免远端高增益门洞被乘性 travel decay 压成近零。空间离散性由 Eq. (34) 的 FPS 候选层实现，\(\bar s_t\) 仍写入每个 candidate trace 并用于 Eq. (39–40) 的结果解释。旧 sensor-only 消融给 Eq. (38) 额外加入 \(+0.30\bar s_t\) 后，coverage、distance、nodes、clearance、NN distance 和 redundancy 的宏平均点估计均未改善；这个结论只解释冻结协议，不替代 Sec. 13 的 joint 变体选择。原地换朝向不增加平移路程，但仍作为 oriented viewpoint 计入节点数、旋转量和空间冗余率。
 
-### 11.4 视点离散性与冗余指标
+### 12.4 冻结旧结果的 oriented-view 指标
 
 除 Eq. (23) 的 nearest-neighbor 统计外，按决策顺序定义阈值 \(d_{red}=1\,\mathrm m\) 的回访冗余率
 
@@ -459,7 +746,7 @@ R_{red}=\frac{1}{T}
 
 论文应联合报告 \(R_C^{obs}\)、实际平移距离、节点数、mean/median/min \(d^{NN}\)、\(R_{red}\)、\(\eta_V\) 和成功率。少量远隔点也会产生很大的 NN distance，因此“间距更大”本身不能证明探索更好。
 
-### 11.5 Algorithm 2：在线未知地图闭环
+### 12.5 Sensor-only 在线闭环
 
 ```text
 Input: hidden truth M* (sensor/evaluator only), all-unknown B0, start q0
@@ -488,25 +775,27 @@ O\!\left(T\left[N\log N+C_tN+C_eKS\right]\right),
 
 其中当前 farthest-point implementation 对候选 mask 的最坏项写为 \(C_tN\)。论文还应报告实际 runtime，而不能只给大 \(O\)。
 
-## 12. 必做消融
+## 13. 消融与配置选择
+
+### 13.1 Joint 主任务单因素消融
 
 | 变体 | 关闭/替换内容 | 要回答的问题 |
 |---|---|---|
 | Full SSTG-Explorer | 无 | 最终性能 |
-| Euclidean priority | \(d_G\to\|x-y\|_2\) | 隔墙候选是否导致绕行 |
-| No recovery | 关闭 Eq. (16–18) | 局部队列耗尽是否复现 |
-| Local priority update | 只更新附近 frontier | 全局重排是否减少回访 |
-| Adaptive angular | 启用 Eq. (7)，窄通道降至 \(15^\circ\) | 增密是否真的优于最终固定 30° |
-| No aggressive pruning | 关闭 strength/duplicate pruning | 速度–候选质量权衡 |
-| No clearance utility | 令 \(w_S=0\) | 安全偏好对净空、覆盖和路程的影响 |
 | Single frontier centroid | 每个连通 frontier 只留一个代表点 | warehouse/dense 的遮挡短板是否复现 |
 | Known-obstacle-only safety | 不要求整个 footprint 已知 free | 是否出现新观测后被障碍困住 |
 | No topology vantages | 只保留 frontier band | aisle/doorway 的视点是否丢失 |
-| With spacing utility | Eq. (38) 加 \(+0.30\bar s_t\) | 显式 score 是否优于 FPS-only 的最终方法 |
+| No spacing utility | Eq. (42) 令 \(w_s=0\) | 显式间距偏好是否减少路程、节点和冗余 |
+
+正式 joint hard set 为 4 scenes × 3 sensors × 3 seeds × 5 variants = 180 runs。12 个 sensor–environment clusters 的校正检验统计功效有限，必须把它当模块行为与 failure-mode 证据；若一个变体可能改变最终选择，应补跑 54-cluster 全矩阵，不能用 hard-set 点估计直接命名“最佳”。配置选择属于 development evidence，独立外部验证仍需预注册。
+
+### 13.2 Known-map 支撑消融
+
+已知地图 315-run 研究保留 Euclidean priority、no recovery、local priority update、adaptive angular、no aggressive pruning 和 no clearance utility，用于隔离 geodesic queue、recovery、pruning 和安全偏好。它们的 coverage 定义和 joint 主任务不同，只能作机制支撑，不能与在线 joint 值混检。
 
 旧 priority queue bug 是实现错误，应修复并通过单测保证，不应把修 bug 包装成贡献。
 
-## 13. 学习型基线的正确表述
+## 14. 学习型基线的正确表述
 
 `ANS-Global (adapted)` 加载 Chaplot et al. 发布的 global-policy checkpoint。保留 CNN、orientation embedding 与连续 goal head；本项目以 observed occupancy/explored map 构造其 8-channel 输入，用共同 A* 执行目标。没有使用原论文的 RGB Neural-SLAM mapper 和 learned local controller。因此：
 
@@ -517,7 +806,7 @@ O\!\left(T\left[N\log N+C_tN+C_eKS\right]\right),
 
 完整 ANS、DRL-Graph 和 Exploring Exploration 的输入/数据集不同，适合作为 related work 或第二套 Habitat 协议，不能悄悄并入已知栅格主表。
 
-## 14. 写作禁区
+## 15. 写作禁区
 
 - 不写 “optimal”，除非给出理论最优性或界。
 - 不用单 seed 结果声称显著提升。
@@ -526,9 +815,29 @@ O\!\left(T\left[N\log N+C_tN+C_eKS\right]\right),
 - 不把 runtime 跨硬件比较。
 - 不把过程 trace 的候选数量当作独立统计样本。
 
-## 15. 当前可直接引用的实验事实
+## 16. 当前可直接引用的实验事实
 
-### 15.1 Unknown static occlusion 主证据
+### 16.1 Joint unknown 主证据
+
+最终目录 `outputs/joint_benchmark_selected/20260719_223630/`：
+
+- SSTG sensor/topology 为 99.99% / 96.14%，162/162 成功；15.76 nodes、17.30 actions、2.15 m mean NN、0.07% redundant nodes、0.95 m clearance、63.99 m travel。
+- 相对 ANS/Frontier/NBV/RRT，redundancy 低 4.38/29.56/14.96/3.41 pp，95% CI 均不跨 0，Holm `p<=1.80e-5`。
+- Nodes 相对 ANS/Frontier/NBV 少 3.24/16.26/1.70，均显著；相对 RRT 多 0.94，显著。
+- Actions 相对 ANS/Frontier/NBV 少 4.11/22.17/2.99，均显著；相对 RRT 多 0.64，显著。
+- Clearance 相对 ANS/Frontier 高 0.227/0.155 m，显著；相对 NBV/RRT 低 0.045/0.037 m，但 Holm `p=0.130`，不能写显著。
+- Travel 相对 Frontier/NBV/RRT 长 9.91/17.22/6.36 m，均显著；相对 ANS +0.79 m 不显著。
+- Success 相对 NBV +9.26 pp，Holm `p=0.0266`；与 RRT 同为 100%。
+- Terminal topology 相对 Frontier 低 0.89 pp 且显著，原因需与 Frontier 的 32.02 nodes、29.6% redundancy、96.3% success 和 threshold overshoot 联合解释；不能隐藏。
+- 多房间/dense/warehouse SSTG topology 为 95.47/96.16/95.61%，54/54 成功；travel 为 90.87/55.60/110.27 m。
+- 审计：810 JSON/belief/每类 CSV，6,270 PNG、270 GIF、270 MP4，零 replay/truth/media/html/log 错误；selected SSTG 162/162 normalized result 与配置选择 run 精确匹配，冻结基线另有 20-run normalized JSON 精确复现。
+- 180-run 单因素 hard-scene 消融中，Full/No-spacing/Single/No-vantage/Known-obstacle-footprint 的 topology 为 95.75/95.65/95.82/95.75/83.14%，success 为 100/100/100/100/75%。12-cluster Holm 检验无模块差异显著，不能把 hard-set 点估计写成模块排名。
+- 由于 single-centroid 在 hard set 点估计有利，已升格到 54-cluster 全矩阵。最终 multi-frontier 相对 `single + spacing` topology 高 0.361 pp，CI [0.108, 0.634]，development-family-adjusted `p=0.0487`，代价为 +0.46 nodes / +0.70 actions；success 和 redundancy 相同。最终保留 multi-frontier。
+- Spacing 相对 `w_s=0` 不改变 coverage/success/clearance，travel 少 2.00 m、actions 少 0.33，factor-three adjusted `p=0.0494/0.00836`；最终使用 `spacing_weight=0.30`。这些是配置选择证据，不是独立 confirmatory evidence。
+
+摘要建议使用 redundancy、success 和明确 RRT trade-off；不要把 threshold-compressed terminal coverage 排名写成主胜负。
+
+### 16.2 Frozen sensor-only 诊断证据
 
 数据源：`outputs/unknown_benchmark_runs/20260719_141122/`（810 runs）与 `outputs/unknown_ablation_runs/20260719_141132/`（180 runs）。两者均为 commit `502afcd`、source SHA-256 `2385e87afd5f5bb601de27a73fd88620d7422c7131ed03f965081e9c3bb4b5a4`，且自动 audit 全部通过。
 
@@ -539,9 +848,9 @@ O\!\left(T\left[N\log N+C_tN+C_eKS\right]\right),
 - SSTG 的 NN distance 相对 Frontier/NBV/RRT/ANS 高 `2.18/1.37/1.57/1.44 m`，回访率低 `28.16/2.32/4.35/6.39 pp`；同时节点数最低且 coverage 最高，因此不是失败 run 造成的虚假大间距。
 - SSTG 视点净空 1.45 m 低于 NBV/RRT 的 1.53/1.48 m，但高于 ANS/Frontier 的 1.40/1.14 m。不要写 safety 全面最佳。
 - 在 90° 条件，SSTG coverage 97.87%、distance 20.19 m、7.67 views、59.45% spatial redundancy；同点多朝向属于窄 FOV 的必要代价，必须同时报告旋转。360°×12 m 则为 98.78%、13.48 m、3.22 views、0% redundancy。
-- hard-set 消融中，single-centroid coverage/success 为 96.43%/91.7%，Full 为 98.32%/100%；额外 spacing score 的宏平均点估计全部不优于 FPS-only，故最终方法使用 `spacing_weight=0`。
+- 旧 sensor-only hard-set 中，single-centroid coverage/success 为 96.43%/91.7%，Full 为 98.32%/100%；额外 spacing score 的点估计没有改善。该结论只属于冻结诊断协议，不能直接决定 joint 最终配置。
 
-### 15.2 Known static disk 受控证据
+### 16.3 Known static disk 受控证据
 
 数据源：`outputs/benchmark_runs/20260719_043528/results.json`（270 runs）与 `outputs/ablation_runs/20260719_043544/results.json`（315 runs）。二者的 experiment-source SHA-256 均为 `efa1828c62bac7ca0f33849449e1363a3ff14bd0079a5e9668764b8ade7e8642`，ANS checkpoint SHA-256 为 `616fd1485e1f0ba9673db08340d586c050f001f171890d966809c0b9f0320314`。
 
@@ -554,4 +863,4 @@ O\!\left(T\left[N\log N+C_tN+C_eKS\right]\right),
 - 去掉 clearance utility 后，视点净空下降 `0.140 m [0.074, 0.213]`，Holm `p=0.0469`，coverage 下降 1.56 pp；去掉 recovery 后 success 从 100% 降到 88.9%；关闭 pruning 使时间从 2.98 s 增到 5.68 s。
 - fixed-30° 相对 adaptive-15° 的 coverage/distance 宏平均为 98.52%/48.13 m vs 98.31%/49.54 m，但差异 CI 跨 0；只能称为多指标 point-estimate 选择。
 
-建议摘要报告 coverage 显著性、相对 Frontier 的净空收益及相对学习基线的路径差；正文同时承认 RRT 的平均视点净空略高、Frontier 的路径点估计略短。
+这些 known-map 数字只作为结构参考或模块支持，不再替代 joint 主结果进入摘要。摘要主张按 Sec. 16.1 的 redundancy、success、clearance 与 travel trade-off 书写。

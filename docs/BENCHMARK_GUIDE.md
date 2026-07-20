@@ -1,183 +1,232 @@
-# Benchmark 使用、基线出处与结果解释
+# SSTG-Explorer Benchmark 指南
 
-本文档专门说明已冻结的 `known_static_disk` 圆盘覆盖协议。在线未知地图、遮挡传感器、FOV/range sweep 和 belief trace 请看 [未知地图 Benchmark 指南](UNKNOWN_MAP_BENCHMARK.md)。两套协议使用相同环境家族但输入信息和 coverage 定义不同，禁止混表。
+本文档是已知地图、旧 sensor-only unknown 和新 joint unknown 三套 benchmark 的统一说明。安装、最小 API、主结果和网页启动方式见根目录 [README](../README.md)；本文只展开协议、公平性、字段、统计和结果核验。
 
-## 1. 环境准备
+## 1. 协议与信息边界
 
-```bash
-conda env create -f environment.yml
-conda activate sstg-explorer
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q
-```
-
-完整 profile 包含公开预训练的学习基线。首次运行：
-
-```bash
-python scripts/setup_learning_baselines.py --install-dependencies
-```
-
-该脚本安装 PyTorch/gdown，下载 Active Neural SLAM 作者发布的 global-policy checkpoint 到忽略提交的 `models/checkpoints/`，并校验：
-
-```text
-sha256 616fd1485e1f0ba9673db08340d586c050f001f171890d966809c0b9f0320314
-```
-
-## 2. 一条命令的完整流程
-
-```bash
-# 两方法、两环境的链路检查
-python scripts/run_benchmark.py --profile smoke
-
-# 六方法 × 九环境 × 五次
-python scripts/run_benchmark.py --profile full
-
-# Full SSTG 与五个模块消融
-python scripts/run_benchmark.py --profile ablation --no-frames
-
-# 论文主协议：6 sensors × 9 environments × 5 methods × 3 seeds
-python scripts/run_unknown_benchmark.py --profile paper
-```
-
-限定范围：
-
-```bash
-python scripts/run_benchmark.py --runs 3 \
-  --algorithms frontier active_neural_slam sstg_explorer \
-  --environments maze warehouse
-```
-
-默认每次 run 都保存逐决策媒体。磁盘紧张时使用 `--media-runs representative`；只做数值调试用 `--no-frames`。正式投稿结果不得使用 `--no-frames`，因为逐步 trace 是方法可审计性证据。
-
-## 3. 对比方法与论文出处
-
-| CLI 名称 | 网页名 | 本仓库实现/适配 | 主要出处 | 公平性说明 |
+| 名称 | Map input | Policy 可读信息 | 终止 | Coverage |
 |---|---|---|---|---|
-| `uniform_grid` | Uniform Grid | 固定格心、障碍处投影到最近安全栅格、最近邻访问 | Choset, 2001；Galceran and Carreras, 2013 | 已知地图 coverage baseline |
-| `rrt` | RRT | 安全栅格随机树采样；新增覆盖节点由共同 A* 执行 | LaValle, 1998；Umari and Mukhopadhyay, 2017 | 报告机器人实际执行距离；不是原 ROS multi-RRT 完整复现 |
-| `frontier` | Frontier | 栅格 frontier 聚类，按可达测地距离选择 | Yamauchi, 1997 | 同地图、同起点、同 A*；最小 cluster 为 1 cell，避免窄门漏检 |
-| `nbv` | NBV | 信息增益减去 A* 旅行代价 | Connolly, 1985 | 同安全候选、每步 50 候选、同 A* |
-| `active_neural_slam` | ANS-Global (adapted) | 作者发布 checkpoint 的 global policy + 共同 A* | Chaplot et al., ICLR 2020；[官方项目/代码](https://www.cs.cmu.edu/afs/cs/user/dchaplot/www/projects/neural-slam.html) | 只比较 learned global goal；不含 RGB mapper/local policy |
-| `sstg_explorer` | SSTG-Explorer | 本文完整方法 | 本项目 | 被评估方法 |
+| `known_static_disk` | 完整 truth | 完整静态 occupancy | 2 m disk target | ground-truth free cells 内的 disk proxy |
+| `unknown_static_grid_occlusion_aware` | hidden truth | all-unknown 起步的三值 belief | sensor target | truth-free 中已正确观测为 free 的比例 |
+| `unknown_static_grid_joint_topological_coverage` | hidden truth | 同上 | sensor 与 topology 都达到 target | 两类 coverage 分列，joint 为二者最小值 |
 
-BibTeX 在 `docs/REFERENCES.bib`。本次重新检索后，ANS 仍是能找到作者公开实现和预训练模型、且可把 global goal head 明确适配到本二维协议的学习方法。DRL-Graph（Chen et al., IROS 2020）依赖 landmark-belief graph 与定位不确定性，Exploring Exploration（Ramakrishnan et al., ECCV 2020）依赖 Habitat RGB 任务；不能在没有各自 mapper、训练分布和 checkpoint 的情况下贴标签并入本表。它们保留为 related work，而不是伪复现基线。
+Unknown 协议的硬 invariant：
 
-## 4. 环境协议
+1. ground truth 只由 `RaycastSensor` 与 evaluator 持有；
+2. 每束 ray 在第一个 occupied cell 处停止，墙体可见、墙后保持 unknown；
+3. candidate、gain、known-free reachable set、utility、ANS global adapter 和 A* 都只读取 \(B_t\)；
+4. A* 只经过完整 0.3 m footprint 已观测为 free 的中心栅格；
+5. 机器人沿实际 A* 折线每 1 m 观测，并在目标 heading 补一帧；
+6. truth overlay 仅出现在明确标为 evaluation-only 的右侧图。
 
-九环境均为 0.05 m 栅格，默认 `r_view=2.0 m`、`r_robot=0.3 m`、`d_safe=0.2 m`、目标覆盖率 95%。所有方法在同一按 0.5 m 膨胀的安全栅格上执行 A*；距离不再使用可能穿墙的视点直线和，也不把 RRT 树边总长当机器人实际路程。
+Joint 协议额外从 belief 生成：
 
-SSTG 正式参数为 `d_theta=30°`、`beta=1.0`、`clearance_priority_weight=2.0`；最后一项只影响可行候选排序，不能替代所有方法共同遵守的 0.5 m 硬安全约束。完整参数逐项写入 `manifest.json`。
+\[
+\widehat{\mathcal U}_t^T=
+(\mathfrak R_t\cap\{B_t=0\})\setminus
+\bigcup_{v_i\in V_t}\mathcal D(p_i,2\text{ m}).
+\]
 
-| 环境 | 主要结构 | 作用 |
-|---|---|---|
-| empty | 开放房间 | 基本均匀覆盖与路径冗余 |
-| sparse_obstacles | 少量随机矩形 | 一般避障 |
-| corridor | 长走廊 | 单主方向 |
-| multiple_rooms | 三房间与门洞 | 跨墙测地排序和 A* 搜索预算 |
-| l_shaped_corridor | L 形通道 | 转角传播 |
-| maze | 多墙迷宫 | 长程可达性 |
-| dense_obstacles | 15 个密集障碍 | 起点安全、局部候选存活 |
-| narrow_passages | 1.2 m 门洞与多分区 | 膨胀连通性、固定/自适应角采样消融 |
-| warehouse | 货架结构 | 重复走廊和全局选择 |
+它不读取“尚未被 sensor 发现的 free space”。因此在 sensor saturation 后只能补当前已知安全区域；若仍有未知区域，frontier 和 gap 候选共同存在。
 
-dense 起点按障碍矩形到起点的真实最近距离保护，不能只按障碍中心保护。narrow 的门洞与横墙交点错开，保证在统一机器人膨胀模型下仍连通。环境生成错误不能包装成算法失败。
+## 2. 方法与公平性
 
-## 5. 输出目录
+### 2.1 Joint 主表
 
-```text
-outputs/benchmark_runs/<timestamp>/
-├── manifest.json                    命令、参数、Git、实验源码 hash、依赖/硬件、checkpoint
-├── run.log                          完整运行日志
-├── results.json                     所有数值、trajectory 和 decision steps
-├── summary.csv                      方法–环境 mean/std/95% CI
-├── aggregate.csv                    跨环境汇总
-├── pairwise_vs_sstg.csv             以环境为 cluster 的 bootstrap 差值/CI
-├── results_table.{md,tex}           论文表格草稿
-├── coverage_heatmap.png
-├── coverage_distance_tradeoff.png
-├── safety_comparison.png
-├── safety_table.{csv,md,tex}
-├── viewpoint_redundancy.png
-├── viewpoint_redundancy_table.{csv,md}
-├── index.html
-└── artifacts/<env>/<algorithm>/
-    ├── run.json
-    ├── steps/step_XXXX.png
-    ├── final.png
-    ├── animation.gif
-    ├── video.mp4
-    └── runs/run_XXX/                 其余 seeds 的同套产物
-```
+| CLI | 报告名 | 候选/选择语义 | 文献边界 |
+|---|---|---|---|
+| `frontier` | Frontier Joint | connected frontier representatives + common gap adapter；偏近目标 | Yamauchi 1997；不是任意厂商 stack |
+| `nbv` | NBV Joint | frontier/random/gap candidates；joint gain–cost | Connolly 1985 的 NBV 原则 |
+| `rrt` | RRT Joint (adapted) | random reachable samples + gap adapter；随机 gain/cost | Umari and Mukhopadhyay 2017 的 sampling 思路；非完整 multi-RRT 系统 |
+| `ans` | ANS-Global Joint (adapted) | 发布的 learned global policy + common belief/gap/planner | Chaplot et al. 2020；不含 RGB mapper 和 learned local controller |
+| `sstg` | SSTG-Explorer Joint | multi-frontier、topological vantages、gap FPS、rotations；joint utility | 本项目最终方法 |
 
-`outputs/benchmark_runs/latest` 指向最近结果。通过 HTTP 查看：
+所有方法共享：环境、起点、truth sensor、belief update、机器人尺寸、known-free planner、scan interval、2 m disk、0.25 m node merge、95% 双阈值、80 decisions 和 seeds。比较的是公共在线决策任务下的 policy adapters，不能写成对完整 ANS/RRT 系统的复现或全面 SOTA 排名。
+
+### 2.2 已知地图参考
+
+Known profile 还含 `uniform_grid`；它依赖全图格点，因此不进入 unknown 主表。已知版本的 ANS/RRT 同样明确标记 `adapted`。已知 coverage 与 unknown sensor coverage 不能混表；它只证明 disk 结构规划、clearance、recovery 和 pruning 模块的受控作用。
+
+基线出处与 BibTeX 见 [REFERENCES.bib](REFERENCES.bib)。
+
+## 3. 命令
 
 ```bash
-python -m http.server 8000 --directory outputs/benchmark_runs/latest
+conda activate sstg-explorer
+
+# 快速验证
+python scripts/run_unknown_benchmark.py \
+  --profile smoke --coverage-objective joint
+
+# 正式 joint 主表：810 runs
+python scripts/run_unknown_benchmark.py \
+  --profile paper --coverage-objective joint
+
+# joint hard-scene ablation：180 runs
+python scripts/run_unknown_benchmark.py \
+  --profile ablation --coverage-objective joint --no-frames
+
+# 统计扩展
+python scripts/analyze_joint_benchmark.py \
+  outputs/joint_benchmark_runs/latest
+
+# 已知地图参考
+python scripts/run_benchmark.py --profile full
+python scripts/run_benchmark.py --profile ablation --no-frames
 ```
 
-访问 `http://127.0.0.1:8000/`。
+自定义示例：
 
-## 6. SSTG 单步 trace 字段
+```bash
+python scripts/run_unknown_benchmark.py \
+  --coverage-objective joint \
+  --algorithms frontier rrt sstg \
+  --environments multiple_rooms dense_obstacles warehouse \
+  --sensors fov360_r12 fov90_r12 \
+  --runs 3 --topological-radius 2.0
+```
 
-每个 `steps[i]` 是一次完整决策状态：
+## 4. 每个 run 的输出
 
-- `event`：initialization、node_accepted、unreachable、global_recovery 等；
-- `explored_nodes`：截至该决策的全部已接受视点；
-- `generated_candidates`：本步每个候选，而不只是成功候选；
-- `new_frontiers`：本步插入队列的候选；
-- `active_frontiers`：刷新优先级后的待探索队列；
-- `selected_frontier`：本步选择及其 ID、类型、优先级；
-- `path`：实际 A* 折线路径；
-- `executed_paths`：截至该 step 的全部实际 A* 轨迹段，而非视点直线连线；
-- `coverage_before/after/gain`：本步边际覆盖；
-- `recovery_round` 和 `queue_size`。
+| 文件 | 内容 |
+|---|---|
+| `run.json` | metadata、全部 steps、节点、朝向动作、实际 trajectory、A* paths |
+| `belief_final.npy` | 终止三值 belief |
+| `decisions.csv` | 每步两类 coverage before/after/gain、动作、节点创建、路径与候选统计 |
+| `candidates.csv` | 每个候选的 ID/type/pose/gains/cost/clearance/NN/priority/state |
+| `trajectory.csv` | 拓扑节点/决策位置序列 |
+| `oriented_views.csv` | 每个 heading action 及其 `topological_node_id` |
+| `path_waypoints.csv` | 所有实际 A* 折线点 |
+| `scan_poses.csv` | 连续路径扫描位姿 |
+| `steps/*.png` | policy belief、truth audit、所有候选与轨迹的逐步图 |
+| `animation.gif`, `video.mp4` | run 0 的完整过程 |
 
-候选状态包括：
+### 4.1 Candidate 关键字段
 
-| 状态 | 含义 | 图中标记 |
-|---|---|---|
-| `added` / `added_soft` | 新加入 global queue | 绿色菱形 |
-| `blocked_obstacle` | 机器人膨胀后碰撞 | 红色 × |
-| `pruned_strength` | 新颖性不足 | 橙色 × |
-| `pruned_priority` | 效用低于阈值 | 紫色 × |
-| `pruned_duplicate` | 与 pending target 重复 | 灰色 × |
-| `recovery_added` | 全局缺口候选 | 青色 P |
-| `recovery_unreachable` | 缺口候选不可达 | 黑色 X |
+- `frontier_id`：稳定 ID；同一候选跨步骤保持不变；
+- `kind`：`frontier`、`topological`、`coverage_gap`、`rotation`、`sampled`；
+- `optimistic_gain` / `predicted_gain`：无射线预筛与 belief ray gain；
+- `predicted_topological_gain`：2 m disk 与 policy-visible gap 的交集栅格数；
+- `normalized_information_gain` / `normalized_topological_gain` / `normalized_task_gain`；
+- `path_cost`：known-free geodesic cost；
+- `clearance`：belief known-obstacle distance；
+- `nearest_viewpoint_distance`：与历史空间节点最近距离；
+- `priority`：策略最终分数；
+- `status`：`active`、`selected`、`pruned_gain`、`pruned_evaluation_budget`、`pruned_executed` 等；
+- `is_new`：本轮首次生成；
+- `execution_key`：位置、朝向和类型签名，已执行签名不会重复选中。
 
-逐步图还显示蓝色已探索轨迹、黄色 pending frontiers、粉色 selected frontier、绿色 current pose 和青色 A* path。它不再只是覆盖圆动画。
+### 4.2 Step 关键字段
 
-## 7. 指标与统计
+- `sensor/topological/joint_coverage_before/after`；
+- `coverage_before/after`：joint profile 中主显示为 topology；
+- `selected_frontier`、`generated_candidates`、`active_frontiers`；
+- `explored_nodes` 与 `oriented_views`：空间节点和动作分开；
+- `topological_node_created`；
+- `observed_updates`：`[flat_index, value]`，可精确重放 belief；
+- `path`、`translation_m`、`rotation_deg`、`scan_poses`；
+- `visible_cell_count`、`new_observed_count`。
 
-- `coverage_ratio`：圆盘覆盖 proxy，越高越好；不是遮挡感知视觉覆盖。
-- `total_distance`：A* 折线路径累计，而非节点欧氏直线和。
-- `coverage_efficiency`：coverage/distance。
-- `avg/min_obstacle_distance`：节点到障碍物的安全距离。
-- `avg/min_boundary_distance`：节点到地图矩形边界的距离。
-- `node_safe_fraction`：满足 (D_O\ge r_{robot}+d_{safe}=0.5\,m) 的视点比例。
-- `avg/min_path_obstacle_distance`、`path_safe_fraction`：以 0.05 m 间隔采样全部实际路径得到的安全性。
-- `mean_nn_distance`、`dispersion_uniformity`：节点间距与均匀性。
-- `success_rate`：达到目标覆盖的 run 比例。
-- `num_generated/rejected/recovery_candidates`：只用于解释 SSTG 决策，不作跨方法独立样本检验。
+## 5. 指标定义
 
-每个方法–环境报告 mean ± std 和 95% CI。随机方法用 `base_seed + run_id`；确定性方法出现零方差是预期现象。`pairwise_vs_sstg.csv` 先对每个环境内的 seeds 求均值，再以九个环境为 cluster 做 10,000 次 bootstrap，并对环境级差值做配对 Wilcoxon；五个 baseline 的 coverage、distance、平均视点净空和最小路径净空检验分别进行 Holm 校正。候选、视点或路径采样点不被伪装成独立样本。
+### 5.1 Coverage
 
-## 8. 结果核验清单
+\[
+C_t^I=\frac{|\{c:M^\star(c)=0\land B_t(c)=0\}|}{|\mathcal F^\star|},
+\]
 
-1. `results.json` 条数等于方法数 × 环境数 × runs。
-2. run 0 及所有 `runs/run_XXX` 均有非空 JSON、GIF、MP4；图和视频包含实际 A* 轨迹，不用视点直线代替。
-3. 每个 SSTG trace 至少包含 initialization 和 accepted/rejected decision。
-4. `run.log` 无 Traceback/FAILED。
-5. HTML 的全部 `src`/`href` 存在。
-6. `manifest.json` 的 Git dirty 状态在最终论文实验中应为空。
-7. checkpoint hash 与本指南一致。
-8. 报告所有环境，包括失败环境；不挑选获胜子集。
+\[
+C_t^T=\frac{|\{c\in\mathcal F^\star:\min_i\|x_c-p_i\|\le r_v\}|}
+{|\mathcal F^\star|},\qquad C_t^J=\min(C_t^I,C_t^T).
+\]
 
-## 9. 本仓库已冻结结果
+Joint success 要求 \(C_t^I\ge0.95\land C_t^T\ge0.95\)。由于最后一个离散动作会 overshoot，终点 coverage 必须和 success、distance、nodes/actions 联合解释。
 
-- 主实验：`outputs/benchmark_runs/20260719_043528/`，270/270 records，6,622/6,622 step PNG，270 个非空 GIF、270 个非空 MP4，零媒体错误，HTML 334 个相对引用全部存在。
-- 受控消融：`outputs/ablation_runs/20260719_043544/`，315/315 records；按设计使用 `--no-frames`，避免为参数变体复制约 1 GB 媒体。
-- 两个 manifest 的 experiment-source SHA-256 都是 `efa1828c62bac7ca0f33849449e1363a3ff14bd0079a5e9668764b8ade7e8642`。
-- SSTG 主结果为 coverage `98.52 ± 1.27%`、实际路径 `48.13 ± 23.49 m`、平均视点净空 `1.160 m`、100% success。
-- SSTG 相对 Frontier 的 coverage cluster 差为 `+1.61 pp [0.90, 2.45]`，Holm `p=0.0234`；路径差 `+2.85 m [-2.80, 8.92]` 不显著。
-- 去掉净空效用使视点净空下降 `0.140 m [0.074, 0.213]`，Holm `p=0.0469`；关闭 recovery 后 success 降至 88.9%。
+### 5.2 空间节点与朝向动作
 
-早期目录（包括 `20260719_025630`、`040409` 和 `040955`）使用过旧直线路径、adaptive 候选或未最终选定的协议，仅用于开发审计，不可与上述最终表拼接。
+动作 \(a_k=(p_k,\theta_k)\) 与最近节点距离不超过 0.25 m 时，不创建新节点。报告：
+
+- `num_nodes` / `topological_node_count`：空间拓扑规模；
+- `num_oriented_views` / `oriented_view_count`：感知动作数；
+- `in_place_rotations` 和 `total_rotation_deg`：窄 FOV 代价；
+- `mean/median/min_nn_distance`：空间节点最近邻间距；
+- `redundant_viewpoint_fraction`：新空间节点与任一历史节点小于 1 m 的比例；不再把同点 rotation 当成空间冗余。
+
+### 5.3 安全、路程和效率
+
+- `total_distance`：实际 A* 折线路程，不是目标直线或 RRT tree edge 总和；
+- `avg/min_obstacle_distance`：空间节点到 truth obstacle 的事后净空；
+- `avg/min_path_obstacle_distance`：全部路径采样净空；
+- `node/path_safe_fraction`：满足 0.5 m preferred-clearance threshold 的比例；
+- 0.3 m footprint 是硬碰撞约束；0.5 m 只是偏好/报告阈值，不能写成机器人几何尺寸；
+- `coverage_per_viewpoint` 在 joint profile 是 topology coverage / spatial nodes。
+
+## 6. 统计协议
+
+每个方法有 162 runs：6 sensors × 9 environments × 3 seeds。先在每个 sensor–environment cluster 内平均 seeds，再以 54 clusters 为配对单位：
+
+1. SSTG minus baseline 的宏平均 effect；
+2. 10,000 次 cluster bootstrap 95% CI；
+3. paired Wilcoxon；
+4. 每个指标族内对四个 baselines 做 Holm correction；
+5. paired rank-biserial effect size；
+6. 同时检查六个 sensor groups 与九个 environment groups 的方向一致性。
+
+八个指标族：sensor/topological coverage、distance、topological nodes、oriented actions、clearance、redundant nodes、success。候选、steps、nodes 和路径采样点都不是独立样本。
+
+完整表在 `pairwise_all_metrics.csv`。注意两类不一致：
+
+- SSTG vs NBV 的 terminal topology bootstrap CI 不跨 0，但 Holm-corrected Wilcoxon `p=0.147`；不能写显著；
+- SSTG vs NBV/RRT 的 clearance CI 略低于 0，但 Holm `p=0.165`；不能写显著较差。
+
+## 7. 三协议结果如何解释
+
+| Case | SSTG sensor | SSTG 2 m topology | Distance | Nodes/actions | Success |
+|---|---:|---:|---:|---:|---:|
+| known-map disk | N/A | 98.52% | 48.13 m | 20.56 / 20.56 | 100% |
+| unknown sensor-only | 98.38% | 33.02% post hoc | 15.73 m | 4.57 / 4.57 | 100% sensor target |
+| unknown joint | 99.99% | 96.14% | 63.99 m | 15.76 / 17.30 | 100% dual target |
+
+Sensor-only 的“100% success”只表示达到旧 sensor target，不表示拓扑任务成功。三者差异揭示 construct mismatch，不做跨协议 p-value。
+
+在新 joint run 中，SSTG 第一次达到 95% sensor coverage 时，平均 topology 只有 48.31%；之后再增 47.83 pp，执行 10.76 个动作，其中 7.09 个明确为 `coverage_gap`，7.13 个动作没有发现新 sensor cells。这些 `new_cells=0` 动作是拓扑补全，不是停滞。
+
+### 7.1 最终配置为何是 multi-frontier + spacing
+
+180-run hard-scene 消融先比较 Full、No spacing、Single centroid、No vantages 和 Known-obstacle-only footprint。后者只有 75% success；其余均 100%，但 12-cluster Holm 检验没有模块差异显著。由于 single-centroid 在 hard set 的点估计更好，又补跑了 162-run 全矩阵：multi-frontier 的 topology 高 0.361 pp（95% CI [0.108, 0.634]，三个开发变体校正 `p=0.0487`），success/冗余相同，但多 0.46 nodes / 0.70 actions。Spacing 相对 `w_s=0` 保持 coverage/success/clearance，少 2.00 m travel 和 0.33 actions。因此最终配置按 coverage–safety–redundancy 优先级保留 multi-frontier 与 `spacing_weight=0.30`；全部选择表在 `VARIANT_SELECTION.md`，并明确标为 development evidence。
+
+## 8. 审计与可复现性
+
+`audit_report.json` 强制检查：
+
+- 每条结果的 JSON/NPY/CSV 是否存在；
+- `observed_updates` 能否从全 unknown 精确重放终止 belief；
+- 每个 known cell 是否与 truth 一致；
+- run 0 的 frame 数是否等于 steps 数；
+- GIF/MP4 是否存在且非空；
+- HTML 本地引用是否存在；
+- log 是否含 traceback、FAILED 或 video error。
+
+最终 joint 发布集 `joint_benchmark_selected/20260719_223630`：810 records、6,270 step PNG、270 GIF、270 MP4，全部通过。最终 SSTG component 与配置选择 run 的 162/162 normalized result records 精确一致；冻结基线另有 20-run 同 seed 完整 run JSON 精确复现。
+
+研究有效性报告 `VALIDATION_REPORT.md` 完成 11/11 fallacy scan，整体为 `CAUTION`，主要因为 2 m construct、仿真外部有效性、三 seeds、跨指标探索性和开发阶段未预注册，而不是 artifact 内部不一致。
+
+## 9. 论文允许与禁止的主张
+
+可以写：
+
+- 长量程 sensor coverage 不是短距观测拓扑 coverage 的有效替代；
+- SSTG 在 joint 主表中 162/162 成功，并显著降低相对所有四个基线的空间节点冗余；
+- SSTG 节点/动作少于 ANS、Frontier、NBV，净空高于 ANS、Frontier；
+- dense、multiple rooms、warehouse 均在所有六传感器下达到双阈值；
+- 上述收益以更长路程为代价，RRT adapter 的节点更少。
+
+禁止写：
+
+- “所有指标全面最优”或 “shortest path”；
+- 2 m disk 等价于真实语义可见性/识别准确率；
+- 仿真 known-free A* 是安全认证；
+- adapted ANS/RRT 是原完整系统复现；
+- 不显著的 coverage/clearance difference 是显著；
+- 把 known、sensor-only、joint coverage 混合做 p-value；
+- 把 candidates、steps 或 pixels 当作独立实验单位。

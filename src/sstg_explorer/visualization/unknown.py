@@ -11,6 +11,7 @@ from matplotlib.patches import Circle, Wedge
 import numpy as np
 
 from sstg_explorer.map import OccupancyGrid
+from sstg_explorer.unknown.explorer import UnknownMapExplorer
 
 
 def apply_observed_updates(belief: np.ndarray, updates: List[List[int]]) -> None:
@@ -68,7 +69,32 @@ def visualize_unknown_step(
         cmap=ListedColormap(["#78909c", "#fafafa", "#17212b"]),
         vmin=0, vmax=2,
     )
-    belief_ax.set_title("Policy-visible belief (unknown / free / occupied)")
+    objective = step.get("coverage_objective", "sensor")
+    topological_radius = float(step.get("topological_radius_m", 2.0))
+    explored = step.get("explored_nodes", [])
+    explored_points = [node["position"] for node in explored]
+    topological_map = UnknownMapExplorer.topological_coverage_map(
+        truth, explored_points, topological_radius
+    )
+    if objective == "joint":
+        known_free = (belief_data >= 0) & (belief_data < 50)
+        known_covered = known_free & topological_map
+        known_gap = known_free & (~topological_map)
+        belief_ax.imshow(
+            np.ma.masked_where(~known_covered, known_covered),
+            origin="lower", extent=extent, cmap="Blues", alpha=0.24,
+            vmin=0, vmax=1,
+        )
+        belief_ax.imshow(
+            np.ma.masked_where(~known_gap, known_gap),
+            origin="lower", extent=extent, cmap="Oranges", alpha=0.38,
+            vmin=0, vmax=1,
+        )
+        belief_ax.set_title(
+            "Policy belief (orange = known 2 m coverage gap)"
+        )
+    else:
+        belief_ax.set_title("Policy-visible belief (unknown / free / occupied)")
 
     truth_ax.imshow(
         truth.data, origin="lower", extent=extent,
@@ -80,20 +106,45 @@ def visualize_unknown_step(
         known_overlay, origin="lower", extent=extent,
         cmap="Blues", alpha=0.20, vmin=0, vmax=1,
     )
-    unknown_free = truth.get_free_space_mask() & (~known)
-    unknown_overlay = np.ma.masked_where(~unknown_free, unknown_free)
-    truth_ax.imshow(
-        unknown_overlay, origin="lower", extent=extent,
-        cmap="Reds", alpha=0.20, vmin=0, vmax=1,
-    )
-    truth_ax.set_title("Evaluation-only truth (red = unseen free space)")
+    truth_free = truth.get_free_space_mask()
+    if objective == "joint":
+        categories = [
+            (truth_free & (~known) & (~topological_map), "Reds", 0.36),
+            (truth_free & known & (~topological_map), "Oranges", 0.42),
+            (truth_free & (~known) & topological_map, "Purples", 0.34),
+            (truth_free & known & topological_map, "Blues", 0.22),
+        ]
+        for mask, cmap, alpha in categories:
+            truth_ax.imshow(
+                np.ma.masked_where(~mask, mask), origin="lower", extent=extent,
+                cmap=cmap, alpha=alpha, vmin=0, vmax=1,
+            )
+        truth_ax.set_title(
+            "Truth: red=neither, orange=sensor only,\n"
+            "purple=topology only, blue=both",
+            fontsize=9.5,
+        )
+    else:
+        unknown_free = truth_free & (~known)
+        unknown_overlay = np.ma.masked_where(~unknown_free, unknown_free)
+        truth_ax.imshow(
+            unknown_overlay, origin="lower", extent=extent,
+            cmap="Reds", alpha=0.20, vmin=0, vmax=1,
+        )
+        truth_ax.set_title("Evaluation-only truth (red = unseen free space)")
 
     _plot_paths(belief_ax, execution_paths)
     _plot_paths(truth_ax, execution_paths, label=False)
-    explored = step.get("explored_nodes", [])
     if explored:
-        points = [node["position"] for node in explored]
+        points = explored_points
         for ax in (belief_ax, truth_ax):
+            if objective == "joint":
+                for point in points:
+                    ax.add_patch(Circle(
+                        point, topological_radius, fill=False,
+                        edgecolor="#1976d2", linewidth=0.75,
+                        linestyle=":", alpha=0.48, zorder=6,
+                    ))
             ax.scatter(
                 [point[0] for point in points], [point[1] for point in points],
                 c="#1976d2", s=30, edgecolors="white", linewidths=0.5,
@@ -117,6 +168,19 @@ def visualize_unknown_step(
             c="#f9a825", marker="^", s=sizes, edgecolors="#5d4037",
             linewidths=0.6, alpha=0.8, zorder=9, label="Pending candidates",
         )
+        gap_indices = [
+            index for index, candidate in enumerate(active)
+            if candidate.get("kind") == "coverage_gap"
+        ]
+        if gap_indices:
+            belief_ax.scatter(
+                [targets[index][0] for index in gap_indices],
+                [targets[index][1] for index in gap_indices],
+                facecolors="none", edgecolors="#0d47a1", marker="s",
+                s=[sizes[index] + 22 for index in gap_indices],
+                linewidths=1.2, zorder=10,
+                label="Pending topology-gap candidates",
+            )
         headings = np.deg2rad([
             candidate.get("heading", 0.0) for candidate in active
         ])
@@ -137,6 +201,7 @@ def visualize_unknown_step(
     rejected_styles = {
         "pruned_gain": ("#e65100", "x"),
         "pruned_evaluation_budget": ("#757575", "x"),
+        "pruned_executed": ("#6a1b9a", "x"),
         "unreachable": ("#d50000", "X"),
     }
     generated = step.get("generated_candidates", [])
@@ -218,7 +283,8 @@ def visualize_unknown_step(
         selected_text = (
             f"id={selected.get('frontier_id')}\n"
             f"kind={selected.get('kind')}\n"
-            f"gain={selected.get('predicted_gain', 0)}\n"
+            f"sensor gain={selected.get('predicted_gain', 0)}\n"
+            f"topology gain={selected.get('predicted_topological_gain', 0)}\n"
             f"priority={selected.get('priority', 0):.3f}"
         )
     ranked = sorted(
@@ -229,7 +295,8 @@ def visualize_unknown_step(
         (
             f"#{candidate.get('frontier_id')} "
             f"{candidate.get('kind', '-')[:9]} "
-            f"G={candidate.get('predicted_gain', 0)} "
+            f"Gs={candidate.get('predicted_gain', 0)} "
+            f"Gt={candidate.get('predicted_topological_gain', 0)} "
             f"P={candidate.get('priority', 0):.2f} "
             f"d={candidate.get('path_cost', 0):.1f}m"
         )
@@ -239,11 +306,14 @@ def visualize_unknown_step(
         "UNKNOWN-MAP STATE",
         f"trace: {step.get('trace_id', 0)}",
         f"event: {step.get('event', '-')}",
+        f"objective: {objective}",
         f"FOV/range: {sensor.get('fov_deg', '-')}° / {sensor.get('range_m', '-')}m",
         "",
-        f"free coverage: {step.get('coverage_before', 0):.1%}",
-        f"            -> {step.get('coverage_after', 0):.1%}",
-        f"gain: {step.get('coverage_gain', 0):+.2%}",
+        f"sensor coverage: {step.get('sensor_coverage_after', step.get('coverage_after', 0)):.1%}",
+        f"topology ({topological_radius:g}m): {step.get('topological_coverage_after', 0):.1%}",
+        f"joint minimum: {step.get('joint_coverage_after', 0):.1%}",
+        f"known-free topo: {step.get('known_topological_coverage', 0):.1%}",
+        f"primary gain: {step.get('coverage_gain', 0):+.2%}",
         f"known map: {step.get('known_ratio', 0):.1%}",
         f"occupied recall: {step.get('occupied_recall', 0):.1%}",
         f"new cells: {step.get('new_observed_count', 0)}",
@@ -264,6 +334,8 @@ def visualize_unknown_step(
         Line2D([0], [0], color="#1565c0", lw=2, label="Executed trajectory"),
         Line2D([0], [0], marker="^", color="none", markerfacecolor="#f9a825",
                markeredgecolor="#5d4037", label="Pending"),
+        Line2D([0], [0], marker="s", color="none", markerfacecolor="none",
+               markeredgecolor="#0d47a1", label="Topology gap"),
         Line2D([0], [0], marker="D", color="none", markerfacecolor="#00c853",
                label="New"),
         Line2D([0], [0], marker="x", color="#e65100", linestyle="None",

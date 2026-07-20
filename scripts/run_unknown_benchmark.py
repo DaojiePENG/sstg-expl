@@ -43,7 +43,7 @@ from sstg_explorer.visualization import reconstruct_beliefs, visualize_unknown_s
 MAIN_ALGORITHMS = ["frontier", "nbv", "rrt", "ans", "sstg"]
 ABLATION_ALGORITHMS = [
     "sstg", "sstg_single_centroid", "sstg_known_obstacle_only",
-    "sstg_no_vantage", "sstg_with_spacing",
+    "sstg_no_vantage", "sstg_no_spacing",
 ]
 ALGORITHMS = MAIN_ALGORITHMS + [
     key for key in ABLATION_ALGORITHMS if key not in MAIN_ALGORITHMS
@@ -52,7 +52,7 @@ ABLATION_NAMES = {
     "sstg_single_centroid": "SSTG Unknown: single frontier centroid",
     "sstg_known_obstacle_only": "SSTG Unknown: known-obstacle-only safety",
     "sstg_no_vantage": "SSTG Unknown: no topological vantages",
-    "sstg_with_spacing": "SSTG Unknown: with spacing utility",
+    "sstg_no_spacing": "SSTG Unknown: without spacing utility",
 }
 SENSORS = {
     "fov360_r8": SensorConfig(360.0, 8.0, 0.25),
@@ -70,6 +70,17 @@ def parse_args():
         "--profile", choices=["smoke", "paper", "fov", "range", "ablation"],
         default="paper",
     )
+    parser.add_argument(
+        "--coverage-objective", choices=["sensor", "joint"], default="joint",
+        help=(
+            "sensor: terminate on occlusion-aware observed-free coverage; "
+            "joint: require both observed-free and discrete topological disk "
+            "coverage, while reporting the latter as the primary coverage."
+        ),
+    )
+    parser.add_argument("--topological-radius", type=float, default=2.0)
+    parser.add_argument("--target-sensor-coverage", type=float, default=0.95)
+    parser.add_argument("--target-topological-coverage", type=float, default=0.95)
     parser.add_argument("--runs", type=int)
     parser.add_argument("--algorithms", nargs="+", choices=ALGORITHMS)
     parser.add_argument("--environments", nargs="+", choices=list(ENVIRONMENTS))
@@ -94,6 +105,11 @@ def parse_args():
         "--known-results", type=Path,
         default=ROOT / "outputs" / "benchmark_runs" / "latest" / "results.json",
         help="Existing known-map results used only for a redundancy supplement.",
+    )
+    parser.add_argument(
+        "--sensor-results", type=Path,
+        default=ROOT / "outputs" / "unknown_benchmark_runs" / "latest" / "results.json",
+        help="Frozen sensor-only results used in the three-protocol comparison.",
     )
     return parser.parse_args()
 
@@ -134,20 +150,31 @@ def profile_scope(args):
     return algorithms, environments, sensors, runs
 
 
-def create_algorithm(key, sensor, seed, max_decisions):
+def create_algorithm(
+    key, sensor, seed, max_decisions, coverage_objective,
+    topological_radius, target_sensor_coverage,
+    target_topological_coverage,
+):
     checkpoint = str(ROOT / "models" / "checkpoints" / "ans_global_policy.pt")
     strategy = "sstg" if key in ABLATION_ALGORITHMS else key
     config = UnknownExplorerConfig(
         strategy=strategy,
         sensor=sensor,
-        target_coverage=0.95,
+        target_coverage=target_sensor_coverage,
+        coverage_objective=coverage_objective,
+        topological_radius=topological_radius,
+        target_topological_coverage=target_topological_coverage,
         max_decisions=max_decisions,
         seed=seed,
         checkpoint=checkpoint if key == "ans" else None,
         multi_frontier=key != "sstg_single_centroid",
         require_known_footprint=key != "sstg_known_obstacle_only",
         use_topological_vantages=key != "sstg_no_vantage",
-        spacing_weight=0.30 if key == "sstg_with_spacing" else 0.0,
+        spacing_weight=(
+            0.0 if key == "sstg_no_spacing"
+            else 0.30 if strategy == "sstg"
+            else 0.0
+        ),
     )
     algorithm = UnknownMapExplorer(config)
     if key in ABLATION_NAMES:
@@ -155,21 +182,30 @@ def create_algorithm(key, sensor, seed, max_decisions):
     return algorithm
 
 
-def run_experiment(runner, algorithm_key, sensor_key, environment, run_id, seed, max_decisions):
+def run_experiment(
+    runner, algorithm_key, sensor_key, environment, run_id, seed,
+    max_decisions, coverage_objective, topological_radius,
+    target_sensor_coverage, target_topological_coverage,
+):
     random.seed(seed)
     np.random.seed(seed)
     sensor = SENSORS[sensor_key]
-    algorithm = create_algorithm(algorithm_key, sensor, seed, max_decisions)
+    algorithm = create_algorithm(
+        algorithm_key, sensor, seed, max_decisions, coverage_objective,
+        topological_radius, target_sensor_coverage,
+        target_topological_coverage,
+    )
     truth = environment.get_occupancy_map()
     started = time.perf_counter()
     result = algorithm.explore(truth, environment.get_start_pose())
     elapsed = time.perf_counter() - started
     nodes = result["nodes"]
+    oriented_views = result.get("oriented_views", nodes)
     positions = [node["position"] for node in nodes]
     paths = result.get("paths", result["metadata"].get("paths", []))
     path_positions = runner.sample_execution_paths(paths, truth.resolution)
     spatial = runner.compute_spatial_metrics(
-        positions, truth, r_view=2.0, path_positions=path_positions,
+        positions, truth, r_view=topological_radius, path_positions=path_positions,
         required_clearance=0.5, redundancy_distance=1.0,
     )
     metadata = result["metadata"]
@@ -178,7 +214,8 @@ def run_experiment(runner, algorithm_key, sensor_key, environment, run_id, seed,
         for candidate in step.get("generated_candidates", [])
     ]
     record = {
-        "protocol": "unknown_static_grid_occlusion_aware",
+        "protocol": metadata["protocol"],
+        "coverage_objective": metadata["coverage_objective"],
         "algorithm_key": algorithm_key,
         "algorithm": result["algorithm"],
         "sensor_key": sensor_key,
@@ -189,17 +226,29 @@ def run_experiment(runner, algorithm_key, sensor_key, environment, run_id, seed,
         "seed": seed,
         "success": bool(result["success"]),
         "coverage_ratio": float(metadata["coverage_ratio"]),
+        "sensor_coverage_ratio": float(metadata["sensor_coverage_ratio"]),
+        "topological_coverage_ratio": float(
+            metadata["topological_coverage_ratio"]
+        ),
+        "joint_coverage_ratio": float(metadata["joint_coverage_ratio"]),
+        "known_topological_coverage_ratio": float(
+            metadata["known_topological_coverage_ratio"]
+        ),
         "known_ratio": float(metadata["known_ratio"]),
         "occupied_recall": float(metadata["occupied_recall"]),
         "total_distance": float(metadata["total_distance"]),
         "total_rotation_deg": float(metadata["total_rotation_deg"]),
         "num_nodes": len(nodes),
+        "num_oriented_views": len(oriented_views),
         "scan_count": int(metadata["scan_count"]),
         "in_place_rotations": int(metadata["in_place_rotations"]),
         "computation_time": elapsed,
         "coverage_efficiency": float(metadata["coverage_ratio"]) /
             max(float(metadata["total_distance"]), 0.01),
         "coverage_per_viewpoint": float(metadata["coverage_ratio"]) / max(len(nodes), 1),
+        "coverage_per_oriented_view": (
+            float(metadata["coverage_ratio"]) / max(len(oriented_views), 1)
+        ),
         "viewpoints_per_95_coverage": len(nodes) * 0.95 /
             max(float(metadata["coverage_ratio"]), 1e-9),
         "additional_metrics": {
@@ -213,6 +262,7 @@ def run_experiment(runner, algorithm_key, sensor_key, environment, run_id, seed,
             ),
         },
         "trajectory": nodes,
+        "oriented_views": oriented_views,
         "execution_paths": paths,
         "steps": result["steps"],
         "belief_final": result["belief_final"],
@@ -271,18 +321,37 @@ def write_tabular_trace(record, output):
             "coverage_before": step.get("coverage_before"),
             "coverage_after": step.get("coverage_after"),
             "coverage_gain": step.get("coverage_gain"),
+            "sensor_coverage_before": step.get("sensor_coverage_before"),
+            "sensor_coverage_after": step.get("sensor_coverage_after"),
+            "topological_coverage_before": step.get(
+                "topological_coverage_before"
+            ),
+            "topological_coverage_after": step.get(
+                "topological_coverage_after"
+            ),
+            "joint_coverage_before": step.get("joint_coverage_before"),
+            "joint_coverage_after": step.get("joint_coverage_after"),
+            "known_topological_coverage": step.get(
+                "known_topological_coverage"
+            ),
             "known_ratio": step.get("known_ratio"),
             "occupied_recall": step.get("occupied_recall"),
             "new_observed_cells": step.get("new_observed_count"),
             "visible_cells": step.get("visible_cell_count"),
             "translation_m": step.get("translation_m", 0.0),
             "rotation_deg": step.get("rotation_deg", 0.0),
+            "topological_node_created": step.get(
+                "topological_node_created", False
+            ),
             "generated_candidates": len(step.get("generated_candidates", [])),
             "active_candidates": len(step.get("active_frontiers", [])),
             "new_candidates": len(step.get("new_frontiers", [])),
             "selected_id": selected.get("frontier_id"),
             "selected_kind": selected.get("kind"),
             "selected_gain": selected.get("predicted_gain"),
+            "selected_topological_gain": selected.get(
+                "predicted_topological_gain"
+            ),
             "selected_priority": selected.get("priority"),
         })
         selected_id = selected.get("frontier_id")
@@ -304,6 +373,16 @@ def write_tabular_trace(record, output):
                 "heading_deg": candidate.get("heading"),
                 "optimistic_gain": candidate.get("optimistic_gain"),
                 "predicted_gain": candidate.get("predicted_gain"),
+                "predicted_topological_gain": candidate.get(
+                    "predicted_topological_gain"
+                ),
+                "normalized_information_gain": candidate.get(
+                    "normalized_information_gain"
+                ),
+                "normalized_topological_gain": candidate.get(
+                    "normalized_topological_gain"
+                ),
+                "normalized_task_gain": candidate.get("normalized_task_gain"),
                 "geodesic_cost_m": candidate.get("path_cost"),
                 "clearance_m": candidate.get("clearance"),
                 "nearest_viewpoint_m": candidate.get("nearest_viewpoint_distance"),
@@ -327,10 +406,18 @@ def write_tabular_trace(record, output):
         "orientation_deg": node.get("orientation"),
         "decision_timestamp": node.get("timestamp"),
     } for node in record["trajectory"]]
+    oriented_views = [{
+        "view_id": view.get("id"),
+        "topological_node_id": view.get("topological_node_id"),
+        "x": view["position"][0], "y": view["position"][1],
+        "orientation_deg": view.get("orientation"),
+        "decision_timestamp": view.get("timestamp"),
+    } for view in record.get("oriented_views", [])]
     for filename, rows in (
         ("decisions.csv", decisions),
         ("candidates.csv", candidates),
         ("trajectory.csv", trajectory),
+        ("oriented_views.csv", oriented_views),
         ("scan_poses.csv", scans),
         ("path_waypoints.csv", path_waypoints),
     ):
@@ -339,11 +426,17 @@ def write_tabular_trace(record, output):
                 "trace_id", "iteration", "frontier_id", "status",
                 "is_new", "is_selected", "kind", "x", "y",
                 "heading_deg", "optimistic_gain", "predicted_gain",
+                "predicted_topological_gain", "normalized_information_gain",
+                "normalized_topological_gain", "normalized_task_gain",
                 "geodesic_cost_m", "clearance_m", "nearest_viewpoint_m",
                 "priority", "cluster_size",
             ],
             "path_waypoints.csv": ["trace_id", "waypoint_id", "x", "y"],
             "scan_poses.csv": ["trace_id", "scan_id", "x", "y", "heading_deg"],
+            "oriented_views.csv": [
+                "view_id", "topological_node_id", "x", "y",
+                "orientation_deg", "decision_timestamp",
+            ],
         }
         fields = list(rows[0].keys()) if rows else empty_fields[filename]
         with (output / filename).open("w", newline="") as stream:
@@ -353,9 +446,12 @@ def write_tabular_trace(record, output):
 
 
 METRICS = [
-    "coverage_ratio", "known_ratio", "occupied_recall", "total_distance",
-    "num_nodes", "computation_time", "coverage_efficiency",
+    "coverage_ratio", "sensor_coverage_ratio", "topological_coverage_ratio",
+    "joint_coverage_ratio", "known_topological_coverage_ratio",
+    "known_ratio", "occupied_recall", "total_distance",
+    "num_nodes", "num_oriented_views", "computation_time", "coverage_efficiency",
     "coverage_per_viewpoint", "viewpoints_per_95_coverage",
+    "coverage_per_oriented_view",
     "avg_obstacle_distance", "min_obstacle_distance",
     "avg_path_obstacle_distance", "min_path_obstacle_distance",
     "avg_boundary_distance", "node_safe_fraction", "path_safe_fraction",
@@ -426,8 +522,20 @@ def summarize(records, output):
                 "experiments": len(subset),
                 "coverage_mean": float(np.mean([record["coverage_ratio"] for record in subset])),
                 "coverage_std": float(np.std([record["coverage_ratio"] for record in subset])),
+                "sensor_coverage_mean": float(np.mean([
+                    record["sensor_coverage_ratio"] for record in subset
+                ])),
+                "topological_coverage_mean": float(np.mean([
+                    record["topological_coverage_ratio"] for record in subset
+                ])),
+                "joint_coverage_mean": float(np.mean([
+                    record["joint_coverage_ratio"] for record in subset
+                ])),
                 "distance_mean": float(np.mean([record["total_distance"] for record in subset])),
                 "nodes_mean": float(np.mean([record["num_nodes"] for record in subset])),
+                "oriented_views_mean": float(np.mean([
+                    record["num_oriented_views"] for record in subset
+                ])),
                 "view_clearance_mean": float(np.mean([metric(record, "avg_obstacle_distance") for record in subset])),
                 "mean_nn_distance": metric_mean(subset, "mean_nn_distance"),
                 "redundant_viewpoint_fraction": float(np.mean([metric(record, "redundant_viewpoint_fraction") for record in subset])),
@@ -447,8 +555,20 @@ def summarize(records, output):
             "algorithm": algorithm, "experiments": len(subset),
             "coverage_mean": float(np.mean([record["coverage_ratio"] for record in subset])),
             "coverage_std": float(np.std([record["coverage_ratio"] for record in subset])),
+            "sensor_coverage_mean": float(np.mean([
+                record["sensor_coverage_ratio"] for record in subset
+            ])),
+            "topological_coverage_mean": float(np.mean([
+                record["topological_coverage_ratio"] for record in subset
+            ])),
+            "joint_coverage_mean": float(np.mean([
+                record["joint_coverage_ratio"] for record in subset
+            ])),
             "distance_mean": float(np.mean([record["total_distance"] for record in subset])),
             "nodes_mean": float(np.mean([record["num_nodes"] for record in subset])),
+            "oriented_views_mean": float(np.mean([
+                record["num_oriented_views"] for record in subset
+            ])),
             "view_clearance_mean": float(np.mean([metric(record, "avg_obstacle_distance") for record in subset])),
             "mean_nn_distance": metric_mean(subset, "mean_nn_distance"),
             "redundant_viewpoint_fraction": float(np.mean([metric(record, "redundant_viewpoint_fraction") for record in subset])),
@@ -462,12 +582,15 @@ def summarize(records, output):
         writer.writerows(macro)
 
     with (output / "results_table.md").open("w") as stream:
-        stream.write("| Algorithm | Coverage | Distance | Nodes | NN distance | Redundant views | Clearance | Success |\n")
-        stream.write("|---|---:|---:|---:|---:|---:|---:|---:|\n")
+        stream.write("| Algorithm | Primary coverage | Sensor coverage | Topological coverage | Distance | Topological nodes | Oriented actions | NN distance | Redundant nodes | Clearance | Success |\n")
+        stream.write("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
         for row in macro:
             stream.write(
                 f"| {row['algorithm']} | {row['coverage_mean']*100:.2f}% "
+                f"| {row['sensor_coverage_mean']*100:.2f}% "
+                f"| {row['topological_coverage_mean']*100:.2f}% "
                 f"| {row['distance_mean']:.2f} m | {row['nodes_mean']:.2f} "
+                f"| {row['oriented_views_mean']:.2f} "
                 f"| {row['mean_nn_distance']:.2f} m "
                 f"| {row['redundant_viewpoint_fraction']:.1%} "
                 f"| {row['view_clearance_mean']:.2f} m "
@@ -477,16 +600,20 @@ def summarize(records, output):
         value.replace("_", "\\_").replace("%", "\\%")
     )
     with (output / "results_table.tex").open("w") as stream:
-        stream.write("\\begin{tabular}{lrrrrrr}\\toprule\n")
+        stream.write("\\begin{tabular}{lrrrrrrrrr}\\toprule\n")
         stream.write(
-            r"Method & Cov. [\%] & Dist. [m] & Views & NN [m] & Red. [\%] & Succ. [\%] \\ \midrule"
+            r"Method & Primary [\%] & Sensor [\%] & Topo. [\%] & Dist. [m] & Nodes & Actions & NN [m] & Red. [\%] & Succ. [\%] \\ \midrule"
             + "\n"
         )
         for row in macro:
             stream.write(
                 f"{latex_escape(row['algorithm'])} & "
-                f"{row['coverage_mean']*100:.2f} & {row['distance_mean']:.2f} & "
-                f"{row['nodes_mean']:.2f} & {row['mean_nn_distance']:.2f} & "
+                f"{row['coverage_mean']*100:.2f} & "
+                f"{row['sensor_coverage_mean']*100:.2f} & "
+                f"{row['topological_coverage_mean']*100:.2f} & "
+                f"{row['distance_mean']:.2f} & "
+                f"{row['nodes_mean']:.2f} & {row['oriented_views_mean']:.2f} & "
+                f"{row['mean_nn_distance']:.2f} & "
                 f"{row['redundant_viewpoint_fraction']*100:.1f} & "
                 f"{row['success_rate']*100:.1f} " + r"\\" + "\n"
             )
@@ -502,9 +629,15 @@ def _pairwise(records, output):
         (record["sensor_key"], record["environment"]) for record in records
     })
     algorithms = sorted({record["algorithm"] for record in records})
-    target = "SSTG-Explorer Unknown"
+    target = next(
+        (algorithm for algorithm in algorithms if algorithm.startswith("SSTG-Explorer")),
+        "SSTG-Explorer Unknown",
+    )
     fields = [
         "baseline", "coverage_delta_pp", "coverage_ci95_low", "coverage_ci95_high",
+        "sensor_coverage_delta_pp", "sensor_coverage_ci95_low",
+        "sensor_coverage_ci95_high", "topological_coverage_delta_pp",
+        "topological_coverage_ci95_low", "topological_coverage_ci95_high",
         "distance_delta_m", "distance_ci95_low", "distance_ci95_high",
         "nn_distance_delta_m", "redundancy_delta", "coverage_wilcoxon_p",
         "coverage_holm_p",
@@ -521,6 +654,12 @@ def _pairwise(records, output):
                 ]
                 means[(algorithm, cluster)] = {
                     "coverage": float(np.mean([record["coverage_ratio"] for record in subset])),
+                    "sensor_coverage": float(np.mean([
+                        record["sensor_coverage_ratio"] for record in subset
+                    ])),
+                    "topological_coverage": float(np.mean([
+                        record["topological_coverage_ratio"] for record in subset
+                    ])),
                     "distance": float(np.mean([record["total_distance"] for record in subset])),
                     "nn": metric_mean(subset, "mean_nn_distance"),
                     "nn_defined": any(
@@ -535,6 +674,20 @@ def _pairwise(records, output):
                 continue
             coverage = np.asarray([
                 (means[(target, cluster)]["coverage"] - means[(baseline, cluster)]["coverage"]) * 100
+                for cluster in clusters
+            ])
+            sensor_coverage = np.asarray([
+                (
+                    means[(target, cluster)]["sensor_coverage"] -
+                    means[(baseline, cluster)]["sensor_coverage"]
+                ) * 100
+                for cluster in clusters
+            ])
+            topological_coverage = np.asarray([
+                (
+                    means[(target, cluster)]["topological_coverage"] -
+                    means[(baseline, cluster)]["topological_coverage"]
+                ) * 100
                 for cluster in clusters
             ])
             distance = np.asarray([
@@ -553,12 +706,30 @@ def _pairwise(records, output):
             ])
             samples = rng.integers(0, len(clusters), size=(10000, len(clusters)))
             coverage_boot = coverage[samples].mean(axis=1)
+            sensor_coverage_boot = sensor_coverage[samples].mean(axis=1)
+            topological_coverage_boot = topological_coverage[samples].mean(axis=1)
             distance_boot = distance[samples].mean(axis=1)
             rows.append({
                 "baseline": baseline,
                 "coverage_delta_pp": float(np.mean(coverage)),
                 "coverage_ci95_low": float(np.percentile(coverage_boot, 2.5)),
                 "coverage_ci95_high": float(np.percentile(coverage_boot, 97.5)),
+                "sensor_coverage_delta_pp": float(np.mean(sensor_coverage)),
+                "sensor_coverage_ci95_low": float(
+                    np.percentile(sensor_coverage_boot, 2.5)
+                ),
+                "sensor_coverage_ci95_high": float(
+                    np.percentile(sensor_coverage_boot, 97.5)
+                ),
+                "topological_coverage_delta_pp": float(
+                    np.mean(topological_coverage)
+                ),
+                "topological_coverage_ci95_low": float(
+                    np.percentile(topological_coverage_boot, 2.5)
+                ),
+                "topological_coverage_ci95_high": float(
+                    np.percentile(topological_coverage_boot, 97.5)
+                ),
                 "distance_delta_m": float(np.mean(distance)),
                 "distance_ci95_low": float(np.percentile(distance_boot, 2.5)),
                 "distance_ci95_high": float(np.percentile(distance_boot, 97.5)),
@@ -597,7 +768,7 @@ def _plots(aggregates, macro, output):
         for j in range(len(sensors)):
             if np.isfinite(matrix[i, j]):
                 ax.text(j, i, f"{matrix[i,j]:.1f}", ha="center", va="center", fontsize=8)
-    fig.colorbar(image, ax=ax, label="Observed free-space coverage [%]")
+    fig.colorbar(image, ax=ax, label="Primary task coverage [%]")
     fig.tight_layout()
     fig.savefig(output / "sensor_coverage_heatmap.png", dpi=180)
     plt.close(fig)
@@ -639,6 +810,33 @@ def _plots(aggregates, macro, output):
         axes[1].legend(fontsize=7, loc="best")
     fig.tight_layout()
     fig.savefig(output / "fov_range_sensitivity.png", dpi=180)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(10.5, 5.2))
+    x = np.arange(len(macro), dtype=float)
+    width = 0.36
+    ax.bar(
+        x - width / 2,
+        [row["sensor_coverage_mean"] * 100 for row in macro],
+        width,
+        label="Occlusion-aware sensor coverage",
+        color="#4477AA",
+    )
+    ax.bar(
+        x + width / 2,
+        [row["topological_coverage_mean"] * 100 for row in macro],
+        width,
+        label="Discrete topological coverage",
+        color="#EE6677",
+    )
+    ax.set_xticks(x, [row["algorithm"] for row in macro], rotation=20, ha="right")
+    ax.set_ylabel("Coverage [%]")
+    ax.set_ylim(0, 102)
+    ax.set_title("Information acquisition versus 2 m topological-node coverage")
+    ax.grid(axis="y", alpha=.25)
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(output / "coverage_components.png", dpi=180)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(8.5, 5.5))
@@ -712,7 +910,223 @@ def known_redundancy_supplement(results_path: Path, output: Path):
     return aggregate
 
 
+def three_protocol_comparison(
+    joint_records, known_results_path: Path, sensor_results_path: Path,
+    output: Path, topological_radius: float,
+):
+    """Compare the three coverage semantics without conflating denominators."""
+    if not known_results_path.exists() or not sensor_results_path.exists():
+        return []
+
+    canonical = {
+        "active_neural_slam": "ans", "ans": "ans",
+        "frontier": "frontier", "nbv": "nbv", "rrt": "rrt",
+        "sstg_explorer": "sstg", "sstg": "sstg",
+        "sstg_single_centroid": "sstg",
+        "sstg_known_obstacle_only": "sstg",
+        "sstg_no_vantage": "sstg",
+        "sstg_no_spacing": "sstg",
+        # Backward-compatible postprocessing for the audited pre-selection
+        # component that used the inverse ablation name.
+        "sstg_with_spacing": "sstg",
+        "uniform_grid": "uniform_grid",
+    }
+    labels = {
+        "ans": "ANS (adapted)", "frontier": "Frontier", "nbv": "NBV",
+        "rrt": "RRT (adapted)", "sstg": "SSTG-Explorer",
+        "uniform_grid": "Uniform Grid",
+    }
+
+    known_payload = json.loads(known_results_path.read_text())
+    sensor_payload = json.loads(sensor_results_path.read_text())
+    protocol_records = []
+    for record in known_payload["results"]:
+        item = dict(record)
+        item["canonical_algorithm"] = canonical[record["algorithm_key"]]
+        item["protocol_case"] = "known_map_topological"
+        item["sensor_coverage_ratio"] = None
+        item["topological_coverage_ratio"] = float(record["coverage_ratio"])
+        protocol_records.append(item)
+
+    sensor_root = sensor_results_path.parent
+    radius_tag = (f"{topological_radius:g}").replace(".", "p")
+    cache_path = sensor_root / f"posthoc_topological_r{radius_tag}.csv"
+    cache = {}
+    if cache_path.exists():
+        with cache_path.open(newline="") as stream:
+            for row in csv.DictReader(stream):
+                key = (
+                    row["sensor_key"], row["environment"],
+                    row["algorithm_key"], int(row["run_id"]),
+                )
+                cache[key] = float(row["topological_coverage_ratio"])
+    cache_rows = []
+    for record in sensor_payload["results"]:
+        cache_key = (
+            record["sensor_key"], record["environment"],
+            record["algorithm_key"], int(record["run_id"]),
+        )
+        topology_ratio = cache.get(cache_key)
+        if topology_ratio is None:
+            base = (
+                sensor_root / "artifacts" / record["sensor_key"] /
+                record["environment"] / record["algorithm_key"]
+            )
+            artifact = (
+                base if record["run_id"] == 0
+                else base / "runs" / f"run_{record['run_id']:03d}"
+            )
+            payload = json.loads((artifact / "run.json").read_text())
+            positions = [node["position"] for node in payload["trajectory"]]
+            truth = make_env(record["environment"]).get_occupancy_map()
+            covered = UnknownMapExplorer.topological_coverage_map(
+                truth, positions, topological_radius
+            )
+            truth_free = truth.get_free_space_mask()
+            topology_ratio = float(
+                np.sum(covered & truth_free) / max(np.sum(truth_free), 1)
+            )
+        cache_rows.append({
+            "sensor_key": record["sensor_key"],
+            "environment": record["environment"],
+            "algorithm_key": record["algorithm_key"],
+            "run_id": record["run_id"],
+            "topological_radius_m": topological_radius,
+            "topological_coverage_ratio": topology_ratio,
+        })
+        item = dict(record)
+        item["canonical_algorithm"] = canonical[record["algorithm_key"]]
+        item["protocol_case"] = "unknown_sensor_only"
+        item["sensor_coverage_ratio"] = float(record["coverage_ratio"])
+        item["topological_coverage_ratio"] = topology_ratio
+        protocol_records.append(item)
+    if len(cache) != len(sensor_payload["results"]):
+        with cache_path.open("w", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=cache_rows[0].keys())
+            writer.writeheader()
+            writer.writerows(cache_rows)
+
+    for record in joint_records:
+        item = dict(record)
+        item["canonical_algorithm"] = canonical[record["algorithm_key"]]
+        item["protocol_case"] = "unknown_joint_topological"
+        protocol_records.append(item)
+
+    rows = []
+    for protocol in (
+        "known_map_topological", "unknown_sensor_only",
+        "unknown_joint_topological",
+    ):
+        algorithms = sorted({
+            record["canonical_algorithm"] for record in protocol_records
+            if record["protocol_case"] == protocol
+        })
+        for algorithm in algorithms:
+            subset = [
+                record for record in protocol_records
+                if record["protocol_case"] == protocol and
+                record["canonical_algorithm"] == algorithm
+            ]
+            sensor_values = [
+                record["sensor_coverage_ratio"] for record in subset
+                if record.get("sensor_coverage_ratio") is not None
+            ]
+            rows.append({
+                "protocol_case": protocol,
+                "algorithm_key": algorithm,
+                "algorithm": labels[algorithm],
+                "experiments": len(subset),
+                "sensor_coverage_mean": (
+                    float(np.mean(sensor_values)) if sensor_values else None
+                ),
+                "topological_coverage_mean": float(np.mean([
+                    record["topological_coverage_ratio"] for record in subset
+                ])),
+                "distance_mean": float(np.mean([
+                    record["total_distance"] for record in subset
+                ])),
+                "nodes_mean": float(np.mean([
+                    record["num_nodes"] for record in subset
+                ])),
+                "oriented_actions_mean": float(np.mean([
+                    record.get("num_oriented_views", record["num_nodes"])
+                    for record in subset
+                ])),
+                "success_rate": float(np.mean([
+                    record["success"] for record in subset
+                ])),
+            })
+
+    fields = list(rows[0].keys())
+    with (output / "three_protocol_comparison.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+    with (output / "three_protocol_comparison.md").open("w") as stream:
+        stream.write(
+            "| Protocol | Method | Runs | Sensor coverage | 2 m topological "
+            "coverage | Distance | Nodes | Oriented actions | Success |\n"
+        )
+        stream.write("|---|---|---:|---:|---:|---:|---:|---:|---:|\n")
+        for row in rows:
+            sensor = (
+                "N/A" if row["sensor_coverage_mean"] is None
+                else f"{row['sensor_coverage_mean']:.2%}"
+            )
+            stream.write(
+                f"| {row['protocol_case']} | {row['algorithm']} | "
+                f"{row['experiments']} | {sensor} | "
+                f"{row['topological_coverage_mean']:.2%} | "
+                f"{row['distance_mean']:.2f} m | {row['nodes_mean']:.2f} | "
+                f"{row['oriented_actions_mean']:.2f} | "
+                f"{row['success_rate']:.1%} |\n"
+            )
+
+    joint_algorithms = {
+        row["algorithm_key"] for row in rows
+        if row["protocol_case"] == "unknown_joint_topological"
+    }
+    common = [
+        key for key in ["ans", "frontier", "nbv", "rrt", "sstg"]
+        if key in joint_algorithms
+    ]
+    protocols = [
+        ("known_map_topological", "Known map + 2 m disks", "#4477AA"),
+        ("unknown_sensor_only", "Unknown map, sensor objective", "#CCBB44"),
+        ("unknown_joint_topological", "Unknown map, joint objective", "#EE6677"),
+    ]
+    fig, ax = plt.subplots(figsize=(11, 5.4))
+    x = np.arange(len(common), dtype=float)
+    width = 0.24
+    for index, (protocol, label_text, color) in enumerate(protocols):
+        values = []
+        for algorithm in common:
+            match = next(
+                row for row in rows
+                if row["protocol_case"] == protocol and
+                row["algorithm_key"] == algorithm
+            )
+            values.append(match["topological_coverage_mean"] * 100)
+        ax.bar(
+            x + (index - 1) * width, values, width,
+            label=label_text, color=color,
+        )
+    ax.axhline(95.0, color="0.25", linestyle="--", linewidth=1.0,
+               label="95% target")
+    ax.set_xticks(x, [labels[key] for key in common])
+    ax.set_ylim(0, 102)
+    ax.set_ylabel("Discrete topological coverage within 2 m [%]")
+    ax.set_title("Coverage semantics change the apparent exploration outcome")
+    ax.grid(axis="y", alpha=.25)
+    ax.legend(fontsize=8, ncol=2)
+    fig.tight_layout()
+    fig.savefig(output / "three_protocol_topological_coverage.png", dpi=180)
+    plt.close(fig)
+    return rows
+
+
 def html_report(records, output):
+    objective = records[0].get("coverage_objective", "sensor") if records else "sensor"
     cards = []
     for record in records:
         if record["run_id"] != 0:
@@ -736,6 +1150,10 @@ def html_report(records, output):
             links.append(f'<a href="{relative}/candidates.csv">candidates CSV</a>')
         if (output / relative / "trajectory.csv").exists():
             links.append(f'<a href="{relative}/trajectory.csv">trajectory CSV</a>')
+        if (output / relative / "oriented_views.csv").exists():
+            links.append(
+                f'<a href="{relative}/oriented_views.csv">oriented actions CSV</a>'
+            )
         if (output / relative / "steps").exists():
             links.insert(0, f'<a href="{relative}/steps/">steps</a>')
         if (output / relative / "video.mp4").exists():
@@ -746,16 +1164,39 @@ def html_report(records, output):
             f'<article><h3>{record["algorithm"]}</h3>'
             f'<p>{record["environment"]} · {record["sensor_key"]}</p>'
             f'{media_html}'
-            f'<p>coverage {record["coverage_ratio"]:.1%} · '
+            f'<p>primary {record["coverage_ratio"]:.1%} · '
+            f'sensor {record["sensor_coverage_ratio"]:.1%} · '
+            f'topological {record["topological_coverage_ratio"]:.1%} · '
             f'distance {record["total_distance"]:.1f} m · '
             f'nodes {record["num_nodes"]}</p>'
             f'<p>{" · ".join(links)}</p></article>'
         )
+    comparison_links = ""
+    if (output / "three_protocol_comparison.md").exists():
+        comparison_links = (
+            ' · <a href="three_protocol_comparison.md">three-protocol table</a>'
+            ' · <a href="three_protocol_topological_coverage.png">three-protocol plot</a>'
+        )
+    analysis_links = []
+    for filename, label in [
+        ("statistical_analysis.md", "extended paired statistics"),
+        ("pairwise_all_metrics.csv", "all pairwise metrics"),
+        ("post_sensor_gap_closure.csv", "post-sensor gap closure"),
+        ("hard_scene_analysis.csv", "hard-scene analysis"),
+        ("termination_reasons.csv", "termination reasons"),
+        ("VARIANT_SELECTION.md", "final variant selection"),
+        ("VALIDATION_REPORT.md", "validation report"),
+    ]:
+        if (output / filename).exists():
+            analysis_links.append(f'<a href="{filename}">{label}</a>')
+    analysis_html = (
+        " · " + " · ".join(analysis_links) if analysis_links else ""
+    )
     html = f'''<!doctype html><meta charset="utf-8"><title>SSTG unknown-map benchmark</title>
 <style>body{{font:15px system-ui;margin:2rem;background:#eef2f5}}main{{display:grid;grid-template-columns:repeat(auto-fit,minmax(350px,1fr));gap:1rem}}article{{background:white;padding:1rem;border-radius:10px}}img{{width:100%}}.warn{{background:#fff3cd;padding:1rem;border-left:5px solid #f9a825}}</style>
-<h1>Unknown Static Grid · Occlusion-Aware Exploration</h1>
-<p class="warn">This protocol starts from an all-unknown occupancy belief. Algorithms never receive ground truth; only the simulator/evaluator does. Do not mix these values with the known-map benchmark.</p>
-<p><a href="sensor_coverage_heatmap.png">sensor heatmap</a> · <a href="fov_range_sensitivity.png">FOV/range sensitivity</a> · <a href="safety_redundancy_tradeoff.png">safety/redundancy</a> · <a href="summary.csv">summary CSV</a> · <a href="aggregate.csv">macro CSV</a> · <a href="pairwise_vs_sstg_unknown.csv">statistics</a> · <a href="results_table.md">paper table</a> · <a href="results_table.tex">LaTeX</a> · <a href="known_map_redundancy_table.md">known-map redundancy supplement</a> · <a href="manifest.json">manifest</a> · <a href="audit_report.json">audit</a></p>
+<h1>Unknown Static Grid · {objective.title()} Coverage Objective</h1>
+<p class="warn">All policies start from an unknown occupancy belief and never read ground truth. Sensor coverage measures online information acquisition; topological coverage measures ground-truth free cells within the fixed 2 m radius of accepted observation nodes. Joint success requires both targets.</p>
+<p><a href="sensor_coverage_heatmap.png">primary-coverage heatmap</a> · <a href="coverage_components.png">sensor/topological components</a> · <a href="fov_range_sensitivity.png">FOV/range sensitivity</a> · <a href="safety_redundancy_tradeoff.png">safety/redundancy</a> · <a href="summary.csv">summary CSV</a> · <a href="aggregate.csv">macro CSV</a> · <a href="pairwise_vs_sstg_unknown.csv">statistics</a> · <a href="results_table.md">paper table</a> · <a href="results_table.tex">LaTeX</a> · <a href="known_map_redundancy_table.md">known-map redundancy supplement</a>{comparison_links}{analysis_html} · <a href="manifest.json">manifest</a> · <a href="audit_report.json">audit</a></p>
 <main>{''.join(cards)}</main>'''
     (output / "index.html").write_text(html, encoding="utf-8")
 
@@ -766,6 +1207,7 @@ def audit_output(records, output, args):
     file_counts = {
         "run_json": 0, "belief_npy": 0, "decision_csv": 0,
         "candidate_csv": 0, "trajectory_csv": 0,
+        "oriented_views_csv": 0,
         "step_png": 0, "gif": 0, "mp4": 0,
     }
     truth_cache = {}
@@ -780,7 +1222,8 @@ def audit_output(records, output, args):
         )
         required = [
             "run.json", "belief_final.npy", "decisions.csv",
-            "candidates.csv", "trajectory.csv", "scan_poses.csv",
+            "candidates.csv", "trajectory.csv", "oriented_views.csv",
+            "scan_poses.csv",
             "path_waypoints.csv",
         ]
         for name in required:
@@ -794,6 +1237,9 @@ def audit_output(records, output, args):
         file_counts["decision_csv"] += int((artifact / "decisions.csv").exists())
         file_counts["candidate_csv"] += int((artifact / "candidates.csv").exists())
         file_counts["trajectory_csv"] += int((artifact / "trajectory.csv").exists())
+        file_counts["oriented_views_csv"] += int(
+            (artifact / "oriented_views.csv").exists()
+        )
         payload = json.loads((artifact / "run.json").read_text())
         final_belief = np.load(artifact / "belief_final.npy")
         replayed = np.full(final_belief.shape, -1, dtype=np.int8)
@@ -874,15 +1320,24 @@ def main():
     output_root = args.output or (
         ROOT / "outputs" /
         ("unknown_ablation_runs" if args.profile == "ablation"
-         else "unknown_benchmark_runs")
+         else (
+             "joint_benchmark_runs"
+             if args.coverage_objective == "joint"
+             else "unknown_benchmark_runs"
+         ))
     )
     output = output_root / stamp
     output.mkdir(parents=True)
     manifest = {
         "created": datetime.now().isoformat(),
-        "protocol": "unknown_static_grid_occlusion_aware",
+        "protocol": (
+            "unknown_static_grid_joint_topological_coverage"
+            if args.coverage_objective == "joint"
+            else "unknown_static_grid_occlusion_aware"
+        ),
         "command": sys.argv,
         "profile": args.profile,
+        "coverage_objective": args.coverage_objective,
         "algorithms": algorithms,
         "environments": environments,
         "environment_definitions": {
@@ -894,7 +1349,12 @@ def main():
         "seed": args.seed,
         "max_decisions": args.max_decisions,
         "common_explorer_config": {
-            "target_coverage": 0.95,
+            "target_sensor_coverage": args.target_sensor_coverage,
+            "target_topological_coverage": args.target_topological_coverage,
+            "topological_radius_m": args.topological_radius,
+            "topological_merge_distance_m": 0.25,
+            "information_gain_weight": 0.40,
+            "topological_gain_weight": 0.60,
             "robot_radius_m": 0.3,
             "preferred_clearance_m": 0.5,
             "target_spacing_m": 2.0,
@@ -904,13 +1364,13 @@ def main():
             "random_candidates": 24,
             "exact_gain_budget": 18,
             "clearance_weight": 1.5,
-            "spacing_weight": 0.0,
+            "spacing_weight": 0.30,
         },
         "ablation_definitions": {
             "sstg_single_centroid": "multi_frontier=False",
             "sstg_known_obstacle_only": "require_known_footprint=False",
             "sstg_no_vantage": "use_topological_vantages=False",
-            "sstg_with_spacing": "spacing_weight=0.30",
+            "sstg_no_spacing": "spacing_weight=0.0",
         },
         "ground_truth_access": "sensor and evaluator only",
         "planning": (
@@ -944,6 +1404,10 @@ def main():
                             runner, algorithm_key, sensor_key,
                             make_env(environment_name), run_id,
                             args.seed + run_id, args.max_decisions,
+                            args.coverage_objective,
+                            args.topological_radius,
+                            args.target_sensor_coverage,
+                            args.target_topological_coverage,
                         )
                         base = (
                             output / "artifacts" / sensor_key / environment_name /
@@ -967,7 +1431,9 @@ def main():
                                 f"{sensor_key}/{environment_name}/{algorithm_key}/"
                                 f"{run_id}/{step.get('trace_id')} "
                                 f"event={step.get('event')} "
-                                f"coverage={step.get('coverage_after', 0):.6f} "
+                                f"primary={step.get('coverage_after', 0):.6f} "
+                                f"sensor={step.get('sensor_coverage_after', 0):.6f} "
+                                f"topology={step.get('topological_coverage_after', 0):.6f} "
                                 f"new_cells={step.get('new_observed_count', 0)} "
                                 f"candidates={len(step.get('generated_candidates', []))} "
                                 f"selected={selected.get('frontier_id')}",
@@ -980,7 +1446,7 @@ def main():
                             key: value for key, value in record.items()
                             if key not in (
                                 "belief_final", "steps", "trajectory",
-                                "execution_paths",
+                                "oriented_views", "execution_paths",
                             )
                         })
     (output / "results.json").write_text(
@@ -989,6 +1455,11 @@ def main():
     )
     summarize(records, output)
     known_redundancy_supplement(args.known_results, output)
+    if args.coverage_objective == "joint" and args.profile != "ablation":
+        three_protocol_comparison(
+            records, args.known_results, args.sensor_results,
+            output, args.topological_radius,
+        )
     html_report(records, output)
     audit_output(records, output, args)
     latest = output_root / "latest"

@@ -1,146 +1,221 @@
-# SSTG-Explorer：IEEE Robotics and Automation Letters 文章架构
+# SSTG-Explorer 论文架构：11 页扩展主稿、RA-L 压缩与 T-RO 路线
 
-本文档按 IEEE RAL 的“短而完整”体裁设计。按 2026-07-19 核验的官方规则，正文、图、表和参考文献共 6 页，最多付费增加 2 页；不能用 appendix 或其他 supplementary material 超过 8 页。投稿前仍须核对 [RAL Information for Authors](https://www.ieee-ras.org/publications/ra-l/ra-l-information-for-authors/) 与 [RAL FAQ](https://www.ieee-ras.org/publications/ra-l/faq/)。
+本文档给出可直接据此写稿的科学叙事、章节结构、架构图、图表计划和投稿门槛。正式英文稿位于同级 `../SSTGExplorerPaper/root.tex`。
 
 ## 1. 论文定位
 
-建议主标题：
+建议标题：
 
-> **SSTG-Explorer: Traceable Occlusion-Aware Viewpoint Exploration for Spatial-Semantic Topological Mapping**
+> **SSTG-Explorer: Joint Sensor and Topological Coverage for Task-Effective Robot Exploration**
 
-主问题应改为：在静态二维占据栅格内容未知、位姿完美的条件下，机器人如何只依靠受 FOV、量程和墙体遮挡约束的在线观测，生成兼顾信息增益、可达性、障碍净空和空间离散性的有向语义观测节点。unknown_static_occlusion 是论文主协议；原 known_static_disk 保留为受控结构规划协议，用来隔离测地队列、recovery 和 clearance 等模块，不再冒充在线未知空间探索。
+一句话问题：
 
-建议贡献：
+> 当 8–16 m 的长量程 sensor 已把 occupancy map 看全，机器人如何仍只依靠在线 belief，建立由 2 m 任务半径约束的安全、稀疏、非冗余观测拓扑？
 
-1. 提出 belief-only、遮挡感知的 SSTG 闭环：多代表 frontier、确定性拓扑视点和有向旋转候选统一进入可追踪候选图。
-2. 设计 FPS 空间离散候选与联合 predicted gain、known-free 测地代价、视点净空的可审计效用，并保证 cost-map reachability 与禁止斜穿墙角的 A* 一致。
-3. 把候选生成、精确增益预算剪枝、选择、不可达、实际路径扫描和 belief cell update 全部保存，直接导出逐步图、轨迹、视频与网页。
-4. 在 6 组 FOV/range、9 类环境、5 种在线方法和 3 seeds 上报告主结果，并用已知地图 270-run 主表与 315-run 消融提供互补的结构证据。
+高层应用价值不是“能画完整网页”，而是：地图构建只回答“哪里可通行”；巡检、语义理解、重定位和后续交互还需要机器人在适当工作距离留下可再次使用的观测站。Sensor completeness 与 task-effective observation completeness 的失配，是本文要提出并系统验证的新问题。
 
-不要把“脚本完整”单独写成算法贡献，也不要写“全面优于所有方法”；主张必须与最终统计表一致。
+## 2. 科学贡献
 
-## 2. 系统架构图
+建议只写三条：
 
-论文主图应使用 [unknown-map SSTG-Explorer architecture SVG](figures/sstg_explorer_unknown_architecture.svg)，它明确画出 evaluator-only truth 边界、在线 ray observation、belief-only policy、候选图、SSTG utility、known-free A*、闭环更新和可审计输出：
+1. **Dual-coverage formulation.** 区分遮挡约束的信息覆盖 \(C^I\) 和固定半径的拓扑观测覆盖 \(C^T\)，在严格 truth–belief information boundary 下要求二者同时达标。
+2. **Belief-only online gap closure.** 从当前已知安全自由空间构造拓扑缺口，统一 multi-frontier、gap FPS、topological vantages 和 directional actions，以信息增益、边际拓扑增益、测地路程、净空和节点间距选择目标；空间节点与同点多朝向动作显式分离。
+3. **Controlled three-case evidence.** 用全知 disk、旧 sensor-only 和新 joint 三种 case 证明 construct mismatch，并在 810-run joint 矩阵中检验 coverage、success、安全、节点/动作规模和空间冗余；明确报告路程与 RRT sparsity 的代价。
 
-![Unknown-map SSTG-Explorer architecture](figures/sstg_explorer_unknown_architecture.svg)
+不要把 trace、截图、视频、网页或“有 810 runs”写成科研创新点。它们属于 reproducibility evidence。
 
-已知地图结构规划图 [known-map architecture SVG](figures/sstg_explorer_architecture.svg) 只用于补充材料或 known-protocol 小图，不宜再作为主 Fig. 2。
+## 3. 系统架构图
 
-```mermaid
-flowchart LR
-    GT[Hidden truth M*<br/>sensor/evaluator only] --> S[Occlusion-aware ray sensor]
-    S --> B[Belief B_t<br/>unknown/free/occupied]
-    B --> K[Known-free footprint<br/>reachable geodesic map]
-    K --> C[Multi-frontier + FPS vantages<br/>+ orientation candidates]
-    B --> G[Predicted unknown gain]
-    C --> U[SSTG utility<br/>gain/cost/clearance]
-    G --> U
-    U --> X[Select and trace]
-    X --> A[Known-free A*]
-    A --> E[Execute actual trajectory<br/>scan every 1 m]
-    E --> S
-    E --> O[JSON + belief updates + PNG/GIF/MP4/HTML]
-```
+论文主架构图：
 
-图中红色虚线 evaluator boundary 是审稿时最重要的信息隔离：policy 不读取 truth。候选 graph + normalized utility + footprint-safe geodesic execution 是方法主体；ray caster 和 A* 是可替换模块。
+![Joint SSTG-Explorer architecture](figures/sstg_joint_architecture.svg)
 
-## 3. 单步决策状态机
+可编辑 TikZ 源：[sstg_joint_architecture.tex](figures/sstg_joint_architecture.tex)，投稿矢量版：[sstg_joint_architecture.pdf](figures/sstg_joint_architecture.pdf)。
 
-```mermaid
-stateDiagram-v2
-    [*] --> Observe
-    Observe --> BeliefUpdate: first-obstacle rays
-    BeliefUpdate --> Generate: footprint-safe reachable set
-    Generate --> BudgetPruned: outside exact-gain shortlist
-    Generate --> GainPruned: predicted gain below threshold
-    Generate --> Pending: informative candidate
-    Pending --> Selected: maximum normalized utility
-    Selected --> PathRejected: known-free A* unreachable
-    Selected --> Execute: reachable
-    PathRejected --> Generate: trace and refresh
-    Execute --> Observe: scan along actual path
-    BeliefUpdate --> [*]: observed-free target reached
-```
+图必须表达：
 
-论文中的 decision-trace 图应使用 `scripts/run_unknown_benchmark.py` 产生的真实逐步图：左侧只画 policy belief，右侧 truth 明确标注 evaluation-only；每个候选必须有 ID、kind、heading、gain、geodesic cost、clearance、spacing、priority 和状态，不能只画一个覆盖圆。
+- 红色 evaluation boundary 内的 hidden \(M^\star\) 只通过 occlusion sensor 更新 belief；
+- belief 同时产生 unknown-space deficit 与 known-free task-coverage deficit；
+- candidate graph、joint utility 和 A* 全部 belief-only；
+- motion scans 闭环更新；
+- \(V_t\) spatial nodes 与 \(A_t\) oriented actions 分开；
+- 终止条件是 \(C^I,C^T\ge0.95\)，不是其中任意一个。
 
-## 4. 六页主文布局
+## 4. 当前 11 页扩展主稿结构
 
-### I. Introduction（0.75 页）
+当前 `root.pdf` 是 11 页、双栏、US Letter 的扩展工作稿，不再按 8 页 RA-L 上限删减主要结果。它的目标是先完整展示问题、方法、810-run 全矩阵、三协议、统计推断、五算法各 6 阶段过程、SSTG 候选生命周期和消融，再根据最终 venue 派生压缩稿或继续补证据。
 
-- 第一段：语义拓扑图需要“在哪里观察”，而不只是“哪里尚未建图”。
-- 第二段：frontier/NBV/CPP 的目标与视觉重叠、安全视点和可审计候选决策之间的缺口。
-- 第三段：方法直觉与 Fig. 1。
-- 末尾给出三至四条可验证贡献。
+### Abstract（≤200 words，约 0.25 页）
 
-### II. Related Work（0.55 页）
+六句结构：
 
-按问题而非算法名字组织：coverage/frontier exploration、active perception/NBV、learning-based exploration、semantic/topological mapping。每段最后一句说明 SSTG-Explorer 的差别。基线出处见 `REFERENCES.bib` 和 `BENCHMARK_GUIDE.md`。
+1. 应用挑战：long-range map completeness 掩盖 short-range observation gaps；
+2. 问题定义：joint sensor + topology coverage；
+3. 方法：belief-only gap closure 与 node/action separation；
+4. 设计：9 scenes × 6 sensors × 5 methods × 3 seeds；
+5. 核心结果：旧 SSTG 98.38% sensor / 33.02% topology；joint 99.99% / 96.14%、100% success、冗余相对所有基线显著降低；
+6. 诚实 trade-off：比 RRT 多 0.94 nodes、长 6.36 m；静态 2-D 限制。
 
-### III. Problem Formulation（0.55 页）
+### I. Introduction（约 1 页）
 
-定义 hidden truth \(M^\star\)、三值 belief \(B_t\)、first-obstacle ray visibility、observed-free coverage、机器人 footprint 已知自由域、oriented viewpoint 和实际路径代价。用一个红框 invariant 明确：truth 只供 sensor/evaluator；policy 只能读 \(B_t\)。随后用两句话说明 known_static_disk 是受控辅助协议。
+- 段 1：真实任务需要 observation scaffold，不只是 occupancy；
+- 段 2：8–16 m sensor 与 2 m task radius 失配；
+- 段 3：未知障碍、安全、稀疏、冗余和朝向的耦合挑战；
+- 段 4：SSTG 直觉与贡献；
+- 一句 scope：当前不评价 semantic recognition。
 
-### IV. Method（1.70 页）
+### II. Related Work（约 0.75 页）
 
-建议小节：
+按问题组织：
 
-- A. Occlusion-aware belief update and footprint-safe reachability
-- B. Multi-frontier and topological viewpoint graph
-- C. Gain–geodesic–clearance utility and FPS spacing
-- D. Traceable A* execution and online update
+1. Frontier / NBV / informative exploration；
+2. known-workspace coverage / inspection viewpoint planning；
+3. graph and learning-based exploration；
+4. semantic/topological and task-aware exploration。
 
-至少放 observation update、SSTG utility、redundancy 三个主公式和精简 Algorithm 1。圆盘覆盖、known-map recovery 和完整复杂度可压到辅助材料；完整 41 个公式在 `PAPER_WRITING_REFERENCE.md`。
+每段末尾写“仍缺什么”，不要堆算法名单。VISTA/SCOUT 用来说明 task/semantic completeness 的趋势，不冒充已实现基线。
 
-### V. Experiments（1.45 页）
+### III. Problem Formulation（约 1 页）
 
-- Main unknown setup：9 环境、5 在线方法、3 seeds、360°/240°/120°/90° FOV 与 8/12/16 m range。
-- Main results：observed-free coverage、实际路径、oriented nodes、成功率、runtime；按 sensor–environment cluster 做统计。
-- Spatial quality：mean/median/min nearest-neighbor distance、<1 m 回访率、coverage/view、in-place rotations、视点/实际路径净空。
-- Sensor sensitivity：固定 12 m 的 FOV 曲线与固定 360° 的 range 曲线。
-- Controlled support：已知地图 270-run 主表与 315-run 结构消融；未知 hard-set 的 180-run single-centroid、unsafe-footprint、no-vantage、with-spacing 消融。
-- Failure/trace：展示一次预算剪枝、一次 directional rotation、一次长程 topological vantage，以及仍然存在的 2-D/noise-free 局限。
+必须定义：
 
-### VI. Discussion and Conclusion（0.45 页）
+- hidden truth \(M^\star\)、belief \(B_t\)、first-obstacle observation；
+- \(C^I,C^T,C^J\) 与双阈值；
+- action \(a_k=(p_k,\theta_k)\) 和 node merge \(\delta_m\)；
+- 多目标结果：coverage/success、distance、nodes/actions、clearance、redundancy；
+- 三种 evidence case 不混检。
 
-讨论 2-D 静态/完美位姿/理想射线假设、ANS 和 RRT 的协议适配、无真实机器人/无动态障碍。已知地图 disk proxy 只作为受控证据。结论只复述正式 3-seed 数据支持的结果。
+### IV. Method（约 2 页）
 
-### References（约 0.5 页）
+建议四小节：
 
-优先保留直接影响方法和 benchmark 的 18–25 篇文献。RAL 页数包含参考文献，避免无关综述堆积。
+A. Known-free footprint reachability
 
-## 5. 图表计划
+B. Multi-source online candidate graph
 
-| 编号 | 内容 | 目的 |
+C. Dual gains and safe utility
+
+D. Execution, node–action update, and trace
+
+主公式：safe set、FPS、belief gap、\(G^I/G^T\)、joint utility、node merge；一份精简 Algorithm 1。Trace 只用末段说明审计用途。
+
+### V. Experiments（约 6 页，含两页过程图）
+
+A. Protocol, information boundary, sensors, scenes, adapters, and statistics
+
+B. Three coverage cases + combined 17-column table
+
+C. Cluster-level effects and safety/redundancy Pareto
+
+D. Five-policy matched decision evolution：5 methods × 6 aligned stages = 30 panels
+
+E. Inside SSTG candidate lifecycle：首轮候选、frontier/vantage、map target、重复拒绝、post-sensor gap closure、joint termination
+
+F. Full 270-cell sensor--scene atlas and 15-row hard-scene table
+
+G. Post-sensor gap closure, ablation, audit, and reproducibility
+
+主张顺序：先用真实三阶段图和三协议总表证明 construct mismatch；再给 54-cluster 推断；随后展示同场景逐步过程、所有 sensor--scene cells 和困难场景逐方法结果；最后报告开发阶段选择、消融负结果和审计。
+
+### VI--VII. Discussion and Conclusion（约 1 页）
+
+- 三协议回答不同问题；
+- 95% threshold overshoot；
+- 2 m disk 是 proximity proxy；
+- SSTG 的 Pareto 优势和明确 travel 代价；
+- static 2-D / perfect pose / ideal ray / adapters / 3 seeds；
+- real robot 和 calibrated task-valid visibility 是下一证据门槛。
+
+### References（约 1 页）
+
+保留直接支撑问题、方法、基线和 task-aware positioning 的 25–30 篇。所有 benchmark 方法必须有原始参考文献。
+
+## 5. Venue 路线
+
+### 5.1 保持 11 页扩展工作稿
+
+这是当前推荐的内部审稿版本：结果完整、图表自包含、无需读网页才能理解主要证据。11 页是当前完整展示所需的工作稿长度，不是 T-RO 的官方页数上限。
+
+### 5.2 RA-L 压缩稿
+
+IEEE RA-L 当前规则为 6 页正文含图表和参考文献，可付费增加 2 页，最大 8 页，见 [RA-L Information for Authors](https://www.ieee-ras.org/publications/ra-l/ra-l-information-for-authors/) 和 [FAQ](https://www.ieee-ras.org/publications/ra-l/faq/)。若确定投 RA-L，应从 11 页稿派生独立压缩版：30-panel 过程对照图、SSTG lifecycle 或完整 atlas 可移 multimedia/supplement，但三协议总表、cluster effect 和主要负结果不能删除。
+
+### 5.3 T-RO / Transactions 扩展
+
+T-RO 当前 regular paper 初稿最多 18 页、终稿最多 20 页，见 [T-RO Information for Authors](https://www.ieee-ras.org/publications/t-ro/t-ro-information-for-authors/)。现有 11 页稿只解决了“展示不足”，还没有自动达到 T-RO 的外部有效性门槛；建议新增：
+
+- 多个真实建筑/公开 occupancy datasets，明确 external holdout；
+- 真实机器人 LiDAR/depth camera，标定位姿、碰撞/estop、时间、yaw、任务覆盖；
+- sensor noise、pose uncertainty、dynamic obstacle robustness；
+- \(r_v\in\{1,2,3\}\) m 或 task-valid visibility sensitivity；
+- semantic/inspection downstream：识别率、view diversity 或重定位成功率；
+- joint utility 和 gap generator 的严格消融/复杂度/参数敏感性；
+- 可能的多机器人或长期巡检扩展。
+
+没有这些新增内容时，应把稿件称为完整的 simulation study，而不是仅凭页数宣称达到 T-RO 证据强度。
+
+## 6. 主图表计划
+
+| 编号 | 内容 | 科学问题 |
 |---|---|---|
-| Fig. 1 | belief/truth、候选和实际轨迹的真实逐步图 | 一图定义任务并展示可追踪性 |
-| Fig. 2 | unknown-map 闭环 SVG 架构图 | 解释信息边界、模块和闭环 |
-| Fig. 3 | FOV/range sensitivity + coverage heatmap | 证明传感器结论不是单配置偶然 |
-| Fig. 4 | clearance–NN spacing–coverage 气泡图 | 展示安全、离散性与覆盖权衡 |
-| Table I | 5 方法、6 sensor configs 与公平协议 | 可复现性 |
-| Table II | unknown 主结果 mean ± std/cluster CI | 核心证据 |
-| Table III | known 结构消融 + unknown failure fixes | 证明模块必要性 |
-| Table IV | NN、冗余率、coverage/view、rotation、净空 | 回答“视点是否离散且不重复” |
+| Fig. 1 | 同一 dense 场景的 sensor-only 终止 / map-complete gap / joint-complete 三阶段 | 为什么 sensor 完成后还需探索？ |
+| Fig. 2 | joint architecture | 方法如何在 belief-only 边界内闭环？ |
+| Fig. 3 | 三协议 slopegraph + gap-closing cost bubble | construct mismatch 及其代价有多大？ |
+| Fig. 4 | clearance–NN scatter，bubble=redundancy | 安全/稀疏/冗余 Pareto 如何？ |
+| Fig. 5 | 五算法 × 三里程碑真实过程截图 | 各策略怎样从发现转入/未转入 gap closure？ |
+| Fig. 6 | 5 methods × 6 sensors × 9 scenes 的 270-cell atlas | 宏平均隐藏了哪些 sensor--scene failure？ |
+| Table I | 三协议 × 全方法 × coverage/travel/nodes/success/quality 总表 | 全部工作量和结果如何统一比较？ |
+| Table II | 七个 outcome 的 cluster effect + Holm p | 哪些差异稳健？ |
+| Table III | 三个困难场景 × 五方法的 15 行表 | dense/rooms/warehouse 的具体代价是什么？ |
+| Table IV | joint hard-scene 单因素消融 | 模块行为和负结果是什么？ |
 
-如果受 6 页限制，Table I 放入正文紧凑栏，完整逐环境表由代码仓库网页提供；不能把支持核心主张的结果只放网页。
+图表全部由 `SSTGExplorerPaper/figures/generate_paper_figures.py` 从冻结结果自动生成；不手工抄数。
 
-## 6. 审稿前证据门槛
+## 7. 论文主张边界
 
-- 所有数字均能追溯到一个带 Git commit、命令、seed 和 checkpoint hash 的 `manifest.json`。
-- unknown 主结果严格为 \(6\times9\times5\times3=810\) 条；known 结果单独为 270 条。
-- 每个 unknown run 的 trace 可由 `observed_updates` 重放 belief，并包含所有生成候选的 ID、位置、朝向、gain、cost、clearance、spacing、priority 与状态。
-- 显著性检验以 environment–seed 为实验单位，不把候选或节点伪装成独立样本。
-- ANS 结果始终写作 “ANS-Global (adapted)”，并说明没有比较其 RGB mapper/local policy。
-- unknown A* 只经过完整 footprint 已知 free 的栅格；dense、warehouse 和 narrow 不再因把偏好 margin 当硬机器人尺寸而人为断开。
-- 消融必须重新运行，不能从不同代码 commit 的历史结果拼表。
+### 可写
 
-## 7. RAL 多媒体交付
+- Sensor coverage 与 fixed-radius topology coverage 是不同 construct；
+- SSTG 在 162 joint runs 中 100% 完成；
+- SSTG relative redundancy 对四个 baselines 均显著更低；
+- 节点/动作少于 ANS、Frontier、NBV；净空高于 ANS、Frontier；
+- multiple_rooms、dense_obstacles、warehouse 全六 sensors 均成功；
+- 结果是 reliability/nonredundancy/safety 与 travel 的 Pareto trade-off。
 
-完整 benchmark 网页和原始数据放长期仓库；它们不能替代自包含论文。RAL 当前只允许单个不超过 50 MB 的 multimedia zip，多个片段要编辑成一个视频，并随包提供 ASCII `ReadMe.txt` 与 `Summary.txt`。正式包建议只放：90° dense/warehouse、360° multiple_rooms、一次候选剪枝/拓扑回访的合成 MP4，以及运行环境、播放器版本、联系人和仓库永久链接。不要把 270 个 run-0 视频直接塞进投稿附件。
+### 不可写
 
-## 8. 冻结证据对应主张
+- 所有指标 SOTA、shortest、universally safest；
+- terminal coverage 高一点就是更好（阈值 overshoot）；
+- 2 m disk 证明 semantic/inspection accuracy；
+- 仿真证明部署安全；
+- adapted ANS/RRT 是原完整系统；
+- webpage/trace/video 是科研创新。
 
-主表用 `outputs/unknown_benchmark_runs/20260719_141122/`：SSTG 为 98.38% coverage、15.73 m、4.57 views、3.69 m NN、26.5% redundancy、100% success。摘要可以写“相对 Frontier/NBV/RRT 显著更高 coverage，travel distance 无显著差异，同时使用更少且更离散的 oriented viewpoints”；不能写相对 ANS 显著，也不能写净空或路径全面最优。
+## 8. 审稿门槛
 
-模块证据用 `outputs/unknown_ablation_runs/20260719_141132/`：single-centroid 使 coverage 降 1.89 pp、success 降 8.3 pp；额外 spacing score 没有改善宏平均，因此 FPS-only 是最终方案。已知地图 270+315 runs 只用于证明 geodesic/recovery/clearance 的受控结构作用，不与 observed-free coverage 数字合并。
+投稿前逐项通过：
+
+- [x] 摘要 ≤200 words，所有数字来自 `joint_benchmark_selected/20260719_223630`；
+- [x] title/abstract/contributions 中无 trace/web novelty；
+- [x] 公式与 `UnknownExplorerConfig`、utility 实现一致；
+- [x] nodes/actions 在全文和图表中不再混用；
+- [x] 810-run audit `passed=true`；
+- [x] selected SSTG 162/162 与 frozen baseline 20/20 reproducibility exact match；
+- [x] cluster CIs、Wilcoxon、Holm、effect size 一致；
+- [x] 11/11 fallacy scan 完成；
+- [x] 失败 run 和不利 travel 结果保留；
+- [x] 扩展稿 PDF 11 页 letter、字体嵌入、无 undefined refs/citations/overfull；若投 RA-L，另建 ≤8 页压缩稿；
+- [ ] real-robot TODO 在投稿前完成，或明确选择 simulation-only 风险；
+- [ ] 永久匿名代码/data URL、LICENSE、funding/COI/CRediT 填完；
+- [x] Round-2 reviewer report 无 P0/critical issue，并完成 Stage 4.5 风格引用/数据/图表完整性复核。
+
+## 9. 多媒体
+
+RA-L/T-RO 多媒体是单个不超过 50 MB 的 zip，并含 ASCII `ReadMe.txt` 与 `Summary.txt`。建议从 270 个视频中剪一个 3–5 分钟合成 MP4：
+
+- 360° dense：sensor saturation 后 gap closure；
+- 120° multiple rooms：多朝向 action 与节点合并；
+- 90° warehouse：困难长路径与 coverage；
+- 一段 candidate pruning 和 belief/truth boundary 解释。
+
+完整 270 视频和原始 CSV 放永久仓库，不直接塞入投稿 zip。

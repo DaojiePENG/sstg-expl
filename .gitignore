@@ -71,6 +71,10 @@ benchmarks/results/*.png
 benchmarks/results/*.pdf
 benchmarks/results/*.csv
 *.log
+*.aux
+*.fdb_latexmk
+*.fls
+*.out
 
 # Output files
 outputs/

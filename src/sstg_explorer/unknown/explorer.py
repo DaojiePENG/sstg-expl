@@ -21,6 +21,7 @@ from sstg_explorer.sensing import RaycastSensor, SensorConfig
 
 
 UNKNOWN_STRATEGIES = ("frontier", "nbv", "rrt", "ans", "sstg")
+COVERAGE_OBJECTIVES = ("sensor", "joint")
 
 
 @dataclass
@@ -30,6 +31,12 @@ class UnknownExplorerConfig:
     strategy: str = "sstg"
     sensor: SensorConfig = field(default_factory=SensorConfig)
     target_coverage: float = 0.95
+    coverage_objective: str = "joint"
+    topological_radius: float = 2.0
+    topological_merge_distance: float = 0.25
+    target_topological_coverage: float = 0.95
+    information_gain_weight: float = 0.40
+    topological_gain_weight: float = 0.60
     max_decisions: int = 80
     robot_radius: float = 0.3
     safety_margin: float = 0.0
@@ -37,11 +44,15 @@ class UnknownExplorerConfig:
     target_spacing: float = 2.0
     scan_interval: float = 1.0
     min_gain_cells: int = 8
+    min_topological_gain_cells: int = 8
     max_frontier_candidates: int = 48
     random_candidates: int = 24
     exact_gain_budget: int = 18
     clearance_weight: float = 1.5
-    spacing_weight: float = 0.0
+    # Selected by the full 54-cluster paired joint benchmark: it reduces
+    # travel, node/action count and spatial redundancy without a detectable
+    # coverage, success or clearance loss relative to spacing_weight=0.
+    spacing_weight: float = 0.30
     multi_frontier: bool = True
     use_topological_vantages: bool = True
     require_known_footprint: bool = True
@@ -52,8 +63,24 @@ class UnknownExplorerConfig:
     def __post_init__(self):
         if self.strategy not in UNKNOWN_STRATEGIES:
             raise ValueError(f"Unknown strategy: {self.strategy}")
+        if self.coverage_objective not in COVERAGE_OBJECTIVES:
+            raise ValueError(
+                f"Unknown coverage objective: {self.coverage_objective}"
+            )
         if not 0.0 < self.target_coverage <= 1.0:
             raise ValueError("target_coverage must be in (0, 1]")
+        if not 0.0 < self.target_topological_coverage <= 1.0:
+            raise ValueError("target_topological_coverage must be in (0, 1]")
+        if self.topological_radius <= 0.0:
+            raise ValueError("topological_radius must be positive")
+        if not 0.0 <= self.topological_merge_distance < self.topological_radius:
+            raise ValueError(
+                "topological_merge_distance must be in [0, topological_radius)"
+            )
+        if self.information_gain_weight < 0.0 or self.topological_gain_weight < 0.0:
+            raise ValueError("coverage gain weights must be non-negative")
+        if self.information_gain_weight + self.topological_gain_weight <= 0.0:
+            raise ValueError("at least one coverage gain weight must be positive")
 
 
 class UnknownMapExplorer:
@@ -72,15 +99,28 @@ class UnknownMapExplorer:
         "ans": "ANS-Global Unknown (adapted)",
         "sstg": "SSTG-Explorer Unknown",
     }
+    JOINT_DISPLAY_NAMES = {
+        "frontier": "Frontier Joint",
+        "nbv": "NBV Joint",
+        "rrt": "RRT Joint (adapted)",
+        "ans": "ANS-Global Joint (adapted)",
+        "sstg": "SSTG-Explorer Joint",
+    }
 
     def __init__(self, config: Optional[UnknownExplorerConfig] = None, **kwargs):
         self.config = config or UnknownExplorerConfig(**kwargs)
-        self.name = self.DISPLAY_NAMES[self.config.strategy]
+        names = (
+            self.JOINT_DISPLAY_NAMES
+            if self.config.coverage_objective == "joint"
+            else self.DISPLAY_NAMES
+        )
+        self.name = names[self.config.strategy]
         self.sensor = RaycastSensor(self.config.sensor)
         self.rng = np.random.default_rng(self.config.seed)
         self._candidate_ids: Dict[Tuple, int] = {}
         self._next_candidate_id = 0
         self._previous_candidate_keys = set()
+        self._executed_candidate_keys = set()
         self._ans = None
         self._previous_known_mask = None
         if self.config.strategy == "ans":
@@ -231,6 +271,82 @@ class UnknownMapExplorer:
             in_range &= angle_delta <= fov / 2.0
         return int(np.sum(in_range))
 
+    @staticmethod
+    def topological_coverage_map(
+        grid: OccupancyGrid,
+        positions: Sequence[Tuple[float, float]],
+        radius: float,
+    ) -> np.ndarray:
+        """Return the disk-coverage proxy used by the known-map benchmark.
+
+        The map is purely geometric: each accepted topological observation
+        node covers cell centres within ``radius``.  It intentionally does not
+        inherit the physical sensor range or field of view.  Occlusion-aware
+        sensing and discrete topological coverage therefore remain separately
+        measurable quantities.
+        """
+        covered = np.zeros(grid.shape, dtype=bool)
+        if not positions:
+            return covered
+        padding = int(np.ceil(radius / grid.resolution)) + 1
+        radius_squared = float(radius * radius) + 1e-12
+        for x, y in positions:
+            center_row, center_col = grid.world_to_grid(float(x), float(y))
+            row0 = max(0, center_row - padding)
+            row1 = min(grid.height, center_row + padding + 1)
+            col0 = max(0, center_col - padding)
+            col1 = min(grid.width, center_col + padding + 1)
+            rows = np.arange(row0, row1, dtype=float)[:, None]
+            cols = np.arange(col0, col1, dtype=float)[None, :]
+            cell_x = grid.origin[0] + (cols + 0.5) * grid.resolution
+            cell_y = grid.origin[1] + (rows + 0.5) * grid.resolution
+            disk = (cell_x - x) ** 2 + (cell_y - y) ** 2 <= radius_squared
+            covered[row0:row1, col0:col1] |= disk
+        return covered
+
+    def _known_topological_state(
+        self,
+        belief: OccupancyGrid,
+        positions: Sequence[Tuple[float, float]],
+    ) -> Tuple[np.ndarray, np.ndarray, float]:
+        """Policy-visible covered and uncovered known-free cells."""
+        known_free = belief.get_free_space_mask()
+        covered = self.topological_coverage_map(
+            belief, positions, self.config.topological_radius
+        )
+        uncovered = known_free & (~covered)
+        ratio = float(
+            np.sum(covered & known_free) / max(np.sum(known_free), 1)
+        )
+        return covered, uncovered, ratio
+
+    def _candidate_topological_gain(
+        self,
+        belief: OccupancyGrid,
+        target: Tuple[float, float],
+        uncovered_known_free: np.ndarray,
+    ) -> int:
+        radius = self.config.topological_radius
+        padding = int(np.ceil(radius / belief.resolution)) + 1
+        row, col = belief.world_to_grid(*target)
+        row0, row1 = max(0, row - padding), min(
+            belief.height, row + padding + 1
+        )
+        col0, col1 = max(0, col - padding), min(
+            belief.width, col + padding + 1
+        )
+        rows = np.arange(row0, row1, dtype=float)[:, None]
+        cols = np.arange(col0, col1, dtype=float)[None, :]
+        cell_x = belief.origin[0] + (cols + 0.5) * belief.resolution
+        cell_y = belief.origin[1] + (rows + 0.5) * belief.resolution
+        disk = (
+            (cell_x - target[0]) ** 2 + (cell_y - target[1]) ** 2 <=
+            radius * radius + 1e-12
+        )
+        return int(np.sum(
+            disk & uncovered_known_free[row0:row1, col0:col1]
+        ))
+
     def _ans_predicted_cell(
         self,
         belief: OccupancyGrid,
@@ -291,10 +407,16 @@ class UnknownMapExplorer:
         explored_positions: Sequence[Tuple[float, float]],
     ) -> List[Dict]:
         unknown = belief.get_unknown_mask()
-        if not np.any(unknown):
+        has_unknown = bool(np.any(unknown))
+        if not has_unknown and self.config.coverage_objective == "sensor":
             return []
-        _, nearest_unknown = distance_transform_edt(
-            ~unknown, return_indices=True
+        nearest_unknown = None
+        if has_unknown:
+            _, nearest_unknown = distance_transform_edt(
+                ~unknown, return_indices=True
+            )
+        _, uncovered_known_free, _ = self._known_topological_state(
+            belief, explored_positions
         )
         known_obstacles = belief.get_occupied_mask()
         clearance = distance_transform_edt(~known_obstacles) * belief.resolution
@@ -305,7 +427,7 @@ class UnknownMapExplorer:
         frontier_mask = (
             safe & reachable &
             (unknown_distance <= frontier_band)
-        )
+        ) if has_unknown else np.zeros_like(safe)
         components, count = label(frontier_mask, structure=np.ones((3, 3)))
         candidates: List[Dict] = []
 
@@ -367,14 +489,65 @@ class UnknownMapExplorer:
             )
             for row, col in vantage_cells:
                 target = belief.grid_to_world(row, col)
-                heading = self._nearest_unknown_heading(
-                    row, col, nearest_unknown, belief
+                heading = (
+                    self._nearest_unknown_heading(
+                        row, col, nearest_unknown, belief
+                    )
+                    if nearest_unknown is not None else current_heading
                 )
                 key = (row, col, int(round(heading)) % 360, "vantage")
                 candidates.append({
                     "frontier_id": self._candidate_id(key), "key": key,
                     "target": target, "heading": heading,
                     "kind": "topological_vantage",
+                    "path_cost": float(cost_map[row, col]),
+                    "clearance": float(clearance[row, col]),
+                    "cluster_size": 1, "status": "generated",
+                })
+
+        if (
+            self.config.coverage_objective == "joint" and
+            np.any(uncovered_known_free)
+        ):
+            # Common task adapter for the joint benchmark.  The candidate
+            # centres come only from currently known, footprint-safe reachable
+            # space.  They close discrete 2 m coverage gaps revealed by the
+            # long-range sensor without consulting hidden ground truth.
+            gap_cells = self._spatial_representatives(
+                uncovered_known_free & reachable,
+                cost_map,
+                clearance,
+                max_count=self.config.max_frontier_candidates // 2,
+                resolution=belief.resolution,
+            )
+            gap_indices = np.argwhere(uncovered_known_free & reachable)
+            if len(gap_indices):
+                gap_costs = cost_map[
+                    gap_indices[:, 0], gap_indices[:, 1]
+                ]
+                gap_clearances = clearance[
+                    gap_indices[:, 0], gap_indices[:, 1]
+                ]
+                nearest_index = int(np.argmin(
+                    gap_costs - 0.05 * gap_clearances
+                ))
+                nearest_gap = tuple(map(int, gap_indices[nearest_index]))
+                gap_cells = [nearest_gap] + [
+                    cell for cell in gap_cells if cell != nearest_gap
+                ]
+            for row, col in gap_cells:
+                target = belief.grid_to_world(row, col)
+                heading = (
+                    self._nearest_unknown_heading(
+                        row, col, nearest_unknown, belief
+                    )
+                    if nearest_unknown is not None else current_heading
+                )
+                key = (row, col, int(round(heading)) % 360, "coverage_gap")
+                candidates.append({
+                    "frontier_id": self._candidate_id(key), "key": key,
+                    "target": target, "heading": heading,
+                    "kind": "coverage_gap",
                     "path_cost": float(cost_map[row, col]),
                     "clearance": float(clearance[row, col]),
                     "cluster_size": 1, "status": "generated",
@@ -407,8 +580,11 @@ class UnknownMapExplorer:
                 chosen = self.rng.choice(len(indices), size=sample_count, replace=False)
                 for row, col in indices[chosen]:
                     row, col = int(row), int(col)
-                    heading = self._nearest_unknown_heading(
-                        row, col, nearest_unknown, belief
+                    heading = (
+                        self._nearest_unknown_heading(
+                            row, col, nearest_unknown, belief
+                        )
+                        if nearest_unknown is not None else current_heading
                     )
                     key = (row, col, int(round(heading)) % 360, "sampled")
                     candidates.append({
@@ -441,6 +617,12 @@ class UnknownMapExplorer:
             candidate["optimistic_gain"] = self._optimistic_gain(
                 candidate, unknown_xy
             )
+            candidate["predicted_topological_gain"] = (
+                self._candidate_topological_gain(
+                    belief, candidate["target"], uncovered_known_free
+                )
+                if self.config.coverage_objective == "joint" else 0
+            )
             distances = [
                 math.hypot(
                     candidate["target"][0] - old[0],
@@ -462,12 +644,35 @@ class UnknownMapExplorer:
         """Spend exact occlusion-aware gain computation on a bounded shortlist."""
         if not candidates:
             return [], []
-        preliminary = np.asarray([
-            candidate["optimistic_gain"] /
-            (1.0 + candidate["path_cost"] / max(self.config.sensor.max_range, 1e-6))
+        information = np.asarray([
+            candidate["optimistic_gain"] for candidate in candidates
+        ], dtype=float)
+        topology = np.asarray([
+            candidate.get("predicted_topological_gain", 0)
+            for candidate in candidates
+        ], dtype=float)
+        information_norm = information / max(float(np.max(information)), 1.0)
+        topology_norm = topology / max(float(np.max(topology)), 1.0)
+        if self.config.coverage_objective == "joint":
+            combined = (
+                self.config.information_gain_weight * information_norm +
+                self.config.topological_gain_weight * topology_norm
+            )
+        else:
+            combined = information_norm
+        costs = np.asarray([
+            candidate["path_cost"] / max(self.config.sensor.max_range, 1e-6)
             for candidate in candidates
         ])
+        preliminary = combined / (1.0 + costs)
         shortlist = set(np.argsort(preliminary)[-self.config.exact_gain_budget:].tolist())
+        shortlist.update(
+            np.argsort(information)[-min(6, len(candidates)):].tolist()
+        )
+        if self.config.coverage_objective == "joint":
+            shortlist.update(
+                np.argsort(topology)[-min(8, len(candidates)):].tolist()
+            )
         closest = np.argsort([candidate["path_cost"] for candidate in candidates])[:6]
         shortlist.update(map(int, closest))
         shortlist.update(
@@ -488,7 +693,13 @@ class UnknownMapExplorer:
         active, traced = [], []
         for index, candidate in enumerate(candidates):
             candidate = dict(candidate)
+            execution_key = tuple(candidate.get("key", ()))
+            candidate["execution_key"] = list(execution_key)
             candidate.pop("key", None)
+            if execution_key in self._executed_candidate_keys:
+                candidate["status"] = "pruned_executed"
+                traced.append(candidate)
+                continue
             if index not in shortlist:
                 candidate["status"] = "pruned_evaluation_budget"
                 traced.append(candidate)
@@ -497,7 +708,13 @@ class UnknownMapExplorer:
                 belief, candidate["target"], candidate["heading"]
             )
             candidate["predicted_gain"] = int(gain)
-            if gain < self.config.min_gain_cells:
+            topology_gain = int(candidate.get("predicted_topological_gain", 0))
+            informative = gain >= self.config.min_gain_cells
+            topology_useful = (
+                self.config.coverage_objective == "joint" and
+                topology_gain >= self.config.min_topological_gain_cells
+            )
+            if not informative and not topology_useful:
                 candidate["status"] = "pruned_gain"
                 traced.append(candidate)
                 continue
@@ -515,11 +732,38 @@ class UnknownMapExplorer:
         if not active:
             return None
         max_gain = max(candidate["predicted_gain"] for candidate in active)
+        max_topological_gain = max(
+            candidate.get("predicted_topological_gain", 0)
+            for candidate in active
+        )
         strategy = self.config.strategy
         non_rotation = [candidate for candidate in active if candidate["kind"] != "rotation"]
         for candidate in active:
-            gain = candidate["predicted_gain"] / max(max_gain, 1)
-            cost = candidate["path_cost"] / max(self.config.sensor.max_range, 1e-6)
+            information_gain = candidate["predicted_gain"] / max(max_gain, 1)
+            topological_gain = (
+                candidate.get("predicted_topological_gain", 0) /
+                max(max_topological_gain, 1)
+            )
+            if self.config.coverage_objective == "joint":
+                weight_sum = (
+                    self.config.information_gain_weight +
+                    self.config.topological_gain_weight
+                )
+                gain = (
+                    self.config.information_gain_weight * information_gain +
+                    self.config.topological_gain_weight * topological_gain
+                ) / weight_sum
+            else:
+                gain = information_gain
+            candidate["normalized_information_gain"] = float(information_gain)
+            candidate["normalized_topological_gain"] = float(topological_gain)
+            candidate["normalized_task_gain"] = float(gain)
+            cost_scale = (
+                self.config.topological_radius
+                if self.config.coverage_objective == "joint"
+                else self.config.sensor.max_range
+            )
+            cost = candidate["path_cost"] / max(cost_scale, 1e-6)
             clearance = min(
                 candidate["clearance"] /
                 max(self.config.preferred_clearance, 1e-6),
@@ -547,17 +791,35 @@ class UnknownMapExplorer:
                 predicted_distance = math.hypot(
                     row - ans_predicted[0], col - ans_predicted[1]
                 ) * belief.resolution
-                score = -predicted_distance / max(self.config.sensor.max_range, 1e-6) + 0.25 * gain
-            else:
-                # Additive normalization avoids suppressing a high-gain remote
-                # doorway to zero, while explicitly rewarding clearance and
-                # spatial separation from accepted viewpoints.
-                score = (
-                    1.20 * gain
-                    - 0.15 * cost
-                    + self.config.spacing_weight * spacing
-                    + 0.20 * self.config.clearance_weight * clearance
+                task_weight = (
+                    0.75 if self.config.coverage_objective == "joint" else 0.25
                 )
+                score = (
+                    -predicted_distance /
+                    max(self.config.sensor.max_range, 1e-6)
+                    + task_weight * gain
+                    - (0.05 * cost if self.config.coverage_objective == "joint" else 0.0)
+                )
+            else:
+                if self.config.coverage_objective == "joint":
+                    # Marginal joint coverage per topological-scale geodesic
+                    # travel.  The saturating denominator avoids the long
+                    # cross-map oscillations caused by ranking remote gaps only
+                    # by their absolute disk area.
+                    score = (
+                        1.20 * gain / (1.0 + 0.60 * cost)
+                        + self.config.spacing_weight * spacing
+                        + 0.20 * self.config.clearance_weight * clearance
+                    )
+                else:
+                    # Additive normalization avoids suppressing a high-gain
+                    # remote doorway to zero in the information-only task.
+                    score = (
+                        1.20 * gain
+                        - 0.15 * cost
+                        + self.config.spacing_weight * spacing
+                        + 0.20 * self.config.clearance_weight * clearance
+                    )
             candidate["priority"] = float(score)
         return max(active, key=lambda candidate: candidate["priority"])
 
@@ -642,18 +904,52 @@ class UnknownMapExplorer:
             previous = value
         return rotation
 
-    @staticmethod
-    def _coverage(truth: OccupancyGrid, belief: OccupancyGrid) -> Dict[str, float]:
+    def _coverage(
+        self,
+        truth: OccupancyGrid,
+        belief: OccupancyGrid,
+        positions: Sequence[Tuple[float, float]],
+    ) -> Dict[str, float]:
         truth_free = truth.get_free_space_mask()
         truth_occupied = truth.get_occupied_mask()
         known_free = belief.get_free_space_mask()
         known_occupied = belief.get_occupied_mask()
         known = ~belief.get_unknown_mask()
+        topological_map = self.topological_coverage_map(
+            truth, positions, self.config.topological_radius
+        )
+        sensor_coverage = float(
+            np.sum(known_free & truth_free) / max(np.sum(truth_free), 1)
+        )
+        topological_coverage = float(
+            np.sum(topological_map & truth_free) / max(np.sum(truth_free), 1)
+        )
+        known_topological_coverage = float(
+            np.sum(topological_map & known_free) / max(np.sum(known_free), 1)
+        )
         return {
-            "free_coverage": float(np.sum(known_free & truth_free) / max(np.sum(truth_free), 1)),
+            "free_coverage": sensor_coverage,
+            "sensor_coverage": sensor_coverage,
+            "topological_coverage": topological_coverage,
+            "joint_coverage": min(sensor_coverage, topological_coverage),
+            "known_topological_coverage": known_topological_coverage,
             "occupied_recall": float(np.sum(known_occupied & truth_occupied) / max(np.sum(truth_occupied), 1)),
             "known_ratio": float(np.mean(known)),
         }
+
+    def _primary_coverage(self, coverage: Dict[str, float]) -> float:
+        if self.config.coverage_objective == "joint":
+            return coverage["topological_coverage"]
+        return coverage["sensor_coverage"]
+
+    def _target_met(self, coverage: Dict[str, float]) -> bool:
+        if self.config.coverage_objective == "joint":
+            return (
+                coverage["sensor_coverage"] >= self.config.target_coverage and
+                coverage["topological_coverage"] >=
+                self.config.target_topological_coverage
+            )
+        return coverage["sensor_coverage"] >= self.config.target_coverage
 
     def explore(
         self,
@@ -676,6 +972,10 @@ class UnknownMapExplorer:
             "timestamp": 0,
         }]
         positions = [current]
+        oriented_views = [{
+            "id": 0, "position": current, "orientation": heading,
+            "timestamp": 0, "topological_node_id": 0,
+        }]
         paths: List[List[Tuple[float, float]]] = []
         steps: List[Dict] = []
         total_distance = 0.0
@@ -687,6 +987,7 @@ class UnknownMapExplorer:
         self._candidate_ids = {}
         self._next_candidate_id = 0
         self._previous_candidate_keys = set()
+        self._executed_candidate_keys = set()
         self._previous_known_mask = None
 
         initial_observation = self.sensor.observe(truth, belief, current, heading)
@@ -695,21 +996,35 @@ class UnknownMapExplorer:
             [int(flat), int(belief.data.ravel()[flat])]
             for flat in initial_observation.new_flat_indices
         ]
-        initial_coverage = self._coverage(truth, belief)
+        initial_coverage = self._coverage(truth, belief, positions)
+        initial_primary = self._primary_coverage(initial_coverage)
         steps.append({
             "trace_id": 0, "iteration": 0, "event": "initial_observation",
             "current_pose": [current[0], current[1], heading],
             "selected_frontier": None, "path": [],
             "translation_m": 0.0, "rotation_deg": 0.0,
             "explored_nodes": [dict(nodes[0])],
+            "oriented_views": [dict(oriented_views[0])],
+            "topological_node_created": True,
             "generated_candidates": [], "new_frontiers": [],
             "active_frontiers": [], "observed_updates": initial_updates,
             "scan_poses": [[current[0], current[1], heading]],
             "visible_cell_count": int(len(initial_observation.visible_flat_indices)),
             "new_observed_count": int(len(initial_updates)),
+            "coverage_objective": self.config.coverage_objective,
+            "topological_radius_m": self.config.topological_radius,
             "coverage_before": 0.0,
-            "coverage_after": initial_coverage["free_coverage"],
-            "coverage_gain": initial_coverage["free_coverage"],
+            "coverage_after": initial_primary,
+            "coverage_gain": initial_primary,
+            "sensor_coverage_before": 0.0,
+            "sensor_coverage_after": initial_coverage["sensor_coverage"],
+            "topological_coverage_before": 0.0,
+            "topological_coverage_after": initial_coverage["topological_coverage"],
+            "joint_coverage_before": 0.0,
+            "joint_coverage_after": initial_coverage["joint_coverage"],
+            "known_topological_coverage": initial_coverage[
+                "known_topological_coverage"
+            ],
             "known_ratio": initial_coverage["known_ratio"],
             "occupied_recall": initial_coverage["occupied_recall"],
             "sensor": {
@@ -719,9 +1034,14 @@ class UnknownMapExplorer:
         })
 
         for decision in range(1, self.config.max_decisions + 1):
-            before = self._coverage(truth, belief)
-            if before["free_coverage"] >= self.config.target_coverage:
-                termination_reason = "coverage_target"
+            before = self._coverage(truth, belief, positions)
+            before_primary = self._primary_coverage(before)
+            if self._target_met(before):
+                termination_reason = (
+                    "joint_coverage_target"
+                    if self.config.coverage_objective == "joint"
+                    else "coverage_target"
+                )
                 break
             planner, safe, reachable, cost_map = self._known_safe_planner(
                 belief, current
@@ -760,14 +1080,31 @@ class UnknownMapExplorer:
                     "selected_frontier": None, "path": [],
                     "translation_m": 0.0, "rotation_deg": 0.0,
                     "explored_nodes": [dict(node) for node in nodes],
+                    "oriented_views": [dict(view) for view in oriented_views],
+                    "topological_node_created": False,
                     "generated_candidates": traced,
                     "new_frontiers": new_frontiers,
                     "active_frontiers": active, "observed_updates": [],
                     "scan_poses": [], "visible_cell_count": 0,
                     "new_observed_count": 0,
-                    "coverage_before": before["free_coverage"],
-                    "coverage_after": before["free_coverage"],
+                    "coverage_objective": self.config.coverage_objective,
+                    "topological_radius_m": self.config.topological_radius,
+                    "coverage_before": before_primary,
+                    "coverage_after": before_primary,
                     "coverage_gain": 0.0,
+                    "sensor_coverage_before": before["sensor_coverage"],
+                    "sensor_coverage_after": before["sensor_coverage"],
+                    "topological_coverage_before": before[
+                        "topological_coverage"
+                    ],
+                    "topological_coverage_after": before[
+                        "topological_coverage"
+                    ],
+                    "joint_coverage_before": before["joint_coverage"],
+                    "joint_coverage_after": before["joint_coverage"],
+                    "known_topological_coverage": before[
+                        "known_topological_coverage"
+                    ],
                     "known_ratio": before["known_ratio"],
                     "occupied_recall": before["occupied_recall"],
                     "sensor": {
@@ -788,14 +1125,31 @@ class UnknownMapExplorer:
                     "selected_frontier": selected, "path": [],
                     "translation_m": 0.0, "rotation_deg": 0.0,
                     "explored_nodes": [dict(node) for node in nodes],
+                    "oriented_views": [dict(view) for view in oriented_views],
+                    "topological_node_created": False,
                     "generated_candidates": traced,
                     "new_frontiers": new_frontiers,
                     "active_frontiers": active, "observed_updates": [],
                     "scan_poses": [], "visible_cell_count": 0,
                     "new_observed_count": 0,
-                    "coverage_before": before["free_coverage"],
-                    "coverage_after": before["free_coverage"],
+                    "coverage_objective": self.config.coverage_objective,
+                    "topological_radius_m": self.config.topological_radius,
+                    "coverage_before": before_primary,
+                    "coverage_after": before_primary,
                     "coverage_gain": 0.0,
+                    "sensor_coverage_before": before["sensor_coverage"],
+                    "sensor_coverage_after": before["sensor_coverage"],
+                    "topological_coverage_before": before[
+                        "topological_coverage"
+                    ],
+                    "topological_coverage_after": before[
+                        "topological_coverage"
+                    ],
+                    "joint_coverage_before": before["joint_coverage"],
+                    "joint_coverage_after": before["joint_coverage"],
+                    "known_topological_coverage": before[
+                        "known_topological_coverage"
+                    ],
                     "known_ratio": before["known_ratio"],
                     "occupied_recall": before["occupied_recall"],
                     "sensor": {
@@ -822,16 +1176,47 @@ class UnknownMapExplorer:
             scan_count += len(scan_poses)
             current = tuple(map(float, selected["target"]))
             heading = float(selected["heading"] % 360.0)
-            positions.append(current)
             paths.append(path)
-            nodes.append({
-                "id": len(nodes), "position": current,
+            nearest_topological_node = min(
+                range(len(positions)),
+                key=lambda index: math.hypot(
+                    current[0] - positions[index][0],
+                    current[1] - positions[index][1],
+                ),
+            )
+            nearest_topological_distance = math.hypot(
+                current[0] - positions[nearest_topological_node][0],
+                current[1] - positions[nearest_topological_node][1],
+            )
+            topological_node_created = (
+                nearest_topological_distance >=
+                self.config.topological_merge_distance
+            )
+            if topological_node_created:
+                positions.append(current)
+                nodes.append({
+                    "id": len(nodes), "position": current,
+                    "orientation": heading, "timestamp": decision,
+                })
+                topological_node_id = nodes[-1]["id"]
+            else:
+                topological_node_id = nearest_topological_node
+            oriented_views.append({
+                "id": len(oriented_views), "position": current,
                 "orientation": heading, "timestamp": decision,
+                "topological_node_id": topological_node_id,
             })
-            after = self._coverage(truth, belief)
-            stagnant_steps = stagnant_steps + 1 if new_count == 0 else 0
+            after = self._coverage(truth, belief, positions)
+            after_primary = self._primary_coverage(after)
+            progressed = (
+                after["sensor_coverage"] > before["sensor_coverage"] + 1e-12 or
+                after["topological_coverage"] >
+                before["topological_coverage"] + 1e-12
+            )
+            stagnant_steps = 0 if progressed else stagnant_steps + 1
             selected = dict(selected)
             selected["status"] = "selected"
+            self._executed_candidate_keys.add(tuple(selected["execution_key"]))
             steps.append({
                 "trace_id": len(steps), "iteration": decision,
                 "event": "viewpoint_accepted",
@@ -840,15 +1225,32 @@ class UnknownMapExplorer:
                 "translation_m": float(travel),
                 "rotation_deg": float(rotation),
                 "explored_nodes": [dict(node) for node in nodes],
+                "oriented_views": [dict(view) for view in oriented_views],
+                "topological_node_created": topological_node_created,
                 "generated_candidates": traced,
                 "new_frontiers": new_frontiers,
                 "active_frontiers": active,
                 "observed_updates": updates, "scan_poses": scan_poses,
                 "visible_cell_count": int(visible_count),
                 "new_observed_count": int(new_count),
-                "coverage_before": before["free_coverage"],
-                "coverage_after": after["free_coverage"],
-                "coverage_gain": after["free_coverage"] - before["free_coverage"],
+                "coverage_objective": self.config.coverage_objective,
+                "topological_radius_m": self.config.topological_radius,
+                "coverage_before": before_primary,
+                "coverage_after": after_primary,
+                "coverage_gain": after_primary - before_primary,
+                "sensor_coverage_before": before["sensor_coverage"],
+                "sensor_coverage_after": after["sensor_coverage"],
+                "topological_coverage_before": before[
+                    "topological_coverage"
+                ],
+                "topological_coverage_after": after[
+                    "topological_coverage"
+                ],
+                "joint_coverage_before": before["joint_coverage"],
+                "joint_coverage_after": after["joint_coverage"],
+                "known_topological_coverage": after[
+                    "known_topological_coverage"
+                ],
                 "known_ratio": after["known_ratio"],
                 "occupied_recall": after["occupied_recall"],
                 "sensor": {
@@ -858,7 +1260,9 @@ class UnknownMapExplorer:
             })
             if self.config.verbose:
                 print(
-                    f"[{self.name}] step={decision} coverage={after['free_coverage']:.1%} "
+                    f"[{self.name}] step={decision} "
+                    f"sensor={after['sensor_coverage']:.1%} "
+                    f"topology={after['topological_coverage']:.1%} "
                     f"new={new_count} distance={total_distance:.1f}m"
                 )
             if stagnant_steps >= 5:
@@ -867,24 +1271,45 @@ class UnknownMapExplorer:
         else:
             termination_reason = "max_decisions"
 
-        final = self._coverage(truth, belief)
-        if final["free_coverage"] >= self.config.target_coverage:
-            termination_reason = "coverage_target"
+        final = self._coverage(truth, belief, positions)
+        if self._target_met(final):
+            termination_reason = (
+                "joint_coverage_target"
+                if self.config.coverage_objective == "joint"
+                else "coverage_target"
+            )
         elapsed = time.perf_counter() - started
+        primary_coverage = self._primary_coverage(final)
         return {
             "nodes": nodes,
             "metadata": {
-                "protocol": "unknown_static_grid_occlusion_aware",
+                "protocol": (
+                    "unknown_static_grid_joint_topological_coverage"
+                    if self.config.coverage_objective == "joint"
+                    else "unknown_static_grid_occlusion_aware"
+                ),
                 "strategy": self.config.strategy,
+                "coverage_objective": self.config.coverage_objective,
                 "sensor_fov_deg": self.config.sensor.field_of_view_deg,
                 "sensor_range_m": self.config.sensor.max_range,
                 "angular_resolution_deg": self.config.sensor.angular_resolution_deg,
-                "coverage_ratio": final["free_coverage"],
+                "topological_radius_m": self.config.topological_radius,
+                "coverage_ratio": primary_coverage,
+                "sensor_coverage_ratio": final["sensor_coverage"],
+                "topological_coverage_ratio": final[
+                    "topological_coverage"
+                ],
+                "joint_coverage_ratio": final["joint_coverage"],
+                "known_topological_coverage_ratio": final[
+                    "known_topological_coverage"
+                ],
                 "known_ratio": final["known_ratio"],
                 "occupied_recall": final["occupied_recall"],
                 "total_distance": total_distance,
                 "total_rotation_deg": total_rotation,
                 "num_nodes": len(nodes), "scan_count": scan_count,
+                "topological_node_count": len(nodes),
+                "oriented_view_count": len(oriented_views),
                 "in_place_rotations": in_place_rotations,
                 "total_time": elapsed,
                 "termination_reason": termination_reason,
@@ -892,7 +1317,8 @@ class UnknownMapExplorer:
             },
             "steps": steps,
             "paths": paths,
+            "oriented_views": oriented_views,
             "belief_final": belief.data,
-            "success": final["free_coverage"] >= self.config.target_coverage,
+            "success": self._target_met(final),
             "algorithm": self.name,
         }
