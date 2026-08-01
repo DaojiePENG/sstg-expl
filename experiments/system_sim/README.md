@@ -211,3 +211,9 @@ simulation evidence:
 The registrar hashes the captures and requires Gazebo, RViz, sensor-sanity,
 final-state and key-interval-video roles before marking the media bundle
 complete.  Raw MCAP remains the source of truth for derived figures.
+
+The upstream depth image is bridged with `ros_gz_image`.  Camera intrinsics are
+frozen from the upstream SDF/evaluator geometry rather than bridged at runtime:
+the Harmonic `parameter_bridge` CameraInfo converter showed intermittent heap
+corruption during otherwise orderly shutdown and is not consumed by the current
+LiDAR policy or evaluator.

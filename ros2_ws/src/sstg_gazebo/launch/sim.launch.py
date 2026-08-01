@@ -102,7 +102,6 @@ def _launch_setup(context):
         "intel_realsense_r200_depth"
     )
     depth_image_topic = f"{camera_sensor_root}/depth_image"
-    camera_info_topic = f"{camera_sensor_root}/camera_info"
 
     # Robot description, primary bridge and spawn semantics come directly
     # from the released Nav2 TurtleBot3 package.
@@ -181,18 +180,13 @@ def _launch_setup(context):
         Node(
             package="ros_gz_bridge",
             executable="parameter_bridge",
-            name="sstg_auxiliary_bridge",
+            name="sstg_world_stats_bridge",
             output="screen",
             arguments=[
                 world_stats_topic
                 + "@ros_gz_interfaces/msg/WorldStatistics[gz.msgs.WorldStatistics",
-                camera_info_topic
-                + "@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
             ],
-            remappings=[
-                (world_stats_topic, "/evaluation/world_stats"),
-                (camera_info_topic, "/task_camera/camera_info"),
-            ],
+            remappings=[(world_stats_topic, "/evaluation/world_stats")],
             parameters=[{"use_sim_time": True}],
         ),
         Node(

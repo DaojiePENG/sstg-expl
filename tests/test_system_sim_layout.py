@@ -431,7 +431,8 @@ def test_headless_launch_keeps_gpu_sensor_rendering_and_dynamic_world_stats():
     assert '(world_stats_topic, "/evaluation/world_stats")' in source
     assert "--seed {simulation_seed}" in source
     assert "_validated_simulation_seed" in source
-    assert 'name="sstg_auxiliary_bridge"' in source
+    assert 'name="sstg_world_stats_bridge"' in source
+    assert "CameraInfo" not in source
     assert 'name="sstg_task_camera_info_bridge"' not in source
 
 
@@ -621,8 +622,8 @@ def test_upstream_depth_camera_uses_its_scoped_gazebo_topics():
     source = SIM_LAUNCH_PATH.read_text(encoding="utf-8")
     assert '"intel_realsense_r200_depth"' in source
     assert 'depth_image_topic = f"{camera_sensor_root}/depth_image"' in source
-    assert 'camera_info_topic = f"{camera_sensor_root}/camera_info"' in source
     assert 'remappings=[(depth_image_topic, "/task_camera/image_raw")]' in source
+    assert '"/task_camera/camera_info"' not in source
     assert 'arguments=["/camera"]' not in source
 
 
