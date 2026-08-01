@@ -59,6 +59,8 @@ except ModuleNotFoundError as error:
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN_MANIFEST_SCHEMA = "sstg_system_sim_run_launch/v1"
+DEFAULT_SIGINT_GRACE_S = 15.0
+DEFAULT_TERM_GRACE_S = 3.0
 
 
 class RunnerError(ValueError):
@@ -965,8 +967,8 @@ def _process_group_exists(process_group_id: int) -> bool:
 def shutdown_process_group(
     process: subprocess.Popen[Any],
     *,
-    sigint_grace_s: float = 5.0,
-    term_grace_s: float = 3.0,
+    sigint_grace_s: float = DEFAULT_SIGINT_GRACE_S,
+    term_grace_s: float = DEFAULT_TERM_GRACE_S,
     kill_grace_s: float = 1.0,
     clock: Any = time.monotonic,
     sleeper: Any = time.sleep,
@@ -1059,8 +1061,8 @@ def supervise_process(
     wall_timeout_s: float,
     evaluator_flush_s: float = 2.0,
     poll_interval_s: float = 0.2,
-    sigint_grace_s: float = 5.0,
-    term_grace_s: float = 3.0,
+    sigint_grace_s: float = DEFAULT_SIGINT_GRACE_S,
+    term_grace_s: float = DEFAULT_TERM_GRACE_S,
     clock: Any = time.monotonic,
     sleeper: Any = time.sleep,
     shutdown: Any = shutdown_process_group,
@@ -1140,8 +1142,8 @@ def execute_run(
     wall_timeout_s: float = 1200.0,
     evaluator_flush_s: float = 2.0,
     poll_interval_s: float = 0.2,
-    sigint_grace_s: float = 5.0,
-    term_grace_s: float = 3.0,
+    sigint_grace_s: float = DEFAULT_SIGINT_GRACE_S,
+    term_grace_s: float = DEFAULT_TERM_GRACE_S,
 ) -> ExecutionResult:
     """Supervise one launch and audit evidence before declaring completion."""
     _validate_supervision_parameters(
@@ -1162,6 +1164,8 @@ def execute_run(
             started_at_utc=started,
             wall_timeout_s=wall_timeout_s,
             evaluator_flush_s=evaluator_flush_s,
+            sigint_grace_s=sigint_grace_s,
+            term_grace_s=term_grace_s,
         ),
     )
     launch_log_path = plan.output_dir / "launch.log"
@@ -1185,6 +1189,8 @@ def execute_run(
                     process_group_id=process.pid,
                     wall_timeout_s=wall_timeout_s,
                     evaluator_flush_s=evaluator_flush_s,
+                    sigint_grace_s=sigint_grace_s,
+                    term_grace_s=term_grace_s,
                 ),
             )
             outcome = supervise_process(
@@ -1228,6 +1234,8 @@ def execute_run(
                 ),
                 supervisor_exit_code=130,
                 wall_elapsed_s=wall_elapsed_s,
+                sigint_grace_s=sigint_grace_s,
+                term_grace_s=term_grace_s,
                 shutdown_signals=list(shutdown_signals),
                 artifact_audit=artifact_audit,
             ),
@@ -1268,6 +1276,8 @@ def execute_run(
                 started_at_utc=started,
                 finished_at_utc=_utc_now(),
                 error=str(error),
+                sigint_grace_s=sigint_grace_s,
+                term_grace_s=term_grace_s,
                 artifact_audit=artifact_audit,
             ),
         )
@@ -1309,6 +1319,8 @@ def execute_run(
             wall_elapsed_s=outcome.wall_elapsed_s,
             wall_timeout_s=wall_timeout_s,
             evaluator_flush_s=evaluator_flush_s,
+            sigint_grace_s=sigint_grace_s,
+            term_grace_s=term_grace_s,
             shutdown_signals=list(outcome.shutdown_signals),
             artifact_audit=artifact_audit,
         ),
@@ -1345,6 +1357,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=2.0,
         help="grace after policy session_finished before group shutdown (default: 2)",
     )
+    parser.add_argument(
+        "--sigint-grace-s",
+        type=float,
+        default=DEFAULT_SIGINT_GRACE_S,
+        help="grace for ros2 launch lifecycle shutdown (default: 15)",
+    )
+    parser.add_argument(
+        "--term-grace-s",
+        type=float,
+        default=DEFAULT_TERM_GRACE_S,
+        help="grace for residual process-group termination (default: 3)",
+    )
     return parser.parse_args(argv)
 
 
@@ -1363,14 +1387,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 plan,
                 wall_timeout_s=args.wall_timeout_s,
                 evaluator_flush_s=args.evaluator_flush_s,
+                sigint_grace_s=args.sigint_grace_s,
+                term_grace_s=args.term_grace_s,
             )
             return result.exit_code
         _validate_supervision_parameters(
             wall_timeout_s=args.wall_timeout_s,
             evaluator_flush_s=args.evaluator_flush_s,
             poll_interval_s=0.2,
-            sigint_grace_s=5.0,
-            term_grace_s=3.0,
+            sigint_grace_s=args.sigint_grace_s,
+            term_grace_s=args.term_grace_s,
         )
     except RunnerError as error:
         print(f"error: {error}", file=sys.stderr)
@@ -1386,6 +1412,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "supervision": {
                     "wall_timeout_s": args.wall_timeout_s,
                     "evaluator_flush_s": args.evaluator_flush_s,
+                    "sigint_grace_s": args.sigint_grace_s,
+                    "term_grace_s": args.term_grace_s,
                     "completion_event": "policy_trace.jsonl:session_finished",
                 },
                 "filesystem_mutated": False,

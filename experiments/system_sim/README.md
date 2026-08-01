@@ -147,7 +147,9 @@ waits for `session_finished` in `policy_trace.jsonl`, gives the evaluator two
 seconds to flush its terminal snapshot, then sends `SIGINT` only to the
 `ros2 launch` leader so it can stop each child once.  Residual group members
 receive `SIGTERM` and then `SIGKILL` only if necessary.  Set the hard process
-limit with `--wall-timeout-s` (default 1200 seconds).
+limit with `--wall-timeout-s` (default 1200 seconds).  The default lifecycle
+grace is 15 seconds and can be audited or changed with `--sigint-grace-s` and
+`--term-grace-s`; both effective values are written to the run manifest.
 
 An existing path is refused even when empty; choose a new study/run ID instead
 of reusing it, because the runtime JSONL writers append.  A zero ROS launch

@@ -870,6 +870,8 @@ def test_supervisor_terminates_group_and_audits_terminal_artifacts(
     )
     assert manifest["execution"]["status"] == "terminal_completed"
     assert manifest["execution"]["artifact_audit"]["valid"] is True
+    assert manifest["execution"]["sigint_grace_s"] == 0.5
+    assert manifest["execution"]["term_grace_s"] == 0.2
     launch_log = (output_dir / "launch.log").read_text(encoding="utf-8")
     assert SUPERVISOR_SHUTDOWN_BEGIN in launch_log
     assert f"{SUPERVISOR_SHUTDOWN_END}SIGINT" in launch_log
