@@ -14,6 +14,27 @@ from xml.etree import ElementTree
 
 import yaml
 
+try:
+    from scripts.generate_system_sim_schedule import (
+        ScheduleError,
+        validate_ros_gz_bridge_contract,
+    )
+    from scripts.run_system_sim_schedule import (
+        RunnerError,
+        verify_ros_gz_bridge_runtime,
+    )
+except ModuleNotFoundError as error:
+    if error.name != "scripts":
+        raise
+    from generate_system_sim_schedule import (  # type: ignore[no-redef]
+        ScheduleError,
+        validate_ros_gz_bridge_contract,
+    )
+    from run_system_sim_schedule import (  # type: ignore[no-redef]
+        RunnerError,
+        verify_ros_gz_bridge_runtime,
+    )
+
 
 GAZEBO_SOURCE = (
     Path(__file__).resolve().parents[1]
@@ -73,6 +94,7 @@ def command_output(command):
 def static_checks():
     errors = []
     parsed = {"yaml": 0, "xml": 0, "python": 0}
+    vendor_root = ROOT / "ros2_ws/src/third_party"
     roots = [
         ROOT / "experiments" / "system_sim",
         ROOT / "ros2_ws" / "src",
@@ -82,6 +104,8 @@ def static_checks():
             errors.append(f"missing directory: {base.relative_to(ROOT)}")
             continue
         for path in base.rglob("*.yaml"):
+            if path.is_relative_to(vendor_root):
+                continue
             try:
                 yaml.safe_load(path.read_text(encoding="utf-8"))
                 parsed["yaml"] += 1
@@ -89,12 +113,16 @@ def static_checks():
                 errors.append(f"YAML {path.relative_to(ROOT)}: {error}")
         for pattern in ("*.xml", "*.sdf"):
             for path in base.rglob(pattern):
+                if path.is_relative_to(vendor_root):
+                    continue
                 try:
                     ElementTree.parse(path)
                     parsed["xml"] += 1
                 except Exception as error:
                     errors.append(f"XML {path.relative_to(ROOT)}: {error}")
         for path in base.rglob("*.py"):
+            if path.is_relative_to(vendor_root):
+                continue
             try:
                 compile(path.read_text(encoding="utf-8"), str(path), "exec")
                 parsed["python"] += 1
@@ -146,6 +174,10 @@ def static_checks():
     stack = yaml.safe_load((
         ROOT / "experiments/system_sim/configs/shared_stack.yaml"
     ).read_text(encoding="utf-8"))
+    try:
+        validate_ros_gz_bridge_contract(stack.get("ros_gz_bridge"))
+    except ScheduleError as error:
+        errors.append(str(error))
     robot = stack["robot"]
     if robot.get("upstream_package") != "nav2_minimal_tb3_sim":
         errors.append("default robot is not the released Nav2 TurtleBot3")
@@ -202,6 +234,23 @@ def runtime_checks():
         ) if checks["ros2_executable"]["ok"] else {
             "ok": False,
             "detail": "ros2 executable unavailable",
+        }
+    stack = yaml.safe_load((
+        ROOT / "experiments/system_sim/configs/shared_stack.yaml"
+    ).read_text(encoding="utf-8"))
+    try:
+        bridge_contract = validate_ros_gz_bridge_contract(
+            stack.get("ros_gz_bridge")
+        )
+        bridge_attestation = verify_ros_gz_bridge_runtime(ROOT, bridge_contract)
+        checks["ros_gz_bridge_runtime"] = {
+            "ok": True,
+            "detail": bridge_attestation,
+        }
+    except (ScheduleError, RunnerError) as error:
+        checks["ros_gz_bridge_runtime"] = {
+            "ok": False,
+            "detail": str(error),
         }
     if checks["gz_executable"]["ok"]:
         sdf_files = {

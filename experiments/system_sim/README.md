@@ -85,9 +85,12 @@ vcs import ros2_ws/src/third_party < ros2_ws/third_party.repos
 
 ```bash
 cd /home/daojie/SSTG_Explorer/sstg-expl
-source /opt/ros/jazzy/setup.bash
 cd ros2_ws
+unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH COLCON_PREFIX_PATH
+unset LD_LIBRARY_PATH PYTHONPATH PKG_CONFIG_PATH
+unset RMW_IMPLEMENTATION CYCLONEDDS_URI FASTRTPS_DEFAULT_PROFILES_FILE
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/ros/jazzy/bin
+source /opt/ros/jazzy/setup.bash
 /usr/bin/colcon build --symlink-install \
   --packages-select ros_gz_bridge \
   --allow-overriding ros_gz_bridge \
@@ -105,6 +108,8 @@ export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/ros/jazzy/bin
   -DPython3_EXECUTABLE=/usr/bin/python3 \
   -DPYTHON_EXECUTABLE=/usr/bin/python3
 source install/setup.bash
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+unset CYCLONEDDS_URI FASTRTPS_DEFAULT_PROFILES_FILE
 cd ..
 /usr/bin/python3 scripts/preflight_system_sim.py --require-runtime
 ros2 launch sstg_nav_bringup system_sim.launch.py \
@@ -121,18 +126,23 @@ Run the upstream bridge tests from the workspace directory:
 
 ```bash
 cd /home/daojie/SSTG_Explorer/sstg-expl/ros2_ws
-source /opt/ros/jazzy/setup.bash
+unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH COLCON_PREFIX_PATH
+unset LD_LIBRARY_PATH PYTHONPATH PKG_CONFIG_PATH
+unset RMW_IMPLEMENTATION CYCLONEDDS_URI FASTRTPS_DEFAULT_PROFILES_FILE
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/ros/jazzy/bin
+source /opt/ros/jazzy/setup.bash
 source install/setup.bash
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 /usr/bin/colcon test --packages-select ros_gz_bridge \
   --event-handlers console_direct+
 /usr/bin/colcon test-result --test-result-base build/ros_gz_bridge --verbose
 ```
 
-The pinned checkout's first local run passed all six sensor bounds regressions
-and 17 of 18 upstream test groups.  The unrelated GID filtering timing test
-failed under the study's CycloneDDS configuration and passed in an isolated
-Fast DDS diagnostic; the registry keeps that residual visible.
+The clean `/opt/ros/jazzy` plus Fast DDS build passed all 18 upstream CTest
+groups (`383 tests, 0 errors, 0 failures`), including all six sensor bounds
+regressions.  An earlier host-environment diagnostic with a custom CycloneDDS
+underlay failed the unrelated GID filtering test; the registry keeps that
+historical result separate from the clean verification.
 
 Headless smoke run:
 
@@ -184,6 +194,16 @@ contract before reserving an output path, then record both values.
 This controls the declared stochastic inputs; asynchronous ROS scheduling means
 it is not a claim of bitwise-identical trajectories, so repeat runs remain part
 of the development gate.
+
+The `ros_gz_bridge` source-overlay contract follows the same fail-closed path.
+Freezing copies its exact version, official tag and commit, required fix,
+checkout and workspace prefix into the schedule manifest.  Planning checks all
+three frozen copies without requiring a live ROS graph.  Execution and runtime
+preflight additionally require the workspace prefix, package version, clean
+source HEAD, fix ancestry, `parameter_bridge` binary and linked overlay library
+before any run directory is reserved.  The final run manifest records SHA-256
+hashes for both executable objects; resolving only the system apt 1.0.22 package
+is a hard failure.
 
 Inspect one row's exact launch plan without starting ROS or writing files:
 

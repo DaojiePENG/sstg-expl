@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 import hashlib
 import json
 import math
@@ -18,9 +19,12 @@ from scripts.generate_system_sim_schedule import (
     CORE_BAG_REQUIRED_TOPICS,
     CORE_BAG_TOPIC_TYPES,
     CORE_BAG_TOPICS,
+    ROS_GZ_BRIDGE_CONTRACT,
     ScheduleError,
     freeze_schedule,
     inverse_spawn_transform,
+    sha256_tree,
+    validate_ros_gz_bridge_contract,
 )
 from scripts.run_system_sim_schedule import (
     RunPlan,
@@ -33,6 +37,7 @@ from scripts.run_system_sim_schedule import (
     shutdown_process_group,
     supervise_process,
     validate_completed_artifacts,
+    verify_ros_gz_bridge_runtime,
 )
 
 
@@ -134,6 +139,7 @@ def _fixture_project(tmp_path: Path) -> dict[str, object]:
             "schema": "sstg_system_sim_shared_stack/v1",
             "backend": "gazebo_harmonic",
             "ros_distribution": "jazzy",
+            "ros_gz_bridge": dict(ROS_GZ_BRIDGE_CONTRACT),
             "physics": {
                 "seed_source": "replicate_seed",
                 "seed_valid_range_inclusive": [1, 0x7FFFFFFF],
@@ -287,6 +293,10 @@ def test_schedule_is_matched_block_deterministic_and_hashed(tmp_path: Path) -> N
     assert manifest_a["inputs"]["shared_stack"]["seed_contract"] == (
         manifest_a["seed_contract"]
     )
+    assert manifest_a["ros_gz_bridge_contract"] == ROS_GZ_BRIDGE_CONTRACT
+    assert manifest_a["inputs"]["shared_stack"][
+        "ros_gz_bridge_contract"
+    ] == ROS_GZ_BRIDGE_CONTRACT
     assert manifest_a["recording_contract"] == RECORDING_CONTRACT
     assert manifest_a["inputs"]["shared_stack"]["recording_contract"] == (
         manifest_a["recording_contract"]
@@ -473,6 +483,47 @@ def test_shared_stack_seed_contract_is_required_and_fail_closed(
 
     with pytest.raises(ScheduleError, match=message):
         _freeze(project, "invalid_seed_contract")
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("required_version", "1.0.22", "required_version must be '1.0.23'"),
+        ("required_fix_commit", "0" * 40, "required_fix_commit must be"),
+        ("system_apt_eligible", True, "system_apt_eligible must be False"),
+    ],
+)
+def test_shared_stack_bridge_contract_is_required_and_fail_closed(
+    tmp_path: Path, field: str, value: object, message: str
+) -> None:
+    project = _fixture_project(tmp_path)
+    shared_path = project["shared"]
+    assert isinstance(shared_path, Path)
+    shared = yaml.safe_load(shared_path.read_text(encoding="utf-8"))
+    shared["ros_gz_bridge"][field] = value
+    _write_yaml(shared_path, shared)
+
+    with pytest.raises(ScheduleError, match=message):
+        _freeze(project, "invalid_bridge_contract")
+
+
+def test_shared_stack_bridge_contract_rejects_missing_or_unknown_fields(
+    tmp_path: Path,
+) -> None:
+    project = _fixture_project(tmp_path)
+    shared_path = project["shared"]
+    assert isinstance(shared_path, Path)
+    shared = yaml.safe_load(shared_path.read_text(encoding="utf-8"))
+    del shared["ros_gz_bridge"]["source_tag"]
+    _write_yaml(shared_path, shared)
+    with pytest.raises(ScheduleError, match="is missing: source_tag"):
+        _freeze(project, "missing_bridge_contract_field")
+
+    shared["ros_gz_bridge"]["source_tag"] = "1.0.23"
+    shared["ros_gz_bridge"]["local_patch"] = True
+    _write_yaml(shared_path, shared)
+    with pytest.raises(ScheduleError, match="has unknown fields: local_patch"):
+        _freeze(project, "extra_bridge_contract_field")
 
 
 @pytest.mark.parametrize(
@@ -673,6 +724,7 @@ def test_run_plan_carries_frozen_world_pose_truth_and_output_args(
     assert plan.experiment_budget == EXPERIMENT_BUDGET
     assert plan.recording_contract is not None
     assert plan.recording_contract["topics"] == list(CORE_BAG_TOPICS)
+    assert plan.ros_gz_bridge_contract == ROS_GZ_BRIDGE_CONTRACT
     for field, value in EXPERIMENT_BUDGET.items():
         assert float(plan.launch_arguments[field]) == pytest.approx(float(value))
         assert f"{field}:={plan.launch_arguments[field]}" in plan.command
@@ -702,6 +754,7 @@ def test_run_reservation_records_manifest_and_cannot_be_reused(
     assert run_manifest["launch"]["arguments"]["world_name"] == "office"
     assert run_manifest["experiment_budget"] == EXPERIMENT_BUDGET
     assert run_manifest["recording_contract"] == plan.recording_contract
+    assert run_manifest["ros_gz_bridge_contract"] == ROS_GZ_BRIDGE_CONTRACT
 
     with pytest.raises(RunnerError, match="existing run output"):
         reserve_run_output(plan)
@@ -854,6 +907,190 @@ def test_runner_rejects_recording_manifest_or_launch_contract_drift(
         )
 
 
+def test_runner_rejects_bridge_contract_manifest_drift(tmp_path: Path) -> None:
+    project = _fixture_project(tmp_path)
+    _, schedule_dir = _freeze(project, "runner_bridge_drift")
+    row = _rows(schedule_dir / "run_schedule.csv")[0]
+    manifest_path = schedule_dir / "schedule_freeze_manifest.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["ros_gz_bridge_contract"]["required_version"] = "1.0.22"
+    _write_yaml(manifest_path, manifest)
+    root = project["root"]
+    assert isinstance(root, Path)
+
+    with pytest.raises(RunnerError, match="required_version must be '1.0.23'"):
+        load_run_plan(
+            root=root,
+            schedule_dir=schedule_dir,
+            schedule_id=row["schedule_id"],
+        )
+
+
+def test_source_tree_hash_excludes_nested_git_metadata(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    source = root / "ros2_ws/src/third_party/example"
+    source.mkdir(parents=True)
+    (source / "bridge.cpp").write_text("int bridge = 1;\n", encoding="utf-8")
+    metadata = source / ".git"
+    metadata.mkdir()
+    (metadata / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+
+    initial = sha256_tree(root, [source])
+    (metadata / "HEAD").write_text("ref: refs/heads/other\n", encoding="utf-8")
+    assert sha256_tree(root, [source]) == initial
+    (source / "bridge.cpp").write_text("int bridge = 2;\n", encoding="utf-8")
+    assert sha256_tree(root, [source]) != initial
+
+
+def test_bridge_runtime_attestation_checks_overlay_source_and_linkage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = (tmp_path / "project").resolve()
+    contract = validate_ros_gz_bridge_contract(ROS_GZ_BRIDGE_CONTRACT)
+    prefix = root / contract["required_prefix"]
+    checkout = root / contract["source_checkout"]
+    executable = prefix / "lib/ros_gz_bridge/parameter_bridge"
+    library = prefix / "lib/libros_gz_bridge.so"
+    package_xml = prefix / "share/ros_gz_bridge/package.xml"
+    checkout.mkdir(parents=True)
+    executable.parent.mkdir(parents=True)
+    library.parent.mkdir(parents=True, exist_ok=True)
+    package_xml.parent.mkdir(parents=True)
+    executable.write_bytes(b"official parameter bridge\n")
+    library.write_bytes(b"official bridge library\n")
+    package_xml.write_text(
+        "<package><name>ros_gz_bridge</name><version>1.0.23</version></package>\n",
+        encoding="utf-8",
+    )
+
+    def fake_run(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        arguments = list(command)
+        if arguments == ["ros2", "pkg", "prefix", "ros_gz_bridge"]:
+            output = f"{prefix}\n"
+        elif arguments[:3] == ["git", "-C", str(checkout)]:
+            action = arguments[3:]
+            if action == ["rev-parse", "HEAD"]:
+                output = f"{contract['source_commit']}\n"
+            elif action == ["rev-list", "-n", "1", contract["source_tag"]]:
+                output = f"{contract['source_commit']}\n"
+            elif action == ["status", "--porcelain", "--untracked-files=all"]:
+                output = ""
+            elif action == [
+                "merge-base",
+                "--is-ancestor",
+                contract["required_fix_commit"],
+                "HEAD",
+            ]:
+                output = ""
+            else:
+                raise AssertionError(f"unexpected git command: {arguments}")
+        elif arguments == ["ldd", str(executable)]:
+            output = f"libros_gz_bridge.so => {library} (0x01)\n"
+        else:
+            raise AssertionError(f"unexpected runtime command: {arguments}")
+        return subprocess.CompletedProcess(arguments, 0, output, "")
+
+    monkeypatch.setattr(system_sim_runner.subprocess, "run", fake_run)
+
+    attestation = verify_ros_gz_bridge_runtime(root, contract)
+
+    assert attestation["version"] == "1.0.23"
+    assert attestation["source_commit"] == contract["source_commit"]
+    assert attestation["required_fix_ancestor"] is True
+    assert attestation["parameter_bridge"]["sha256"] == hashlib.sha256(
+        executable.read_bytes()
+    ).hexdigest()
+    assert attestation["library"]["sha256"] == hashlib.sha256(
+        library.read_bytes()
+    ).hexdigest()
+
+
+@pytest.mark.parametrize(
+    ("failure_mode", "message"),
+    [
+        ("prefix", "must resolve to"),
+        ("version", "version must be 1.0.23"),
+        ("dirty", "source checkout has local changes"),
+        ("linkage", "expected overlay"),
+    ],
+)
+def test_bridge_runtime_attestation_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_mode: str,
+    message: str,
+) -> None:
+    root = (tmp_path / "project").resolve()
+    contract = validate_ros_gz_bridge_contract(ROS_GZ_BRIDGE_CONTRACT)
+    prefix = root / contract["required_prefix"]
+    checkout = root / contract["source_checkout"]
+    executable = prefix / "lib/ros_gz_bridge/parameter_bridge"
+    library = prefix / "lib/libros_gz_bridge.so"
+    wrong_library = root / "wrong/libros_gz_bridge.so"
+    package_xml = prefix / "share/ros_gz_bridge/package.xml"
+    checkout.mkdir(parents=True)
+    executable.parent.mkdir(parents=True)
+    library.parent.mkdir(parents=True, exist_ok=True)
+    wrong_library.parent.mkdir(parents=True)
+    package_xml.parent.mkdir(parents=True)
+    executable.write_bytes(b"parameter bridge\n")
+    library.write_bytes(b"required library\n")
+    wrong_library.write_bytes(b"wrong library\n")
+    observed_version = "1.0.22" if failure_mode == "version" else "1.0.23"
+    package_xml.write_text(
+        "<package><name>ros_gz_bridge</name>"
+        f"<version>{observed_version}</version></package>\n",
+        encoding="utf-8",
+    )
+
+    def fake_run(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        arguments = list(command)
+        if arguments == ["ros2", "pkg", "prefix", "ros_gz_bridge"]:
+            resolved_prefix = (
+                Path("/opt/ros/jazzy")
+                if failure_mode == "prefix"
+                else prefix
+            )
+            output = f"{resolved_prefix}\n"
+        elif arguments[:3] == ["git", "-C", str(checkout)]:
+            action = arguments[3:]
+            if action in (
+                ["rev-parse", "HEAD"],
+                ["rev-list", "-n", "1", contract["source_tag"]],
+            ):
+                output = f"{contract['source_commit']}\n"
+            elif action == ["status", "--porcelain", "--untracked-files=all"]:
+                output = (
+                    " M ros_gz_bridge/src/convert/sensor_msgs.cpp\n"
+                    if failure_mode == "dirty"
+                    else ""
+                )
+            elif action == [
+                "merge-base",
+                "--is-ancestor",
+                contract["required_fix_commit"],
+                "HEAD",
+            ]:
+                output = ""
+            else:
+                raise AssertionError(f"unexpected git command: {arguments}")
+        elif arguments == ["ldd", str(executable)]:
+            linked = wrong_library if failure_mode == "linkage" else library
+            output = f"libros_gz_bridge.so => {linked} (0x01)\n"
+        else:
+            raise AssertionError(f"unexpected runtime command: {arguments}")
+        return subprocess.CompletedProcess(arguments, 0, output, "")
+
+    monkeypatch.setattr(system_sim_runner.subprocess, "run", fake_run)
+
+    with pytest.raises(RunnerError, match=message):
+        verify_ros_gz_bridge_runtime(root, contract)
+
+
 def _dummy_run_plan(tmp_path: Path, command: tuple[str, ...]) -> RunPlan:
     root = tmp_path.resolve()
     return RunPlan(
@@ -878,6 +1115,63 @@ def _dummy_run_plan(tmp_path: Path, command: tuple[str, ...]) -> RunPlan:
             "replicate_seed": "101",
         },
     )
+
+
+def test_bridge_runtime_gate_runs_before_output_reservation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = replace(
+        _dummy_run_plan(tmp_path, (sys.executable, "-c", "raise SystemExit(0)")),
+        ros_gz_bridge_contract=dict(ROS_GZ_BRIDGE_CONTRACT),
+    )
+
+    def reject_runtime(_root: Path, _contract: object) -> dict[str, object]:
+        raise RunnerError("ros_gz_bridge must resolve to the source overlay")
+
+    monkeypatch.setattr(
+        system_sim_runner,
+        "verify_ros_gz_bridge_runtime",
+        reject_runtime,
+    )
+
+    with pytest.raises(RunnerError, match="must resolve to the source overlay"):
+        execute_run(plan, wall_timeout_s=1.0)
+    assert not plan.output_dir.exists()
+
+
+def test_run_manifest_preserves_bridge_runtime_attestation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = replace(
+        _dummy_run_plan(tmp_path, (sys.executable, "-c", "raise SystemExit(0)")),
+        ros_gz_bridge_contract=dict(ROS_GZ_BRIDGE_CONTRACT),
+    )
+    attestation = {
+        "package": "ros_gz_bridge",
+        "version": "1.0.23",
+        "parameter_bridge": {"sha256": "a" * 64},
+        "library": {"sha256": "b" * 64},
+    }
+    monkeypatch.setattr(
+        system_sim_runner,
+        "verify_ros_gz_bridge_runtime",
+        lambda _root, _contract: attestation,
+    )
+
+    result = execute_run(
+        plan,
+        wall_timeout_s=1.0,
+        poll_interval_s=0.02,
+        sigint_grace_s=0.1,
+        term_grace_s=0.1,
+    )
+
+    assert result.status == "early_exit"
+    manifest = yaml.safe_load((
+        plan.output_dir / "run_launch_manifest.yaml"
+    ).read_text(encoding="utf-8"))
+    assert manifest["ros_gz_bridge_contract"] == ROS_GZ_BRIDGE_CONTRACT
+    assert manifest["execution"]["ros_gz_bridge_runtime"] == attestation
 
 
 def _artifact_writer_program() -> str:

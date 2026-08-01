@@ -55,13 +55,14 @@ components:
     system_apt_version_rejected: 1.0.22-1noble.20260615.142443
     license: Apache-2.0
     local_use: unmodified_official_jazzy_source_overlay
-    verification_status: source_build_and_sensor_bounds_regression_verified
+    verification_status: clean_source_build_and_full_upstream_suite_verified
     verification:
-      source_build: passed
+      source_build: passed_opt_ros_jazzy_only
+      rmw_implementation: rmw_fastrtps_cpp_8.4.4
       sensor_bounds_regression: 6_passed
-      full_upstream_suite: 17_passed_1_failed
-      remaining_failure: ros_gz_bridge_gid_filtering_under_rmw_cyclonedds_cpp
-      diagnostic: isolated_gid_filtering_passed_under_rmw_fastrtps_cpp
+      full_upstream_suite: 18_passed_0_failed
+      aggregate: 383_tests_0_errors_0_failures
+      prior_host_environment_diagnostic: 17_passed_1_gid_filtering_failed
   - component_id: ros_gz_jazzy_1_0_22
     role: gazebo_sim_launch_image_bridge_and_interfaces
     acquisition: ros_apt

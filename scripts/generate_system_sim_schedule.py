@@ -39,6 +39,18 @@ EXPERIMENT_BUDGET_FIELDS = (
 GAZEBO_SEED_MIN = 1
 GAZEBO_SEED_MAX = 0x7FFFFFFF
 SEED_LAUNCH_ARGUMENTS = ("policy_seed", "simulation_seed")
+ROS_GZ_BRIDGE_CONTRACT = {
+    "package": "ros_gz_bridge",
+    "required_version": "1.0.23",
+    "repository": "https://github.com/gazebosim/ros_gz",
+    "source_tag": "1.0.23",
+    "source_commit": "ec3a555b540ac492882d587a09752eb2eeeee3cd",
+    "required_fix_commit": "4c6cb80bb30fc0871bbd5ec95761272ce49a150d",
+    "source_checkout": "ros2_ws/src/third_party/ros_gz",
+    "required_prefix": "ros2_ws/install/ros_gz_bridge",
+    "system_apt_version_observed": "1.0.22-1noble.20260615.142443",
+    "system_apt_eligible": False,
+}
 CORE_BAG_TOPICS = (
     "/clock",
     "/tf",
@@ -164,6 +176,27 @@ def validate_seed_contract(
             argument: "replicate_seed" for argument in SEED_LAUNCH_ARGUMENTS
         },
     }
+
+
+def validate_ros_gz_bridge_contract(
+    value: Any, *, label: str = "shared_stack.ros_gz_bridge"
+) -> dict[str, Any]:
+    """Require the audited official bridge source overlay exactly."""
+    if not isinstance(value, Mapping):
+        raise ScheduleError(f"{label} must be a mapping")
+    missing = [field for field in ROS_GZ_BRIDGE_CONTRACT if field not in value]
+    extra = sorted(
+        str(field) for field in value if field not in ROS_GZ_BRIDGE_CONTRACT
+    )
+    if missing:
+        raise ScheduleError(f"{label} is missing: {', '.join(missing)}")
+    if extra:
+        raise ScheduleError(f"{label} has unknown fields: {', '.join(extra)}")
+    for field, expected in ROS_GZ_BRIDGE_CONTRACT.items():
+        actual = value[field]
+        if type(actual) is not type(expected) or actual != expected:
+            raise ScheduleError(f"{label}.{field} must be {expected!r}")
+    return dict(ROS_GZ_BRIDGE_CONTRACT)
 
 
 def validate_recording_contract(
@@ -361,7 +394,11 @@ def _source_files(paths: Iterable[Path]) -> list[Path]:
         for candidate in candidates:
             if not candidate.is_file():
                 continue
-            if "__pycache__" in candidate.parts or candidate.suffix == ".pyc":
+            if (
+                ".git" in candidate.parts
+                or "__pycache__" in candidate.parts
+                or candidate.suffix == ".pyc"
+            ):
                 continue
             files[candidate.resolve()] = candidate.resolve()
     if not files:
@@ -758,6 +795,9 @@ def freeze_schedule(
         shared_stack_path, "sstg_system_sim_shared_stack/v1"
     )
     seed_contract = validate_seed_contract(shared_stack.get("physics"))
+    ros_gz_bridge_contract = validate_ros_gz_bridge_contract(
+        shared_stack.get("ros_gz_bridge")
+    )
     recording_contract = validate_recording_contract(
         shared_stack.get("recording")
     )
@@ -869,6 +909,7 @@ def freeze_schedule(
             "run_output_root": _display_path(root, run_output_root),
             "runner_tool_sha256": runner_tool_sha,
             "experiment_budget": experiment_budget,
+            "ros_gz_bridge_contract": ros_gz_bridge_contract,
         }
     )
     method_hashes = {item["method"]: item["sha256"] for item in method_records}
@@ -1006,6 +1047,7 @@ def freeze_schedule(
         },
         "randomization": {"seed": randomization_seed},
         "seed_contract": seed_contract,
+        "ros_gz_bridge_contract": ros_gz_bridge_contract,
         "recording_contract": recording_contract,
         "experiment_budget": experiment_budget,
         "budget_provenance": {
@@ -1038,6 +1080,9 @@ def freeze_schedule(
                 "freeze_status": shared_stack.get("freeze_status"),
                 "seed_contract": validate_seed_contract(
                     shared_stack.get("physics")
+                ),
+                "ros_gz_bridge_contract": validate_ros_gz_bridge_contract(
+                    shared_stack.get("ros_gz_bridge")
                 ),
                 "recording_contract": validate_recording_contract(
                     shared_stack.get("recording")

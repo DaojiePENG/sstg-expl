@@ -25,6 +25,7 @@ import subprocess
 import sys
 import time
 from typing import Any, Mapping, Sequence
+from xml.etree import ElementTree
 
 import yaml
 
@@ -44,6 +45,7 @@ try:
         sha256_tree,
         validate_experiment_budget,
         validate_recording_contract,
+        validate_ros_gz_bridge_contract,
     )
 except ModuleNotFoundError as error:
     if error.name != "scripts":
@@ -63,6 +65,7 @@ except ModuleNotFoundError as error:
         sha256_tree,
         validate_experiment_budget,
         validate_recording_contract,
+        validate_ros_gz_bridge_contract,
     )
 
 
@@ -92,6 +95,7 @@ class RunPlan:
     recording_contract: Mapping[str, Any] | None
     command: tuple[str, ...]
     schedule_row: Mapping[str, str]
+    ros_gz_bridge_contract: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -1082,6 +1086,207 @@ def _recording_contract(
     return frozen
 
 
+def _normalized_ros_gz_bridge_contract(
+    value: Any, *, label: str
+) -> dict[str, Any]:
+    try:
+        return validate_ros_gz_bridge_contract(value, label=label)
+    except ScheduleError as error:
+        raise RunnerError(str(error)) from error
+
+
+def _ros_gz_bridge_contract(
+    *, root: Path, manifest: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Cross-check the bridge requirement at every frozen provenance layer."""
+    inputs = manifest.get("inputs")
+    if not isinstance(inputs, Mapping):
+        raise RunnerError("freeze manifest has no inputs mapping")
+    shared_record = inputs.get("shared_stack")
+    if not isinstance(shared_record, Mapping):
+        raise RunnerError("freeze manifest has no shared stack record")
+    shared_path = _resolve_inside(
+        root, str(shared_record.get("path", "")), "shared stack"
+    )
+    shared_stack = _load_yaml_mapping(shared_path, "shared stack")
+    declared = _normalized_ros_gz_bridge_contract(
+        shared_stack.get("ros_gz_bridge"),
+        label="shared_stack.ros_gz_bridge",
+    )
+    recorded = _normalized_ros_gz_bridge_contract(
+        shared_record.get("ros_gz_bridge_contract"),
+        label="freeze manifest shared_stack.ros_gz_bridge_contract",
+    )
+    frozen = _normalized_ros_gz_bridge_contract(
+        manifest.get("ros_gz_bridge_contract"),
+        label="freeze manifest ros_gz_bridge_contract",
+    )
+    if recorded != declared or frozen != declared:
+        raise RunnerError(
+            "freeze manifest ros_gz_bridge contract disagrees with its input"
+        )
+    return frozen
+
+
+def _runtime_command(
+    command: Sequence[str], *, label: str
+) -> subprocess.CompletedProcess[str]:
+    try:
+        completed = subprocess.run(
+            list(command),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RunnerError(f"could not verify {label}: {error}") from error
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()
+        raise RunnerError(
+            f"could not verify {label} (exit {completed.returncode}): {detail}"
+        )
+    return completed
+
+
+def _relative_runtime_path(root: Path, path: Path) -> str:
+    try:
+        return path.relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def verify_ros_gz_bridge_runtime(
+    root: Path, contract: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Attest that ROS will execute the pinned, bounds-fixed bridge overlay."""
+    root = root.resolve()
+    expected = _normalized_ros_gz_bridge_contract(
+        contract, label="runtime ros_gz_bridge contract"
+    )
+    prefix = _resolve_inside(root, expected["required_prefix"], "bridge prefix")
+    checkout = _resolve_inside(
+        root, expected["source_checkout"], "bridge source checkout"
+    )
+
+    prefix_result = _runtime_command(
+        ["ros2", "pkg", "prefix", expected["package"]],
+        label="ros_gz_bridge package prefix",
+    )
+    prefix_lines = [
+        line.strip()
+        for line in prefix_result.stdout.splitlines()
+        if line.strip()
+    ]
+    if len(prefix_lines) != 1 or Path(prefix_lines[0]).resolve() != prefix:
+        observed = prefix_result.stdout.strip() or "<empty>"
+        raise RunnerError(
+            f"ros_gz_bridge must resolve to {prefix}, observed: {observed}"
+        )
+
+    package_xml = prefix / "share" / expected["package"] / "package.xml"
+    try:
+        package_root = ElementTree.parse(package_xml).getroot()
+    except (OSError, ElementTree.ParseError) as error:
+        raise RunnerError(f"cannot parse bridge package metadata: {error}") from error
+    version = (package_root.findtext("version") or "").strip()
+    if version != expected["required_version"]:
+        raise RunnerError(
+            "ros_gz_bridge version must be "
+            f"{expected['required_version']}, observed: {version or '<empty>'}"
+        )
+
+    if not checkout.is_dir():
+        raise RunnerError(f"bridge source checkout is missing: {checkout}")
+    head = _runtime_command(
+        ["git", "-C", str(checkout), "rev-parse", "HEAD"],
+        label="ros_gz_bridge source commit",
+    ).stdout.strip()
+    if head != expected["source_commit"]:
+        raise RunnerError(
+            f"ros_gz_bridge source commit must be {expected['source_commit']}, "
+            f"observed: {head or '<empty>'}"
+        )
+    tag_commit = _runtime_command(
+        ["git", "-C", str(checkout), "rev-list", "-n", "1", expected["source_tag"]],
+        label="ros_gz_bridge source tag",
+    ).stdout.strip()
+    if tag_commit != expected["source_commit"]:
+        raise RunnerError(
+            f"ros_gz_bridge tag {expected['source_tag']} does not resolve to the "
+            "required source commit"
+        )
+    source_status = _runtime_command(
+        [
+            "git",
+            "-C",
+            str(checkout),
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        ],
+        label="ros_gz_bridge source status",
+    ).stdout.strip()
+    if source_status:
+        raise RunnerError("ros_gz_bridge source checkout has local changes")
+    _runtime_command(
+        [
+            "git",
+            "-C",
+            str(checkout),
+            "merge-base",
+            "--is-ancestor",
+            expected["required_fix_commit"],
+            "HEAD",
+        ],
+        label="ros_gz_bridge required fix ancestry",
+    )
+
+    executable = prefix / "lib" / expected["package"] / "parameter_bridge"
+    library = prefix / "lib" / "libros_gz_bridge.so"
+    for path, label in (
+        (executable, "parameter_bridge"),
+        (library, "bridge library"),
+    ):
+        if not path.is_file():
+            raise RunnerError(f"{label} is missing from the required overlay: {path}")
+    ldd_result = _runtime_command(["ldd", str(executable)], label="bridge linkage")
+    linked_match = re.search(
+        r"^\s*libros_gz_bridge\.so\s*=>\s*(\S+)",
+        ldd_result.stdout,
+        flags=re.MULTILINE,
+    )
+    if linked_match is None:
+        raise RunnerError("parameter_bridge linkage does not list libros_gz_bridge.so")
+    linked_library = Path(linked_match.group(1))
+    if linked_library.resolve() != library.resolve():
+        raise RunnerError(
+            f"parameter_bridge links {linked_library}, expected overlay {library}"
+        )
+
+    return {
+        "package": expected["package"],
+        "version": version,
+        "prefix": _relative_runtime_path(root, prefix),
+        "source_checkout": _relative_runtime_path(root, checkout),
+        "source_commit": head,
+        "source_tag": expected["source_tag"],
+        "source_tag_commit": tag_commit,
+        "required_fix_commit": expected["required_fix_commit"],
+        "required_fix_ancestor": True,
+        "source_clean": True,
+        "parameter_bridge": {
+            "path": _relative_runtime_path(root, executable),
+            "sha256": sha256_file(executable),
+        },
+        "library": {
+            "path": _relative_runtime_path(root, library),
+            "sha256": sha256_file(library),
+        },
+        "linked_library": _relative_runtime_path(root, linked_library),
+    }
+
+
 def load_run_plan(
     *, root: Path, schedule_dir: Path, schedule_id: str
 ) -> RunPlan:
@@ -1157,6 +1362,10 @@ def load_run_plan(
         fixed_args=fixed_args,
         column_args=column_args,
     )
+    ros_gz_bridge_contract = _ros_gz_bridge_contract(
+        root=root,
+        manifest=manifest,
+    )
     launch_arguments = dict(fixed_args)
     for argument, column in column_args.items():
         value = row.get(column)
@@ -1208,6 +1417,7 @@ def load_run_plan(
         recording_contract=recording_contract,
         command=command,
         schedule_row=row,
+        ros_gz_bridge_contract=ros_gz_bridge_contract,
     )
 
 
@@ -1227,6 +1437,11 @@ def _manifest_value(plan: RunPlan, *, status: str, **updates: Any) -> dict[str, 
         "recording_contract": (
             dict(plan.recording_contract)
             if plan.recording_contract is not None
+            else None
+        ),
+        "ros_gz_bridge_contract": (
+            dict(plan.ros_gz_bridge_contract)
+            if plan.ros_gz_bridge_contract is not None
             else None
         ),
         "launch": {
@@ -1264,7 +1479,11 @@ def _write_manifest(path: Path, value: Mapping[str, Any]) -> None:
             temporary.unlink()
 
 
-def reserve_run_output(plan: RunPlan) -> Path:
+def reserve_run_output(
+    plan: RunPlan,
+    *,
+    ros_gz_bridge_runtime: Mapping[str, Any] | None = None,
+) -> Path:
     """Atomically reserve a unique run directory and write its launch manifest."""
     ensure_run_output_available(plan.root, plan.output_dir)
     plan.output_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -1279,7 +1498,16 @@ def reserve_run_output(plan: RunPlan) -> Path:
     manifest_path = plan.output_dir / "run_launch_manifest.yaml"
     _write_manifest(
         manifest_path,
-        _manifest_value(plan, status="reserved", reserved_at_utc=_utc_now()),
+        _manifest_value(
+            plan,
+            status="reserved",
+            reserved_at_utc=_utc_now(),
+            **(
+                {"ros_gz_bridge_runtime": dict(ros_gz_bridge_runtime)}
+                if ros_gz_bridge_runtime is not None
+                else {}
+            ),
+        ),
     )
     return manifest_path
 
@@ -1483,7 +1711,20 @@ def execute_run(
         sigint_grace_s=sigint_grace_s,
         term_grace_s=term_grace_s,
     )
-    manifest_path = reserve_run_output(plan)
+    ros_gz_bridge_runtime = (
+        verify_ros_gz_bridge_runtime(plan.root, plan.ros_gz_bridge_contract)
+        if plan.ros_gz_bridge_contract is not None
+        else None
+    )
+    runtime_manifest_update = (
+        {"ros_gz_bridge_runtime": dict(ros_gz_bridge_runtime)}
+        if ros_gz_bridge_runtime is not None
+        else {}
+    )
+    manifest_path = reserve_run_output(
+        plan,
+        ros_gz_bridge_runtime=ros_gz_bridge_runtime,
+    )
     started = _utc_now()
     supervisor_started = time.monotonic()
     _write_manifest(
@@ -1496,6 +1737,7 @@ def execute_run(
             evaluator_flush_s=evaluator_flush_s,
             sigint_grace_s=sigint_grace_s,
             term_grace_s=term_grace_s,
+            **runtime_manifest_update,
         ),
     )
     launch_log_path = plan.output_dir / "launch.log"
@@ -1521,6 +1763,7 @@ def execute_run(
                     evaluator_flush_s=evaluator_flush_s,
                     sigint_grace_s=sigint_grace_s,
                     term_grace_s=term_grace_s,
+                    **runtime_manifest_update,
                 ),
             )
             outcome = supervise_process(
@@ -1569,6 +1812,7 @@ def execute_run(
                 term_grace_s=term_grace_s,
                 shutdown_signals=list(shutdown_signals),
                 artifact_audit=artifact_audit,
+                **runtime_manifest_update,
             ),
         )
         return ExecutionResult(
@@ -1611,6 +1855,7 @@ def execute_run(
                 sigint_grace_s=sigint_grace_s,
                 term_grace_s=term_grace_s,
                 artifact_audit=artifact_audit,
+                **runtime_manifest_update,
             ),
         )
         raise RunnerError(f"could not invoke ros2 launch: {error}") from error
@@ -1656,6 +1901,7 @@ def execute_run(
             term_grace_s=term_grace_s,
             shutdown_signals=list(outcome.shutdown_signals),
             artifact_audit=artifact_audit,
+            **runtime_manifest_update,
         ),
     )
     return ExecutionResult(
@@ -1745,6 +1991,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "recording_contract": (
                     dict(plan.recording_contract)
                     if plan.recording_contract is not None
+                    else None
+                ),
+                "ros_gz_bridge_contract": (
+                    dict(plan.ros_gz_bridge_contract)
+                    if plan.ros_gz_bridge_contract is not None
                     else None
                 ),
                 "supervision": {

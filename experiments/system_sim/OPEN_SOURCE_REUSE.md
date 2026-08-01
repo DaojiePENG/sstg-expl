@@ -27,9 +27,11 @@ ROS--Gazebo message conversion uses the unmodified official Jazzy
 apt candidate remains 1.0.22 and is intentionally ineligible: the 1.0.23 tag
 contains the official Jazzy sensor-message bounds fix at commit
 `4c6cb80bb30fc0871bbd5ec95761272ce49a150d`, covering CameraInfo, LaserScan,
-and JointState converters involved in observed heap failures.  Gazebo launch,
-image bridging, interfaces, robot bridge configuration, and spawn composition
-remain upstream code; no local converter patch is carried.
+and JointState converters.  The locally observed shutdown heap corruption was
+on a CameraInfo bridge path; applying the full official fix avoids maintaining
+a speculative local patch.  Gazebo launch, image bridging, interfaces, robot
+bridge configuration, and spawn composition remain upstream code; no local
+converter patch is carried.
 
 The existing `frontier`, `nbv`, and `rrt_adapted` strategy switches in the SSTG
 codebase are internal algorithmic ablations.  They are useful for development
