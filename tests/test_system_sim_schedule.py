@@ -20,6 +20,8 @@ from scripts.generate_system_sim_schedule import (
 from scripts.run_system_sim_schedule import (
     RunPlan,
     RunnerError,
+    SUPERVISOR_SHUTDOWN_BEGIN,
+    SUPERVISOR_SHUTDOWN_END,
     execute_run,
     load_run_plan,
     reserve_run_output,
@@ -116,6 +118,10 @@ def _fixture_project(tmp_path: Path) -> dict[str, object]:
             "schema": "sstg_system_sim_shared_stack/v1",
             "backend": "gazebo_harmonic",
             "ros_distribution": "jazzy",
+            "physics": {
+                "seed_source": "replicate_seed",
+                "seed_valid_range_inclusive": [1, 0x7FFFFFFF],
+            },
             "experiment_budget": EXPERIMENT_BUDGET,
             "freeze_status": "development",
         },
@@ -252,6 +258,17 @@ def test_schedule_is_matched_block_deterministic_and_hashed(tmp_path: Path) -> N
     assert manifest_a["launch"]["argument_columns"]["world_name"] == "world_name"
     assert manifest_a["launch"]["argument_columns"]["simulation_seed"] == (
         "replicate_seed"
+    )
+    assert manifest_a["seed_contract"] == {
+        "seed_source": "replicate_seed",
+        "valid_range_inclusive": [1, 0x7FFFFFFF],
+        "launch_argument_columns": {
+            "policy_seed": "replicate_seed",
+            "simulation_seed": "replicate_seed",
+        },
+    }
+    assert manifest_a["inputs"]["shared_stack"]["seed_contract"] == (
+        manifest_a["seed_contract"]
     )
     assert manifest_a["experiment_budget"] == EXPERIMENT_BUDGET
     assert manifest_a["budget_provenance"] == {
@@ -400,6 +417,40 @@ def test_shared_stack_budget_is_required_and_fail_closed(
 
     with pytest.raises(ScheduleError, match=message):
         _freeze(project, "invalid_budget")
+
+
+@pytest.mark.parametrize(
+    ("physics", "message"),
+    [
+        (None, "physics must be a mapping"),
+        (
+            {
+                "seed_source": "default_random_device",
+                "seed_valid_range_inclusive": [1, 0x7FFFFFFF],
+            },
+            "seed_source must be replicate_seed",
+        ),
+        (
+            {
+                "seed_source": "replicate_seed",
+                "seed_valid_range_inclusive": [0, 0xFFFFFFFF],
+            },
+            "seed_valid_range_inclusive must be",
+        ),
+    ],
+)
+def test_shared_stack_seed_contract_is_required_and_fail_closed(
+    tmp_path: Path, physics: object, message: str
+) -> None:
+    project = _fixture_project(tmp_path)
+    shared_path = project["shared"]
+    assert isinstance(shared_path, Path)
+    shared = yaml.safe_load(shared_path.read_text(encoding="utf-8"))
+    shared["physics"] = physics
+    _write_yaml(shared_path, shared)
+
+    with pytest.raises(ScheduleError, match=message):
+        _freeze(project, "invalid_seed_contract")
 
 
 def test_development_budget_override_is_explicit_and_formal_override_is_refused(
@@ -654,6 +705,66 @@ def test_runner_rejects_budget_manifest_or_launch_contract_drift(
         )
 
 
+def test_runner_rejects_seed_manifest_or_launch_contract_drift(
+    tmp_path: Path,
+) -> None:
+    project = _fixture_project(tmp_path)
+    _, schedule_dir = _freeze(project, "runner_seed_drift")
+    row = _rows(schedule_dir / "run_schedule.csv")[0]
+    manifest_path = schedule_dir / "schedule_freeze_manifest.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    root = project["root"]
+    assert isinstance(root, Path)
+
+    manifest["launch"]["argument_columns"]["simulation_seed"] = "max_decisions"
+    _write_yaml(manifest_path, manifest)
+    with pytest.raises(RunnerError, match="simulation_seed from replicate_seed"):
+        load_run_plan(
+            root=root,
+            schedule_dir=schedule_dir,
+            schedule_id=row["schedule_id"],
+        )
+
+    manifest["launch"]["argument_columns"]["simulation_seed"] = "replicate_seed"
+    manifest["seed_contract"]["valid_range_inclusive"] = [0, 0x7FFFFFFF]
+    _write_yaml(manifest_path, manifest)
+    with pytest.raises(RunnerError, match="seed contract is unsupported"):
+        load_run_plan(
+            root=root,
+            schedule_dir=schedule_dir,
+            schedule_id=row["schedule_id"],
+        )
+
+
+def test_runner_rejects_noncanonical_or_out_of_range_row_seed(
+    tmp_path: Path,
+) -> None:
+    project = _fixture_project(tmp_path)
+    _, schedule_dir = _freeze(project, "runner_bad_row_seed")
+    schedule_path = schedule_dir / "run_schedule.csv"
+    rows = _rows(schedule_path)
+    rows[0]["replicate_seed"] = "0"
+    with schedule_path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
+    manifest_path = schedule_dir / "schedule_freeze_manifest.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["outputs"]["run_schedule_sha256"] = hashlib.sha256(
+        schedule_path.read_bytes()
+    ).hexdigest()
+    _write_yaml(manifest_path, manifest)
+    root = project["root"]
+    assert isinstance(root, Path)
+
+    with pytest.raises(RunnerError, match="positive signed 32-bit"):
+        load_run_plan(
+            root=root,
+            schedule_dir=schedule_dir,
+            schedule_id=rows[0]["schedule_id"],
+        )
+
+
 def _dummy_run_plan(tmp_path: Path, command: tuple[str, ...]) -> RunPlan:
     root = tmp_path.resolve()
     return RunPlan(
@@ -756,6 +867,9 @@ def test_supervisor_terminates_group_and_audits_terminal_artifacts(
     )
     assert manifest["execution"]["status"] == "terminal_completed"
     assert manifest["execution"]["artifact_audit"]["valid"] is True
+    launch_log = (output_dir / "launch.log").read_text(encoding="utf-8")
+    assert SUPERVISOR_SHUTDOWN_BEGIN in launch_log
+    assert f"{SUPERVISOR_SHUTDOWN_END}SIGINT" in launch_log
 
 
 def test_zero_returncode_before_terminal_event_is_early_exit(tmp_path: Path) -> None:
@@ -905,14 +1019,31 @@ def test_artifact_audit_rejects_child_crash_but_allows_coordinated_sigint(
             stderr=subprocess.STDOUT,
             text=True,
         )
-        launch_log.write("[WARNING] [launch]: user interrupted with ctrl-c (SIGINT)\n")
+        launch_log.write(
+            "[ERROR] [gazebo-1]: process has died "
+            "[pid 10, exit code -2, cmd gz]\n"
+        )
+
+    premature = validate_completed_artifacts(output)
+    assert premature["valid"] is False
+    assert any("gazebo-1 exit code -2" in error for error in premature["errors"])
+
+    with (output / "launch.log").open("w", encoding="utf-8") as launch_log:
+        launch_log.write(f"{SUPERVISOR_SHUTDOWN_BEGIN}\n")
         launch_log.write(
             "[ERROR] [gazebo-1]: process has died "
             "[pid 10, exit code -2, cmd gz]\n"
         )
         launch_log.write(
             "[ERROR] [planner_server-2]: process has died "
-            "[pid 12, exit code -2, cmd planner_server]\n"
+            "[pid 12, exit code -15, cmd planner_server]\n"
+        )
+        launch_log.write(
+            "[ERROR] [stuck_process-3]: process has died "
+            "[pid 13, exit code -9, cmd stuck_process]\n"
+        )
+        launch_log.write(
+            f"{SUPERVISOR_SHUTDOWN_END}SIGINT,SIGTERM,SIGKILL\n"
         )
 
     clean = validate_completed_artifacts(output)
@@ -931,6 +1062,32 @@ def test_artifact_audit_rejects_child_crash_but_allows_coordinated_sigint(
     assert any(
         "parameter_bridge-8 exit code -6" in error
         for error in crashed["errors"]
+    )
+
+
+def test_artifact_audit_rejects_required_process_clean_exit_before_shutdown(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    subprocess.run(
+        [sys.executable, "-c", _artifact_writer_program(), str(output), "exit"],
+        check=True,
+    )
+    (output / "launch.log").write_text(
+        "[INFO] [policy_node-21]: process has finished cleanly [pid 21]\n"
+        f"{SUPERVISOR_SHUTDOWN_BEGIN}\n"
+        f"{SUPERVISOR_SHUTDOWN_END}SIGINT\n",
+        encoding="utf-8",
+    )
+
+    audit = validate_completed_artifacts(output)
+
+    assert audit["valid"] is False
+    assert any(
+        "required process exited before coordinated shutdown: policy_node-21"
+        in error
+        for error in audit["errors"]
     )
 
 

@@ -36,6 +36,9 @@ EXPERIMENT_BUDGET_FIELDS = (
     "max_decisions",
     "goal_timeout_s",
 )
+GAZEBO_SEED_MIN = 1
+GAZEBO_SEED_MAX = 0x7FFFFFFF
+SEED_LAUNCH_ARGUMENTS = ("policy_seed", "simulation_seed")
 CSV_FIELDS = (
     "schema",
     "study_id",
@@ -83,6 +86,35 @@ CSV_FIELDS = (
 
 class ScheduleError(ValueError):
     """Raised when a schedule cannot be frozen from the declared inputs."""
+
+
+def validate_seed_contract(
+    value: Any, *, label: str = "shared_stack.physics"
+) -> dict[str, Any]:
+    """Validate the common RNG source accepted by Gazebo Harmonic."""
+    if not isinstance(value, Mapping):
+        raise ScheduleError(f"{label} must be a mapping")
+    if value.get("seed_source") != "replicate_seed":
+        raise ScheduleError(f"{label}.seed_source must be replicate_seed")
+    seed_range = value.get("seed_valid_range_inclusive")
+    valid_range = (
+        isinstance(seed_range, list)
+        and len(seed_range) == 2
+        and all(type(bound) is int for bound in seed_range)
+        and seed_range == [GAZEBO_SEED_MIN, GAZEBO_SEED_MAX]
+    )
+    if not valid_range:
+        raise ScheduleError(
+            f"{label}.seed_valid_range_inclusive must be "
+            f"[{GAZEBO_SEED_MIN}, {GAZEBO_SEED_MAX}]"
+        )
+    return {
+        "seed_source": "replicate_seed",
+        "valid_range_inclusive": [GAZEBO_SEED_MIN, GAZEBO_SEED_MAX],
+        "launch_argument_columns": {
+            argument: "replicate_seed" for argument in SEED_LAUNCH_ARGUMENTS
+        },
+    }
 
 
 def validate_experiment_budget(
@@ -621,7 +653,7 @@ def freeze_schedule(
         raise ScheduleError("at least one replicate seed is required")
     if len(seeds) != len(replicate_seeds):
         raise ScheduleError("replicate seeds must be unique")
-    if any(not 1 <= seed <= 0x7FFFFFFF for seed in seeds):
+    if any(not GAZEBO_SEED_MIN <= seed <= GAZEBO_SEED_MAX for seed in seeds):
         raise ScheduleError(
             "replicate seeds must be positive signed 32-bit integers for Gazebo"
         )
@@ -641,6 +673,7 @@ def freeze_schedule(
     shared_stack = _load_mapping(
         shared_stack_path, "sstg_system_sim_shared_stack/v1"
     )
+    seed_contract = validate_seed_contract(shared_stack.get("physics"))
     experiment_budget, applied_budget_overrides = _effective_experiment_budget(
         shared_stack, evidence_tier, budget_overrides
     )
@@ -885,6 +918,7 @@ def freeze_schedule(
             "scheduled_run_count": len(rows),
         },
         "randomization": {"seed": randomization_seed},
+        "seed_contract": seed_contract,
         "experiment_budget": experiment_budget,
         "budget_provenance": {
             "source": (
@@ -914,6 +948,9 @@ def freeze_schedule(
                 "path": _display_path(root, shared_stack_path),
                 "sha256": shared_sha,
                 "freeze_status": shared_stack.get("freeze_status"),
+                "seed_contract": validate_seed_contract(
+                    shared_stack.get("physics")
+                ),
                 "experiment_budget": validate_experiment_budget(
                     shared_stack.get("experiment_budget"),
                     label="shared_stack.experiment_budget",

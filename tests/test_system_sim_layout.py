@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import math
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -442,6 +443,20 @@ def test_simulation_seed_validation_is_fail_closed():
     for invalid in ("-1", "0", "1.0", "2147483648", "4294967295", "seed"):
         with pytest.raises(RuntimeError, match="positive signed 32-bit"):
             module._validated_simulation_seed(invalid)
+
+
+def test_gazebo_world_path_is_shell_quoted_for_upstream_launch():
+    module = _load_sim_launch_module()
+    world = "/tmp/system sim/world's scene.sdf"
+
+    arguments = module._gazebo_arguments(
+        world, headless=True, simulation_seed=103
+    )
+
+    assert shlex.split(arguments)[-1] == world
+    assert shlex.split(arguments)[:-1] == [
+        "-r", "-s", "--headless-rendering", "-v", "3", "--seed", "103"
+    ]
 
 
 def test_gazebo_exit_guard_replaces_upstream_unconditional_shutdown():

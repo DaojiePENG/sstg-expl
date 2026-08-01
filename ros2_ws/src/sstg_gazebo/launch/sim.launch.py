@@ -16,6 +16,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 import os
+import shlex
 
 from sstg_gazebo.instrumented_tb3 import prepare_instrumented_tb3_sdf
 
@@ -62,6 +63,15 @@ def _validated_simulation_seed(value):
     return seed
 
 
+def _gazebo_arguments(world, *, headless, simulation_seed):
+    """Build the upstream shell-parsed argument string without path splitting."""
+    headless_args = "-s --headless-rendering " if headless else ""
+    return (
+        f"-r {headless_args}-v 3 --seed {simulation_seed} "
+        f"{shlex.quote(world)}"
+    )
+
+
 def _launch_setup(context):
     package_share = get_package_share_directory("sstg_gazebo")
     ros_gz_share = get_package_share_directory("ros_gz_sim")
@@ -78,8 +88,9 @@ def _launch_setup(context):
     simulation_seed = _validated_simulation_seed(
         LaunchConfiguration("simulation_seed").perform(context)
     )
-    headless_args = "-s --headless-rendering " if headless else ""
-    gz_args = f"-r {headless_args}-v 3 --seed {simulation_seed} {world}"
+    gz_args = _gazebo_arguments(
+        world, headless=headless, simulation_seed=simulation_seed
+    )
     world_stats_topic = f"/world/{world_name}/stats"
     prepared_robot = prepare_instrumented_tb3_sdf(
         robot_sdf_xacro,

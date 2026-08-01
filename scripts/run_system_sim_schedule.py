@@ -12,6 +12,7 @@ import argparse
 import csv
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import partial
 import json
 import math
 import os
@@ -30,7 +31,10 @@ try:
     from scripts.generate_system_sim_schedule import (
         EXPERIMENT_BUDGET_FIELDS,
         FREEZE_SCHEMA,
+        GAZEBO_SEED_MAX,
+        GAZEBO_SEED_MIN,
         SCHEDULE_SCHEMA,
+        SEED_LAUNCH_ARGUMENTS,
         ScheduleError,
         sha256_file,
         sha256_tree,
@@ -42,7 +46,10 @@ except ModuleNotFoundError as error:
     from generate_system_sim_schedule import (  # type: ignore[no-redef]
         EXPERIMENT_BUDGET_FIELDS,
         FREEZE_SCHEMA,
+        GAZEBO_SEED_MAX,
+        GAZEBO_SEED_MIN,
         SCHEDULE_SCHEMA,
+        SEED_LAUNCH_ARGUMENTS,
         ScheduleError,
         sha256_file,
         sha256_tree,
@@ -106,32 +113,104 @@ PROCESS_DIED_PATTERN = re.compile(
     r"\[ERROR\] \[(?P<process>[^\]]+)\]: process has died .*"
     r"exit code (?P<code>-?\d+)"
 )
+PROCESS_FINISHED_PATTERN = re.compile(
+    r"\[INFO\] \[(?P<process>[^\]]+)\]: process has finished cleanly"
+)
 FATAL_LAUNCH_MARKERS = (
     "Traceback (most recent call last):",
     "corrupted double-linked list",
     "double free or corruption",
     "terminate called after throwing",
 )
+SUPERVISOR_SHUTDOWN_BEGIN = "[sstg-runner] coordinated shutdown begin"
+SUPERVISOR_SHUTDOWN_END = "[sstg-runner] coordinated shutdown complete signals="
+REQUIRED_RUNTIME_PROCESS_PREFIXES = (
+    "gazebo-",
+    "parameter_bridge-",
+    "robot_state_publisher-",
+    "image_bridge-",
+    "async_slam_toolbox_node-",
+    "controller_server-",
+    "smoother_server-",
+    "planner_server-",
+    "route_server-",
+    "behavior_server-",
+    "bt_navigator-",
+    "waypoint_follower-",
+    "velocity_smoother-",
+    "collision_monitor-",
+    "opennav_docking-",
+    "lifecycle_manager-",
+    "system_eval_node-",
+    "policy_node-",
+)
+
+
+def _shutdown_log_window(
+    lines: Sequence[str],
+) -> tuple[int | None, int | None, set[int], list[str]]:
+    begin = [
+        index for index, line in enumerate(lines)
+        if SUPERVISOR_SHUTDOWN_BEGIN in line
+    ]
+    end = [
+        index for index, line in enumerate(lines)
+        if SUPERVISOR_SHUTDOWN_END in line
+    ]
+    if not begin and not end:
+        return None, None, set(), []
+    if len(begin) != 1 or len(end) != 1 or end[0] <= begin[0]:
+        return None, None, set(), ["malformed coordinated shutdown markers"]
+    signal_names = lines[end[0]].split(SUPERVISOR_SHUTDOWN_END, 1)[1].split(",")
+    signal_names = [name.strip() for name in signal_names if name.strip()]
+    allowed_codes: set[int] = set()
+    for name in signal_names:
+        try:
+            allowed_codes.add(-int(signal.Signals[name]))
+        except (KeyError, ValueError):
+            return None, None, set(), [
+                f"unknown coordinated shutdown signal: {name}"
+            ]
+    return begin[0], end[0], allowed_codes, []
 
 
 def _launch_log_runtime_errors(path: Path) -> list[str]:
-    """Detect child crashes while allowing coordinated SIGINT exits."""
+    """Detect early exits and crashes outside a runner-owned shutdown window."""
     try:
         content = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
         return [f"cannot inspect runtime log: {error}"]
-    coordinated_shutdown = "user interrupted with ctrl-c (SIGINT)" in content
-    detected: list[str] = []
+    lines = content.splitlines()
+    shutdown_begin, shutdown_end, allowed_codes, detected = _shutdown_log_window(
+        lines
+    )
     for marker in FATAL_LAUNCH_MARKERS:
         if marker in content:
             detected.append(f"fatal runtime marker: {marker}")
-    for line in content.splitlines():
+    for index, line in enumerate(lines):
+        finished = PROCESS_FINISHED_PATTERN.search(line)
+        if (
+            finished is not None
+            and finished.group("process").startswith(
+                REQUIRED_RUNTIME_PROCESS_PREFIXES
+            )
+            and (shutdown_begin is None or index < shutdown_begin)
+        ):
+            detected.append(
+                "required process exited before coordinated shutdown: "
+                f"{finished.group('process')}"
+            )
         match = PROCESS_DIED_PATTERN.search(line)
         if match is None:
             continue
         process = match.group("process")
         code = int(match.group("code"))
-        if code == -signal.SIGINT and coordinated_shutdown:
+        if (
+            shutdown_begin is not None
+            and shutdown_end is not None
+            and shutdown_begin < index < shutdown_end
+            and code in allowed_codes
+        ):
             continue
         detected.append(f"child process crashed: {process} exit code {code}")
     return list(dict.fromkeys(detected))
@@ -607,6 +686,82 @@ def _experiment_budget_contract(
     return effective
 
 
+def _seed_contract(
+    *,
+    root: Path,
+    manifest: Mapping[str, Any],
+    row: Mapping[str, str],
+    fixed_args: Mapping[str, str],
+    column_args: Mapping[str, str],
+) -> int:
+    """Cross-check shared-stack, freeze, row, and launch RNG provenance."""
+    expected = {
+        "seed_source": "replicate_seed",
+        "valid_range_inclusive": [GAZEBO_SEED_MIN, GAZEBO_SEED_MAX],
+        "launch_argument_columns": {
+            argument: "replicate_seed" for argument in SEED_LAUNCH_ARGUMENTS
+        },
+    }
+    inputs = manifest.get("inputs")
+    if not isinstance(inputs, Mapping):
+        raise RunnerError("freeze manifest has no inputs mapping")
+    shared_record = inputs.get("shared_stack")
+    if not isinstance(shared_record, Mapping):
+        raise RunnerError("freeze manifest has no shared stack record")
+    shared_path = _resolve_inside(
+        root, str(shared_record.get("path", "")), "shared stack"
+    )
+    shared_stack = _load_yaml_mapping(shared_path, "shared stack")
+    physics = shared_stack.get("physics")
+    if not isinstance(physics, Mapping):
+        raise RunnerError("shared_stack.physics must be a mapping")
+    raw_seed_range = physics.get("seed_valid_range_inclusive")
+    if not (
+        isinstance(raw_seed_range, list)
+        and len(raw_seed_range) == 2
+        and all(type(bound) is int for bound in raw_seed_range)
+    ):
+        raise RunnerError("shared-stack seed contract is unsupported")
+    shared_contract = {
+        "seed_source": physics.get("seed_source"),
+        "valid_range_inclusive": raw_seed_range,
+        "launch_argument_columns": expected["launch_argument_columns"],
+    }
+    if shared_contract != expected:
+        raise RunnerError("shared-stack seed contract is unsupported")
+    if shared_record.get("seed_contract") != expected:
+        raise RunnerError(
+            "freeze manifest shared-stack seed contract disagrees with its input"
+        )
+    if manifest.get("seed_contract") != expected:
+        raise RunnerError("freeze manifest seed contract is unsupported")
+
+    raw_seed = row.get("replicate_seed", "")
+    if not isinstance(raw_seed, str):
+        raise RunnerError(
+            "schedule row replicate_seed must be a positive signed 32-bit integer"
+        )
+    try:
+        replicate_seed = int(raw_seed)
+    except ValueError as error:
+        raise RunnerError(
+            "schedule row replicate_seed must be a positive signed 32-bit integer"
+        ) from error
+    if (
+        str(replicate_seed) != raw_seed.strip()
+        or not GAZEBO_SEED_MIN <= replicate_seed <= GAZEBO_SEED_MAX
+    ):
+        raise RunnerError(
+            "schedule row replicate_seed must be a positive signed 32-bit integer"
+        )
+    for argument in SEED_LAUNCH_ARGUMENTS:
+        if argument in fixed_args or column_args.get(argument) != "replicate_seed":
+            raise RunnerError(
+                f"launch contract must pass {argument} from replicate_seed"
+            )
+    return replicate_seed
+
+
 def load_run_plan(
     *, root: Path, schedule_dir: Path, schedule_id: str
 ) -> RunPlan:
@@ -663,6 +818,13 @@ def load_run_plan(
 
     package, launch_file, fixed_args, column_args = _launch_contract(manifest)
     experiment_budget = _experiment_budget_contract(
+        root=root,
+        manifest=manifest,
+        row=row,
+        fixed_args=fixed_args,
+        column_args=column_args,
+    )
+    _seed_contract(
         root=root,
         manifest=manifest,
         row=row,
@@ -841,6 +1003,24 @@ def shutdown_process_group(
     return tuple(sent)
 
 
+def shutdown_process_group_logged(
+    process: subprocess.Popen[Any],
+    *,
+    launch_log: Any,
+    **shutdown_kwargs: Any,
+) -> tuple[str, ...]:
+    """Bracket supervisor signals with flushed, runner-owned log markers."""
+    launch_log.write(f"{SUPERVISOR_SHUTDOWN_BEGIN}\n".encode("utf-8"))
+    launch_log.flush()
+    sent = shutdown_process_group(process, **shutdown_kwargs)
+    signal_list = ",".join(sent)
+    launch_log.write(
+        f"{SUPERVISOR_SHUTDOWN_END}{signal_list}\n".encode("utf-8")
+    )
+    launch_log.flush()
+    return sent
+
+
 def _validate_supervision_parameters(
     *,
     wall_timeout_s: float,
@@ -1010,17 +1190,22 @@ def execute_run(
                 poll_interval_s=poll_interval_s,
                 sigint_grace_s=sigint_grace_s,
                 term_grace_s=term_grace_s,
+                shutdown=partial(
+                    shutdown_process_group_logged,
+                    launch_log=launch_log,
+                ),
             )
     except KeyboardInterrupt:
-        shutdown_signals = (
-            shutdown_process_group(
-                process,
-                sigint_grace_s=sigint_grace_s,
-                term_grace_s=term_grace_s,
-            )
-            if process is not None
-            else ()
-        )
+        if process is not None and launch_log_path.is_file():
+            with launch_log_path.open("ab") as launch_log:
+                shutdown_signals = shutdown_process_group_logged(
+                    process,
+                    launch_log=launch_log,
+                    sigint_grace_s=sigint_grace_s,
+                    term_grace_s=term_grace_s,
+                )
+        else:
+            shutdown_signals = ()
         artifact_audit = validate_completed_artifacts(
             plan.output_dir,
             expected_experiment_budget=plan.experiment_budget,
@@ -1052,11 +1237,20 @@ def execute_run(
         )
     except OSError as error:
         if process is not None:
-            shutdown_process_group(
-                process,
-                sigint_grace_s=sigint_grace_s,
-                term_grace_s=term_grace_s,
-            )
+            if launch_log_path.is_file():
+                with launch_log_path.open("ab") as launch_log:
+                    shutdown_process_group_logged(
+                        process,
+                        launch_log=launch_log,
+                        sigint_grace_s=sigint_grace_s,
+                        term_grace_s=term_grace_s,
+                    )
+            else:
+                shutdown_process_group(
+                    process,
+                    sigint_grace_s=sigint_grace_s,
+                    term_grace_s=term_grace_s,
+                )
         artifact_audit = validate_completed_artifacts(
             plan.output_dir,
             expected_experiment_budget=plan.experiment_budget,

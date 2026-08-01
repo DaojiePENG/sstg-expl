@@ -126,7 +126,11 @@ The replicate seed is also copied to both `policy_seed` and
 LiDAR/IMU noise stream and the policy's stochastic choices are paired within a
 matched block.  Valid replicate seeds are `1..2147483647`; zero does not freeze
 Gazebo's random stream.  Direct development launches must set both arguments
-explicitly; the schedule runner does this automatically and records the values.
+explicitly; the schedule freezer and runner cross-check this shared-stack
+contract before reserving an output path, then record both values.
+This controls the declared stochastic inputs; asynchronous ROS scheduling means
+it is not a claim of bitwise-identical trajectories, so repeat runs remain part
+of the development gate.
 
 Inspect one row's exact launch plan without starting ROS or writing files:
 
@@ -151,8 +155,10 @@ only when both manifests, all policy/evaluator JSONL evidence, evaluator
 ingestion of `session_finished`, the final evaluator snapshot, and their
 SHA-256 hashes pass the runner audit.  The audit also rejects fatal runtime
 markers and any child-process crash in `launch.log`; an expected `-2` signal
-exit is accepted only during a coordinated SIGINT shutdown.  Other terminal statuses include
-`timeout`, `early_exit`, `manual_interrupt`, and
+exit is accepted only inside the runner's ordered shutdown markers.  The same
+rule covers recorded SIGTERM/SIGKILL escalation, while required long-running
+nodes exiting before that marker invalidate the run.  Other terminal statuses
+include `timeout`, `early_exit`, `manual_interrupt`, and
 `artifact_validation_failed`; `shutdown_failed` is used if the launch leader
 survives the full signal escalation.
 
