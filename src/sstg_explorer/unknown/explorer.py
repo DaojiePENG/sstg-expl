@@ -148,12 +148,26 @@ class UnknownMapExplorer:
             self._next_candidate_id += 1
         return self._candidate_ids[key]
 
+    @staticmethod
+    def _candidate_key(
+        target: Tuple[float, float], heading: float, kind: str
+    ) -> Tuple:
+        """Stable candidate identity across ROS map-origin/extent changes."""
+        return (
+            round(float(target[0]), 4),
+            round(float(target[1]), 4),
+            int(round(heading)) % 360,
+            kind,
+        )
+
     def _known_safe_planner(
         self,
         belief: OccupancyGrid,
         current: Tuple[float, float],
     ) -> Tuple[AStarPlanner, np.ndarray, np.ndarray, np.ndarray]:
         """Build a planner that traverses known free cells only."""
+        if not belief.is_valid_world(*current):
+            raise ValueError("current pose is outside the belief map")
         known_free = belief.get_free_space_mask()
         inflation_cells = int(np.ceil(
             (self.config.robot_radius + self.config.safety_margin) /
@@ -464,7 +478,7 @@ class UnknownMapExplorer:
                 row, col, nearest_unknown, belief
             )
             target = belief.grid_to_world(row, col)
-            key = (row, col, int(round(heading)) % 360, "frontier")
+            key = self._candidate_key(target, heading, "frontier")
             candidates.append({
                 "frontier_id": self._candidate_id(key), "key": key,
                 "target": target, "heading": heading, "kind": "frontier",
@@ -495,7 +509,7 @@ class UnknownMapExplorer:
                     )
                     if nearest_unknown is not None else current_heading
                 )
-                key = (row, col, int(round(heading)) % 360, "vantage")
+                key = self._candidate_key(target, heading, "vantage")
                 candidates.append({
                     "frontier_id": self._candidate_id(key), "key": key,
                     "target": target, "heading": heading,
@@ -543,7 +557,7 @@ class UnknownMapExplorer:
                     )
                     if nearest_unknown is not None else current_heading
                 )
-                key = (row, col, int(round(heading)) % 360, "coverage_gap")
+                key = self._candidate_key(target, heading, "coverage_gap")
                 candidates.append({
                     "frontier_id": self._candidate_id(key), "key": key,
                     "target": target, "heading": heading,
@@ -561,10 +575,7 @@ class UnknownMapExplorer:
             for heading in np.arange(0.0, 360.0, rotation_step):
                 if self._angle_delta(float(heading), current_heading) < 1.0:
                     continue
-                key = (
-                    current_row, current_col, int(round(heading)) % 360,
-                    "rotation",
-                )
+                key = self._candidate_key(current, heading, "rotation")
                 candidates.append({
                     "frontier_id": self._candidate_id(key), "key": key,
                     "target": current, "heading": float(heading),
@@ -586,10 +597,11 @@ class UnknownMapExplorer:
                         )
                         if nearest_unknown is not None else current_heading
                     )
-                    key = (row, col, int(round(heading)) % 360, "sampled")
+                    target = belief.grid_to_world(row, col)
+                    key = self._candidate_key(target, heading, "sampled")
                     candidates.append({
                         "frontier_id": self._candidate_id(key), "key": key,
-                        "target": belief.grid_to_world(row, col),
+                        "target": target,
                         "heading": heading, "kind": "sampled",
                         "path_cost": float(cost_map[row, col]),
                         "clearance": float(clearance[row, col]),

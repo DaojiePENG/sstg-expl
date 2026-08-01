@@ -4,7 +4,13 @@ from .config import ExplorerConfig, FrontierSelectionStrategy
 from .core.explorer import SSTGExplorer
 from .map.occupancy_grid import OccupancyGrid
 from .sensing import SensorConfig
-from .unknown import UnknownExplorerConfig, UnknownMapExplorer
+from .unknown import (
+    ExecutionRecord,
+    OnlineDecision,
+    OnlineExplorerSession,
+    UnknownExplorerConfig,
+    UnknownMapExplorer,
+)
 
 __all__ = [
     "SSTGExplorer",
@@ -12,6 +18,9 @@ __all__ = [
     "FrontierSelectionStrategy",
     "OccupancyGrid",
     "SensorConfig",
+    "ExecutionRecord",
+    "OnlineDecision",
+    "OnlineExplorerSession",
     "UnknownExplorerConfig",
     "UnknownMapExplorer",
 ]

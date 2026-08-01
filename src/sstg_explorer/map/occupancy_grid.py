@@ -72,8 +72,12 @@ class OccupancyGrid:
         Returns:
             Grid indices (i, j) where i is row (Y), j is column (X).
         """
-        j = int((x - self.origin[0]) / self.resolution)
-        i = int((y - self.origin[1]) / self.resolution)
+        # ``int`` truncates toward zero, so a point just below a negative map
+        # boundary could incorrectly wrap into cell zero.  ROS occupancy maps
+        # commonly have a negative and dynamically expanding origin; floor is
+        # the correct half-open grid-coordinate transform.
+        j = int(np.floor((x - self.origin[0]) / self.resolution))
+        i = int(np.floor((y - self.origin[1]) / self.resolution))
         return (i, j)
 
     def grid_to_world(self, i: int, j: int) -> Tuple[float, float]:
