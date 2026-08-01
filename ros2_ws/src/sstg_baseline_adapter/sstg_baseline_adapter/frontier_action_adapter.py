@@ -92,6 +92,7 @@ class ForwardedGoal:
     downstream_result: Any = None
     transport_error: str = ""
     cancel_sent: bool = False
+    cancel_origin: Optional[str] = None
     timeout_requested: bool = False
     superseded_by_decision_id: Optional[int] = None
     distance_accounted: bool = False
@@ -102,8 +103,17 @@ class ForwardedGoal:
 class FrontierActionAdapter(Node):
     """Forward Nav2 actions while enforcing the common experiment contract."""
 
-    def __init__(self) -> None:
-        super().__init__("frontier_baseline_adapter")
+    def __init__(
+        self,
+        *,
+        context=None,
+        parameter_overrides=None,
+    ) -> None:
+        super().__init__(
+            "frontier_baseline_adapter",
+            context=context,
+            parameter_overrides=parameter_overrides,
+        )
         self._declare_parameters()
         self._validate_parameters()
 
@@ -286,7 +296,11 @@ class FrontierActionAdapter(Node):
             "output_dir": "system_sim_outputs/runs/development/manual",
         }
         for name, value in defaults.items():
-            self.declare_parameter(name, value)
+            # rclpy's TimeSource declares use_sim_time while Node is being
+            # constructed.  Keep the explicit experiment default above, but
+            # do not redeclare parameters that the base class already owns.
+            if not self.has_parameter(name):
+                self.declare_parameter(name, value)
 
     def _validate_parameters(self) -> None:
         if self.get_parameter("use_sim_time").value is not True:
@@ -611,7 +625,13 @@ class FrontierActionAdapter(Node):
                 context.map_path.append(mapped)
 
     def _cancel_callback(self, goal_handle) -> CancelResponse:
-        del goal_handle
+        key = bytes(goal_handle.goal_id.uuid)
+        with self._state_lock:
+            context = self._goals.get(key)
+        if context is not None:
+            # GoalHandle.is_cancel_requested becomes false after canceled() is
+            # called, so preserve the first causal event for the final trace.
+            self._cancel_downstream(context, "upstream_cancel_request")
         return CancelResponse.ACCEPT
 
     def _execute_goal(self, goal_handle):
@@ -656,8 +676,12 @@ class FrontierActionAdapter(Node):
                 })
             with self._state_lock:
                 terminate = self._termination_reason is not None
-            if goal_handle.is_cancel_requested or context.timeout_requested or terminate:
-                self._cancel_downstream(context)
+            if goal_handle.is_cancel_requested:
+                self._cancel_downstream(context, "upstream_cancel_request")
+            elif context.timeout_requested:
+                self._cancel_downstream(context, "adapter_goal_timeout")
+            elif terminate:
+                self._cancel_downstream(context, "adapter_session_termination")
 
         result = context.downstream_result or NavigateToPose.Result()
         status = context.downstream_status
@@ -701,12 +725,12 @@ class FrontierActionAdapter(Node):
         context.downstream_goal = downstream_goal
         with self._state_lock:
             terminate = self._termination_reason is not None
-        if (
-            context.server_goal.is_cancel_requested
-            or context.timeout_requested
-            or terminate
-        ):
-            self._cancel_downstream(context)
+        if context.server_goal.is_cancel_requested:
+            self._cancel_downstream(context, "upstream_cancel_request")
+        elif context.timeout_requested:
+            self._cancel_downstream(context, "adapter_goal_timeout")
+        elif terminate:
+            self._cancel_downstream(context, "adapter_session_termination")
         result_future = downstream_goal.get_result_async()
         result_future.add_done_callback(
             lambda result, goal_key=key: self._downstream_result(
@@ -738,15 +762,39 @@ class FrontierActionAdapter(Node):
         except Exception as error:
             self.get_logger().warn(f"Could not forward Nav2 feedback: {error}")
 
-    def _cancel_downstream(self, context: ForwardedGoal) -> None:
-        if context.cancel_sent or context.downstream_goal is None:
-            return
-        context.cancel_sent = True
+    def _cancel_downstream(
+        self, context: ForwardedGoal, origin: str
+    ) -> None:
+        with self._state_lock:
+            if context.cancel_origin is None:
+                context.cancel_origin = origin
+            if context.cancel_sent or context.downstream_goal is None:
+                return
+            context.cancel_sent = True
+            downstream_goal = context.downstream_goal
         try:
-            context.downstream_goal.cancel_goal_async()
+            future = downstream_goal.cancel_goal_async()
+            future.add_done_callback(
+                lambda result, goal_key=context.key: (
+                    self._downstream_cancel_response(goal_key, result)
+                )
+            )
         except Exception as error:
             context.transport_error = f"cancel:{error}"
             context.result_event.set()
+
+    def _downstream_cancel_response(self, key: bytes, future) -> None:
+        """Consume the cancel response so shutdown cannot orphan its error."""
+        try:
+            future.result()
+        except Exception as error:
+            with self._state_lock:
+                context = self._goals.get(key)
+                completed = context is None or context.completed
+            if not completed:
+                self.get_logger().warn(
+                    f"Downstream cancellation response failed: {error}"
+                )
 
     def _record_execution(self, context: ForwardedGoal, succeeded: bool) -> None:
         execution_pose = self._lookup_pose(self.execution_frame)
@@ -805,16 +853,9 @@ class FrontierActionAdapter(Node):
             None if context.downstream_goal is None else
             _uuid_hex(context.downstream_goal.goal_id)
         )
-        if context.timeout_requested:
-            cancel_origin = "adapter_goal_timeout"
-        elif termination is not None:
-            cancel_origin = "adapter_session_termination"
-        elif context.server_goal.is_cancel_requested:
-            cancel_origin = "upstream_cancel_request"
-        elif context.superseded_by_decision_id is not None:
+        cancel_origin = context.cancel_origin
+        if cancel_origin is None and context.superseded_by_decision_id is not None:
             cancel_origin = "nav2_native_preemption"
-        else:
-            cancel_origin = None
         self._append_trace("execution", {
             "decision_id": context.decision_id,
             "succeeded": bool(succeeded),
@@ -886,7 +927,7 @@ class FrontierActionAdapter(Node):
                 self._append_trace("budget_cancel_requested", {"reason": reason})
             self._publish_status("STOPPING", reason)
         for context in contexts:
-            self._cancel_downstream(context)
+            self._cancel_downstream(context, "adapter_session_termination")
         self._request_upstream_stop()
         self._finish_session_if_quiescent()
 
