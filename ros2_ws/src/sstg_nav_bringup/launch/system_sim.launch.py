@@ -7,7 +7,11 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import (
+    EqualsSubstitution,
+    LaunchConfiguration,
+    PathJoinSubstitution,
+)
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 import os
@@ -26,6 +30,12 @@ CORE_BAG_TOPICS = (
     "/map",
     "/cmd_vel",
     "/plan",
+    "/navigate_to_pose/_action/feedback",
+    "/navigate_to_pose/_action/status",
+    "/baseline/frontier_mrtsp_dp/navigate_to_pose/_action/feedback",
+    "/baseline/frontier_mrtsp_dp/navigate_to_pose/_action/status",
+    "/baseline/frontier_mrtsp_dp/exploration_complete",
+    "/explore/frontiers",
     "/policy/decision_trace",
     "/policy/status",
     "/policy/candidates",
@@ -41,6 +51,9 @@ def generate_launch_description():
     gazebo_share = get_package_share_directory("sstg_gazebo")
     nav2_share = get_package_share_directory("nav2_bringup")
     policy_share = get_package_share_directory("sstg_policy_ros")
+    baseline_adapter_share = get_package_share_directory(
+        "sstg_baseline_adapter"
+    )
     evaluator_share = get_package_share_directory("sstg_system_eval")
     slam_share = get_package_share_directory("slam_toolbox")
     bringup_share = get_package_share_directory("sstg_nav_bringup")
@@ -58,6 +71,7 @@ def generate_launch_description():
     nav2_params = LaunchConfiguration("nav2_params")
     slam_params = LaunchConfiguration("slam_params")
     policy_params = LaunchConfiguration("policy_params")
+    runtime_adapter = LaunchConfiguration("runtime_adapter")
     evaluator_params = LaunchConfiguration("evaluator_params")
     strategy = LaunchConfiguration("strategy")
     coverage_objective = LaunchConfiguration("coverage_objective")
@@ -152,6 +166,29 @@ def generate_launch_description():
                 "use_sim_time": True,
             },
         ],
+        condition=IfCondition(
+            EqualsSubstitution(runtime_adapter, "sstg_policy")
+        ),
+    )
+    frontier_baseline = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                baseline_adapter_share,
+                "launch",
+                "frontier_mrtsp_dp.launch.py",
+            )
+        ),
+        launch_arguments={
+            "output_dir": output_dir,
+            "policy_seed": policy_seed,
+            "max_duration_s": max_duration_s,
+            "max_distance_m": max_distance_m,
+            "max_decisions": max_decisions,
+            "goal_timeout_s": goal_timeout_s,
+        }.items(),
+        condition=IfCondition(EqualsSubstitution(
+            runtime_adapter, "frontier_mrtsp_dp_external"
+        )),
     )
     evaluator = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -220,6 +257,12 @@ def generate_launch_description():
         DeclareLaunchArgument("nav2_params", default_value=default_nav2),
         DeclareLaunchArgument("slam_params", default_value=default_slam),
         DeclareLaunchArgument("policy_params", default_value=default_policy),
+        DeclareLaunchArgument(
+            "runtime_adapter",
+            default_value="sstg_policy",
+            choices=["sstg_policy", "frontier_mrtsp_dp_external"],
+            description="frozen method-specific policy runtime adapter",
+        ),
         DeclareLaunchArgument("evaluator_params", default_value=default_evaluator),
         DeclareLaunchArgument("strategy", default_value="sstg"),
         DeclareLaunchArgument("coverage_objective", default_value="joint"),
@@ -262,5 +305,6 @@ def generate_launch_description():
         navigation,
         evaluator,
         policy,
+        frontier_baseline,
         rviz_node,
     ])

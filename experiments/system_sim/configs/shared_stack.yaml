@@ -133,6 +133,12 @@ recording:
     - /map
     - /cmd_vel
     - /plan
+    - /navigate_to_pose/_action/feedback
+    - /navigate_to_pose/_action/status
+    - /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/feedback
+    - /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/status
+    - /baseline/frontier_mrtsp_dp/exploration_complete
+    - /explore/frontiers
     - /policy/decision_trace
     - /policy/status
     - /policy/candidates
@@ -152,6 +158,12 @@ recording:
     /map: nav_msgs/msg/OccupancyGrid
     /cmd_vel: geometry_msgs/msg/Twist
     /plan: nav_msgs/msg/Path
+    /navigate_to_pose/_action/feedback: nav2_msgs/action/NavigateToPose_FeedbackMessage
+    /navigate_to_pose/_action/status: action_msgs/msg/GoalStatusArray
+    /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/feedback: nav2_msgs/action/NavigateToPose_FeedbackMessage
+    /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/status: action_msgs/msg/GoalStatusArray
+    /baseline/frontier_mrtsp_dp/exploration_complete: std_msgs/msg/Empty
+    /explore/frontiers: visualization_msgs/msg/MarkerArray
     /policy/decision_trace: std_msgs/msg/String
     /policy/status: std_msgs/msg/String
     /policy/candidates: visualization_msgs/msg/MarkerArray

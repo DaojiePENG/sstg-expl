@@ -1,6 +1,7 @@
 schema: sstg_system_sim_method/v1
 method: sstg
 strategy: sstg
+runtime_adapter: sstg_policy
 comparison_role: proposed_method
 implementation_origin: repository_native_sstg
 independent_public_baseline: false

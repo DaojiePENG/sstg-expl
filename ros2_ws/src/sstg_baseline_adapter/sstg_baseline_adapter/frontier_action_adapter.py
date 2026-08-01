@@ -359,7 +359,8 @@ class FrontierActionAdapter(Node):
             "navigate_action": str(
                 self.get_parameter("nav2_action_name").value
             ),
-            "runtime_adapter": "navigate_to_pose_transparent_proxy_v1",
+            "runtime_adapter": "frontier_mrtsp_dp_external",
+            "adapter_contract": "navigate_to_pose_transparent_proxy_v1",
             "upstream": {
                 "component_id": UPSTREAM_COMPONENT_ID,
                 "repository": UPSTREAM_REPOSITORY,

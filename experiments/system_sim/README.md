@@ -111,6 +111,7 @@ export SKIP_DEFAULT_XML=1
   -DProtobuf_PROTOC_EXECUTABLE=/usr/bin/protoc
 /usr/bin/colcon build --symlink-install --cmake-clean-cache \
   --packages-select \
+  frontier_exploration_ros2 sstg_baseline_adapter \
   sstg_explorer_core sstg_gazebo sstg_nav_bringup \
   sstg_policy_ros sstg_system_eval \
   --cmake-args \
@@ -124,6 +125,14 @@ ros2 launch sstg_nav_bringup system_sim.launch.py \
   max_duration_s:=300 max_distance_m:=60 \
   max_decisions:=30 goal_timeout_s:=90
 ```
+
+Each method config declares a required `runtime_adapter`.  Internal SSTG and
+ablation methods select `sstg_policy`; the pinned public candidate selects
+`frontier_mrtsp_dp_external`, which launches the unmodified upstream explorer
+behind the common Nav2 action/trace/budget proxy.  The external package has no
+policy RNG, so its paired `policy_seed` is recorded as not applicable while the
+matched Gazebo seed still controls the simulator.  It remains development-only
+until proxy-transparency and Gazebo end-to-end gates pass.
 
 Keep the system `protoc` ahead of Conda while compiling this overlay.  A Conda
 protobuf compiler paired with ROS's system protobuf libraries is an unsupported

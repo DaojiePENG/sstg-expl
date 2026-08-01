@@ -718,6 +718,44 @@ def test_system_launch_isolates_evaluator_parameters_and_simulation_clock():
     assert '"params_file": evaluator_params' not in launch
 
 
+def test_system_launch_selects_one_frozen_runtime_adapter():
+    launch = SYSTEM_LAUNCH_PATH.read_text(encoding="utf-8")
+    package = ElementTree.parse(
+        ROOT / "ros2_ws/src/sstg_nav_bringup/package.xml"
+    ).getroot()
+    dependencies = {node.text for node in package.findall("exec_depend")}
+
+    assert 'runtime_adapter = LaunchConfiguration("runtime_adapter")' in launch
+    assert 'EqualsSubstitution(runtime_adapter, "sstg_policy")' in launch
+    assert 'runtime_adapter, "frontier_mrtsp_dp_external"' in launch
+    assert '"frontier_mrtsp_dp.launch.py"' in launch
+    assert "sstg_baseline_adapter" in dependencies
+
+
+def test_method_configs_distinguish_internal_and_public_runtime_origins():
+    method_root = ROOT / "experiments/system_sim/configs/methods"
+    internal = {
+        name: yaml.safe_load((method_root / f"{name}.yaml").read_text())
+        for name in ("sstg", "frontier", "nbv", "rrt_adapted")
+    }
+    external = yaml.safe_load(
+        (method_root / "frontier_mrtsp_dp_external.yaml").read_text()
+    )
+
+    assert all(
+        config["runtime_adapter"] == "sstg_policy"
+        for config in internal.values()
+    )
+    assert all(
+        config["independent_public_baseline"] is False
+        for config in internal.values()
+    )
+    assert external["runtime_adapter"] == "frontier_mrtsp_dp_external"
+    assert external["independent_public_baseline"] is True
+    assert external["formal_method_eligible"] is False
+    assert external["policy_seed_applicable"] is False
+
+
 def test_core_rosbag_profile_matches_shared_stack_and_is_enabled():
     shared = yaml.safe_load((
         ROOT / "experiments/system_sim/configs/shared_stack.yaml"

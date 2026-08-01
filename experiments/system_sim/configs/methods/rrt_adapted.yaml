@@ -1,6 +1,7 @@
 schema: sstg_system_sim_method/v1
 method: rrt_adapted
 strategy: rrt
+runtime_adapter: sstg_policy
 display_name: SSTG internal RRT-style ablation
 comparison_role: internal_algorithmic_ablation
 implementation_origin: repository_native_strategy_switch

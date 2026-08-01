@@ -40,6 +40,15 @@ EXPERIMENT_BUDGET_FIELDS = (
 GAZEBO_SEED_MIN = 1
 GAZEBO_SEED_MAX = 0x7FFFFFFF
 SEED_LAUNCH_ARGUMENTS = ("policy_seed", "simulation_seed")
+RUNTIME_ADAPTERS = frozenset({
+    "sstg_policy",
+    "frontier_mrtsp_dp_external",
+})
+RUNTIME_ADAPTER_METHOD_IDS = {
+    "frontier_mrtsp_dp_external": frozenset({
+        "frontier_mrtsp_dp_external"
+    }),
+}
 ROS_GZ_BRIDGE_CONTRACT = {
     "package": "ros_gz_bridge",
     "required_version": "1.0.23",
@@ -139,6 +148,12 @@ CORE_BAG_TOPICS = (
     "/map",
     "/cmd_vel",
     "/plan",
+    "/navigate_to_pose/_action/feedback",
+    "/navigate_to_pose/_action/status",
+    "/baseline/frontier_mrtsp_dp/navigate_to_pose/_action/feedback",
+    "/baseline/frontier_mrtsp_dp/navigate_to_pose/_action/status",
+    "/baseline/frontier_mrtsp_dp/exploration_complete",
+    "/explore/frontiers",
     "/policy/decision_trace",
     "/policy/status",
     "/policy/candidates",
@@ -159,6 +174,18 @@ CORE_BAG_TOPIC_TYPES = {
     "/map": "nav_msgs/msg/OccupancyGrid",
     "/cmd_vel": "geometry_msgs/msg/Twist",
     "/plan": "nav_msgs/msg/Path",
+    "/navigate_to_pose/_action/feedback": (
+        "nav2_msgs/action/NavigateToPose_FeedbackMessage"
+    ),
+    "/navigate_to_pose/_action/status": "action_msgs/msg/GoalStatusArray",
+    "/baseline/frontier_mrtsp_dp/navigate_to_pose/_action/feedback": (
+        "nav2_msgs/action/NavigateToPose_FeedbackMessage"
+    ),
+    "/baseline/frontier_mrtsp_dp/navigate_to_pose/_action/status": (
+        "action_msgs/msg/GoalStatusArray"
+    ),
+    "/baseline/frontier_mrtsp_dp/exploration_complete": "std_msgs/msg/Empty",
+    "/explore/frontiers": "visualization_msgs/msg/MarkerArray",
     "/policy/decision_trace": "std_msgs/msg/String",
     "/policy/status": "std_msgs/msg/String",
     "/policy/candidates": "visualization_msgs/msg/MarkerArray",
@@ -201,6 +228,7 @@ CSV_FIELDS = (
     "truth_to_map_y_m",
     "truth_to_map_yaw_rad",
     "method",
+    "runtime_adapter",
     "strategy",
     "coverage_objective",
     "condition",
@@ -921,6 +949,9 @@ def freeze_schedule(
         method_records.append(
             {
                 "method": method_id,
+                "runtime_adapter": _require_id(
+                    config.get("runtime_adapter"), "runtime_adapter"
+                ),
                 "path": _display_path(root, path),
                 "sha256": sha256_file(path),
             }
@@ -933,7 +964,20 @@ def freeze_schedule(
     method_launch: dict[str, dict[str, str]] = {}
     for config, record in paired:
         method_id = record["method"]
+        runtime_adapter = record["runtime_adapter"]
+        if runtime_adapter not in RUNTIME_ADAPTERS:
+            raise ScheduleError(
+                f"unsupported runtime_adapter for {method_id}: "
+                f"{runtime_adapter!r}"
+            )
+        allowed_method_ids = RUNTIME_ADAPTER_METHOD_IDS.get(runtime_adapter)
+        if allowed_method_ids is not None and method_id not in allowed_method_ids:
+            raise ScheduleError(
+                f"runtime_adapter {runtime_adapter!r} requires method ID in "
+                f"{sorted(allowed_method_ids)!r}; found {method_id!r}"
+            )
         method_launch[method_id] = {
+            "runtime_adapter": runtime_adapter,
             "strategy": _require_id(config.get("strategy"), "strategy"),
             "coverage_objective": _require_id(
                 config.get("coverage_objective"), "coverage_objective"
@@ -1083,6 +1127,9 @@ def freeze_schedule(
                                 start["truth_to_map_yaw_rad"]
                             ),
                             "method": method_id,
+                            "runtime_adapter": method_launch[method_id][
+                                "runtime_adapter"
+                            ],
                             "strategy": method_launch[method_id]["strategy"],
                             "coverage_objective": method_launch[method_id][
                                 "coverage_objective"
@@ -1240,6 +1287,7 @@ def freeze_schedule(
                 "start_y": "start_y_m",
                 "start_yaw": "start_yaw_rad",
                 "output_dir": "run_output_dir",
+                "runtime_adapter": "runtime_adapter",
                 "strategy": "strategy",
                 "coverage_objective": "coverage_objective",
                 "policy_seed": "replicate_seed",

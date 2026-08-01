@@ -121,8 +121,10 @@ formal-baseline use.  A formal schedule fails closed when any method lacks
 The first public candidate is the pinned Apache-2.0
 `frontier_exploration_ros2` v1.6.1 commit, recorded under the unambiguous ID
 `frontier_mrtsp_dp_external_v1_6_1`.  Source and upstream Jazzy CI have been
-audited, but it remains ineligible until a common Nav2 action/trace/budget
-adapter and local Gazebo--SLAM--Nav2 end-to-end test pass.  Its frontier-
+audited, and an unmodified-source Nav2 action/trace/budget proxy is now wired
+through the frozen `runtime_adapter` schedule field.  It remains ineligible
+until overlapping-goal transparency and local Gazebo--SLAM--Nav2 end-to-end
+tests pass.  Its frontier-
 exhaustion event is only a termination reason; the evaluator, not the method,
 determines coverage and joint success.
 

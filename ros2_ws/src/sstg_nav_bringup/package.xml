@@ -13,6 +13,7 @@
   <exec_depend>rviz2</exec_depend>
   <exec_depend>slam_toolbox</exec_depend>
   <exec_depend>sstg_gazebo</exec_depend>
+  <exec_depend>sstg_baseline_adapter</exec_depend>
   <exec_depend>sstg_policy_ros</exec_depend>
   <exec_depend>sstg_system_eval</exec_depend>
 

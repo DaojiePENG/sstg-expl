@@ -317,6 +317,7 @@ class SSTGPolicyNode(Node):
             "base_frame": self.base_frame,
             "execution_frame": self.execution_frame,
             "navigate_action": self.navigate_action,
+            "runtime_adapter": "sstg_policy",
             "parameters": {
                 name: self.get_parameter(name).value
                 for name in self._parameters

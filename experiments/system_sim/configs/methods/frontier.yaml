@@ -1,6 +1,7 @@
 schema: sstg_system_sim_method/v1
 method: frontier
 strategy: frontier
+runtime_adapter: sstg_policy
 display_name: SSTG internal classic-frontier ablation
 comparison_role: internal_algorithmic_ablation
 implementation_origin: repository_native_strategy_switch

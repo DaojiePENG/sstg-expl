@@ -5,9 +5,18 @@ policy:
     - /map
     - /tf
     - /tf_static
+    - /global_costmap/costmap
+    - /local_costmap/costmap
     - /navigate_to_pose/_action/*
+    - /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/*
+    - /baseline/frontier_mrtsp_dp/exploration_complete
   publications:
     - /navigate_to_pose/_action/*
+    - /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/*
+    - /explore/frontiers
+    - /explore/selected_frontier
+    - /explore/optimized_map
+    - /baseline/frontier_mrtsp_dp/exploration_complete
     - /policy/status
     - /policy/candidates
     - /policy/decision_trace
@@ -19,6 +28,22 @@ policy:
     - evaluation/**
     - truth_map.*
     - target_truth.yaml
+  runtime_profiles:
+    sstg_policy:
+      implementation_inputs: [/map, /tf, /tf_static]
+      nav2_action: /navigate_to_pose
+    frontier_mrtsp_dp_external:
+      implementation_inputs:
+        - /map
+        - /global_costmap/costmap
+        - /local_costmap/costmap
+        - /tf
+        - /tf_static
+      upstream_nav2_action: /baseline/frontier_mrtsp_dp/navigate_to_pose
+      adapter_nav2_action: /navigate_to_pose
+      lifecycle_service: /control_exploration
+      completion_topic: /baseline/frontier_mrtsp_dp/exploration_complete
+      note: Costmaps are implementation-native inputs and remain frozen across methods.
 evaluator:
   may_read:
     - /evaluation/*

@@ -112,10 +112,19 @@ components:
     license_sha256: 4458503dd48e88c4e0b945fb252a08b93c40ec757309b8ffa7c594dfa1e35104
     upstream_params_sha256: 9dc2b2a77ddc16f90e598a664a667e90f976723b2c20f0d857c99b32e3cc1f7a
     algorithm_identity: wfd_decision_map_mrtsp_bounded_horizon_dp_with_preemption
-    verification_status: local_build_and_unit_tests_verified_adapter_and_e2e_pending
+    policy_seed_applicable: false
+    runtime_adapter:
+      package: sstg_baseline_adapter
+      contract: navigate_to_pose_transparent_proxy_v1
+      upstream_source_modified: false
+      lifecycle: control_exploration_start_stop_and_completion_event
+      budget_clock: ros_sim_time
+      path_frame: odom
+      decision_compute_time: unavailable_from_public_upstream_api
+    verification_status: local_build_upstream_unit_and_adapter_contract_tests_verified_e2e_pending
     formal_baseline_eligible: false
     blockers:
-      - common_action_trace_and_budget_adapter_missing
+      - action_proxy_overlap_cancel_and_result_transparency_runtime_test_pending
       - gazebo_nav2_slam_end_to_end_pending
       - frozen_sensor_matched_parameters_pending
     naming_constraint: Do not label this implementation classic nearest-frontier.

@@ -47,14 +47,21 @@ baseline claims.  The first audited external candidate is
 is WFD plus decision-map optimization, costmap filtering, MRTSP, bounded-horizon
 DP, and preemption, not classic nearest-frontier.
 
-That external package is admitted only to development after a common action
-proxy / trace adapter exists.  The adapter must provide the same lifecycle,
-budget, Nav2 result, endpoint-node, and terminal trace contract as SSTG while
-remaining unable to read `/evaluation/*`.  Its upstream
+The external package now runs behind the local `sstg_baseline_adapter` action
+proxy without modifying its source.  The upstream explorer sends goals to a
+separate `NavigateToPose` action server; the adapter forwards overlapping goals,
+feedback, cancellation, and results to the shared Nav2 server while enforcing
+the same simulation-time duration, odometry-distance, decision-count, and
+per-goal budgets.  Schedule rows freeze `runtime_adapter`, and launch selects
+exactly one native or external runtime.  The adapter remains unable to read
+`/evaluation/*`.  Its upstream
 `exploration_complete` event means frontier exhaustion, not coverage success;
 the independent evaluator still decides coverage, target recall, collision,
-and joint success.  Until local build and Gazebo--Nav2--SLAM end-to-end gates
-pass, it remains ineligible for a confirmatory table.
+and joint success.  The public API does not expose upstream internal decision
+compute time, so this field is recorded as unavailable rather than a fabricated
+zero.  Until action-proxy transparency and Gazebo--Nav2--SLAM end-to-end gates
+pass, the method remains a development baseline candidate and is ineligible for
+a confirmatory table.
 
 Experiment-specific room topology and collision truth may be generated locally
 because they are controlled independent variables.  Decorative meshes and

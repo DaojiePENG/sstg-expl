@@ -38,6 +38,7 @@ try:
         FREEZE_SCHEMA,
         GAZEBO_SEED_MAX,
         GAZEBO_SEED_MIN,
+        RUNTIME_ADAPTERS,
         SCHEDULE_SCHEMA,
         SEED_LAUNCH_ARGUMENTS,
         ScheduleError,
@@ -59,6 +60,7 @@ except ModuleNotFoundError as error:
         FREEZE_SCHEMA,
         GAZEBO_SEED_MAX,
         GAZEBO_SEED_MIN,
+        RUNTIME_ADAPTERS,
         SCHEDULE_SCHEMA,
         SEED_LAUNCH_ARGUMENTS,
         ScheduleError,
@@ -138,6 +140,9 @@ PROCESS_DIED_PATTERN = re.compile(
 PROCESS_FINISHED_PATTERN = re.compile(
     r"\[INFO\] \[(?P<process>[^\]]+)\]: process has finished cleanly"
 )
+PROCESS_STARTED_PATTERN = re.compile(
+    r"\[INFO\] \[(?P<process>[^\]]+)\]: process started with pid"
+)
 FATAL_LAUNCH_MARKERS = (
     "Traceback (most recent call last):",
     "corrupted double-linked list",
@@ -146,7 +151,7 @@ FATAL_LAUNCH_MARKERS = (
 )
 SUPERVISOR_SHUTDOWN_BEGIN = "[sstg-runner] coordinated shutdown begin"
 SUPERVISOR_SHUTDOWN_END = "[sstg-runner] coordinated shutdown complete signals="
-REQUIRED_RUNTIME_PROCESS_PREFIXES = (
+COMMON_RUNTIME_PROCESS_PREFIXES = (
     "gazebo-",
     "parameter_bridge-",
     "robot_state_publisher-",
@@ -164,8 +169,22 @@ REQUIRED_RUNTIME_PROCESS_PREFIXES = (
     "opennav_docking-",
     "lifecycle_manager-",
     "system_eval_node-",
-    "policy_node-",
     "sstg_core_bag_recorder-",
+)
+RUNTIME_ADAPTER_PROCESS_PREFIXES = {
+    "sstg_policy": ("policy_node-",),
+    "frontier_mrtsp_dp_external": (
+        "frontier_explorer-",
+        "frontier_action_adapter-",
+    ),
+}
+REQUIRED_RUNTIME_PROCESS_PREFIXES = (
+    COMMON_RUNTIME_PROCESS_PREFIXES
+    + tuple(
+        prefix
+        for prefixes in RUNTIME_ADAPTER_PROCESS_PREFIXES.values()
+        for prefix in prefixes
+    )
 )
 
 
@@ -197,16 +216,49 @@ def _shutdown_log_window(
     return begin[0], end[0], allowed_codes, []
 
 
-def _launch_log_runtime_errors(path: Path) -> list[str]:
+def _launch_log_runtime_errors(
+    path: Path, expected_runtime_adapter: str | None = None
+) -> list[str]:
     """Detect early exits and crashes outside a runner-owned shutdown window."""
     try:
         content = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
         return [f"cannot inspect runtime log: {error}"]
+    if (
+        expected_runtime_adapter is not None
+        and expected_runtime_adapter not in RUNTIME_ADAPTER_PROCESS_PREFIXES
+    ):
+        return [
+            "unsupported expected runtime_adapter: "
+            f"{expected_runtime_adapter!r}"
+        ]
     lines = content.splitlines()
+    required_prefixes = REQUIRED_RUNTIME_PROCESS_PREFIXES
+    if expected_runtime_adapter is not None:
+        required_prefixes = (
+            COMMON_RUNTIME_PROCESS_PREFIXES
+            + RUNTIME_ADAPTER_PROCESS_PREFIXES.get(
+                expected_runtime_adapter, ()
+            )
+        )
     shutdown_begin, shutdown_end, allowed_codes, detected = _shutdown_log_window(
         lines
     )
+    if expected_runtime_adapter is not None:
+        started_processes = {
+            match.group("process")
+            for line in lines
+            if (match := PROCESS_STARTED_PATTERN.search(line)) is not None
+        }
+        for prefix in RUNTIME_ADAPTER_PROCESS_PREFIXES.get(
+            expected_runtime_adapter, ()
+        ):
+            if not any(
+                process.startswith(prefix) for process in started_processes
+            ):
+                detected.append(
+                    "required adapter process did not start: " + prefix
+                )
     for marker in FATAL_LAUNCH_MARKERS:
         if marker in content:
             detected.append(f"fatal runtime marker: {marker}")
@@ -215,7 +267,7 @@ def _launch_log_runtime_errors(path: Path) -> list[str]:
         if (
             finished is not None
             and finished.group("process").startswith(
-                REQUIRED_RUNTIME_PROCESS_PREFIXES
+                required_prefixes
             )
             and (shutdown_begin is None or index < shutdown_begin)
         ):
@@ -569,9 +621,18 @@ def validate_completed_artifacts(
     *,
     expected_experiment_budget: Mapping[str, float | int] | None = None,
     expected_recording_contract: Mapping[str, Any] | None = None,
+    expected_runtime_adapter: str | None = None,
 ) -> dict[str, Any]:
     """Audit the minimum policy/evaluator evidence required for completion."""
     errors: list[str] = []
+    if (
+        expected_runtime_adapter is not None
+        and expected_runtime_adapter not in RUNTIME_ADAPTERS
+    ):
+        errors.append(
+            "unsupported expected runtime_adapter: "
+            f"{expected_runtime_adapter!r}"
+        )
     files: dict[str, dict[str, Any]] = {}
     for name in REQUIRED_COMPLETION_ARTIFACTS:
         path = output_dir / name
@@ -612,6 +673,14 @@ def validate_completed_artifacts(
     policy_manifest = manifests.get("policy_manifest.json")
     if policy_manifest is not None and policy_manifest.get("truth_access") is not False:
         errors.append("policy_manifest.json: truth_access must be false")
+    if (
+        policy_manifest is not None
+        and expected_runtime_adapter is not None
+        and policy_manifest.get("runtime_adapter") != expected_runtime_adapter
+    ):
+        errors.append(
+            "policy_manifest.json: runtime_adapter disagrees with the frozen method"
+        )
     if policy_manifest is not None and expected_experiment_budget is not None:
         parameters = policy_manifest.get("parameters")
         observed_values = (
@@ -666,7 +735,9 @@ def validate_completed_artifacts(
     launch_runtime_errors: list[str] = []
     launch_log_path = output_dir / "launch.log"
     if launch_log_path.is_file():
-        launch_runtime_errors = _launch_log_runtime_errors(launch_log_path)
+        launch_runtime_errors = _launch_log_runtime_errors(
+            launch_log_path, expected_runtime_adapter
+        )
         errors.extend(
             f"launch.log: {runtime_error}"
             for runtime_error in launch_runtime_errors
@@ -904,6 +975,15 @@ def _verify_frozen_inputs(
     if len(method_records) != 1:
         raise RunnerError("schedule method does not match exactly one frozen config")
     _verify_file_record(root, method_records[0], "method config")
+    runtime_adapter = str(row.get("runtime_adapter", ""))
+    if runtime_adapter not in RUNTIME_ADAPTERS:
+        raise RunnerError(
+            f"schedule row has unsupported runtime_adapter: {runtime_adapter!r}"
+        )
+    if str(method_records[0].get("runtime_adapter", "")) != runtime_adapter:
+        raise RunnerError(
+            "schedule runtime_adapter disagrees with frozen method config"
+        )
 
     bundle_path = _resolve_inside(root, row.get("world_bundle", ""), "world bundle")
     if not bundle_path.is_dir():
@@ -914,6 +994,65 @@ def _verify_frozen_inputs(
         raise RunnerError(f"cannot verify frozen world bundle: {error}") from error
     if current_bundle_sha != row.get("world_bundle_sha256"):
         raise RunnerError("frozen world bundle changed after schedule freeze")
+
+
+def _method_runtime_contract(
+    *,
+    root: Path,
+    manifest: Mapping[str, Any],
+    row: Mapping[str, str],
+    fixed_args: Mapping[str, str],
+    column_args: Mapping[str, str],
+) -> str:
+    """Cross-check method YAML, freeze record, CSV, and launch selection."""
+    inputs = manifest.get("inputs")
+    methods = inputs.get("methods") if isinstance(inputs, Mapping) else None
+    if not isinstance(methods, list):
+        raise RunnerError("freeze manifest has no method records")
+    records = [
+        item for item in methods
+        if isinstance(item, Mapping)
+        and str(item.get("method")) == row.get("method")
+    ]
+    if len(records) != 1:
+        raise RunnerError("schedule method does not match one runtime record")
+    record = records[0]
+    path = _resolve_inside(
+        root, str(record.get("path", "")), "method config"
+    )
+    config = _load_yaml_mapping(path, "method config")
+    if config.get("schema") != "sstg_system_sim_method/v1":
+        raise RunnerError("method config schema is not sstg_system_sim_method/v1")
+    expected_fields = {
+        "method": "method",
+        "runtime_adapter": "runtime_adapter",
+        "strategy": "strategy",
+        "coverage_objective": "coverage_objective",
+    }
+    for config_field, row_field in expected_fields.items():
+        if str(config.get(config_field, "")) != str(row.get(row_field, "")):
+            raise RunnerError(
+                f"method config {config_field} disagrees with schedule row"
+            )
+    runtime_adapter = str(config.get("runtime_adapter", ""))
+    if runtime_adapter not in RUNTIME_ADAPTERS:
+        raise RunnerError(
+            f"method config has unsupported runtime_adapter: {runtime_adapter!r}"
+        )
+    if str(record.get("runtime_adapter", "")) != runtime_adapter:
+        raise RunnerError(
+            "frozen method record runtime_adapter disagrees with method config"
+        )
+    for argument, column in {
+        "runtime_adapter": "runtime_adapter",
+        "strategy": "strategy",
+        "coverage_objective": "coverage_objective",
+    }.items():
+        if argument in fixed_args or column_args.get(argument) != column:
+            raise RunnerError(
+                f"launch contract must pass {argument} from {column}"
+            )
+    return runtime_adapter
 
 
 def _normalized_experiment_budget(
@@ -1698,6 +1837,13 @@ def load_run_plan(
     _verify_frozen_inputs(root, manifest, source, row)
 
     package, launch_file, fixed_args, column_args = _launch_contract(manifest)
+    _method_runtime_contract(
+        root=root,
+        manifest=manifest,
+        row=row,
+        fixed_args=fixed_args,
+        column_args=column_args,
+    )
     experiment_budget = _experiment_budget_contract(
         root=root,
         manifest=manifest,
@@ -1823,6 +1969,7 @@ def _manifest_value(plan: RunPlan, *, status: str, **updates: Any) -> dict[str, 
                 "world_name",
                 "start_id",
                 "method",
+                "runtime_adapter",
                 "condition",
                 "replicate_seed",
             )
@@ -2180,6 +2327,7 @@ def execute_run(
             plan.output_dir,
             expected_experiment_budget=plan.experiment_budget,
             expected_recording_contract=plan.recording_contract,
+            expected_runtime_adapter=plan.schedule_row["runtime_adapter"],
         )
         wall_elapsed_s = max(0.0, time.monotonic() - supervisor_started)
         _write_manifest(
@@ -2229,6 +2377,7 @@ def execute_run(
             plan.output_dir,
             expected_experiment_budget=plan.experiment_budget,
             expected_recording_contract=plan.recording_contract,
+            expected_runtime_adapter=plan.schedule_row["runtime_adapter"],
         )
         _write_manifest(
             manifest_path,
@@ -2250,6 +2399,7 @@ def execute_run(
         plan.output_dir,
         expected_experiment_budget=plan.experiment_budget,
         expected_recording_contract=plan.recording_contract,
+        expected_runtime_adapter=plan.schedule_row["runtime_adapter"],
     )
     status = outcome.status
     if status == "terminal_observed":

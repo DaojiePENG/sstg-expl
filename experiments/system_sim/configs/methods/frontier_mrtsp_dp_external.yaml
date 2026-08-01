@@ -1,0 +1,16 @@
+schema: sstg_system_sim_method/v1
+method: frontier_mrtsp_dp_external
+strategy: frontier_mrtsp_dp_external
+runtime_adapter: frontier_mrtsp_dp_external
+display_name: frontier_exploration_ros2 v1.6.1 MRTSP-DP
+comparison_role: independent_public_baseline_candidate
+implementation_origin: pinned_unmodified_public_upstream
+upstream_component_id: frontier_mrtsp_dp_external_v1_6_1
+algorithm_identity: wfd_decision_map_mrtsp_bounded_horizon_dp_with_preemption
+independent_public_baseline: true
+formal_method_eligible: false
+coverage_objective: joint
+topological_radius_m: 2.0
+topological_merge_distance_m: 0.25
+policy_seed_applicable: false
+status: development_adapter_e2e_pending

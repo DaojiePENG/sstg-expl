@@ -175,6 +175,7 @@ def _fixture_project(tmp_path: Path) -> dict[str, object]:
                 "schema": "sstg_system_sim_method/v1",
                 "method": method,
                 "strategy": method,
+                "runtime_adapter": "sstg_policy",
                 "coverage_objective": "joint",
                 "comparison_role": "internal_algorithmic_ablation",
                 "formal_method_eligible": False,
@@ -363,6 +364,97 @@ def test_inverse_spawn_transform_and_90_degree_schedule_regression(
     assert manifest["inputs"]["worlds"][0]["starts"][1][
         "truth_to_map_x_m"
     ] == pytest.approx(-2.0)
+
+
+def test_external_runtime_adapter_is_frozen_into_schedule_and_launch(
+    tmp_path: Path,
+) -> None:
+    project = _fixture_project(tmp_path)
+    external = (
+        project["root"]
+        / "experiments/system_sim/configs/methods/frontier_external.yaml"
+    )
+    _write_yaml(external, {
+        "schema": "sstg_system_sim_method/v1",
+        "method": "frontier_mrtsp_dp_external",
+        "strategy": "frontier_mrtsp_dp_external",
+        "runtime_adapter": "frontier_mrtsp_dp_external",
+        "coverage_objective": "joint",
+        "formal_method_eligible": False,
+        "status": "development_adapter_e2e_pending",
+    })
+
+    manifest, output = _freeze(
+        project, "external_adapter", method_paths=[external]
+    )
+    row = _rows(output / "run_schedule.csv")[0]
+    assert row["runtime_adapter"] == "frontier_mrtsp_dp_external"
+    assert manifest["inputs"]["methods"] == [{
+        "method": "frontier_mrtsp_dp_external",
+        "runtime_adapter": "frontier_mrtsp_dp_external",
+        "path": (
+            "experiments/system_sim/configs/methods/frontier_external.yaml"
+        ),
+        "sha256": row["method_config_sha256"],
+        "status": "development_adapter_e2e_pending",
+    }]
+    assert manifest["launch"]["argument_columns"]["runtime_adapter"] == (
+        "runtime_adapter"
+    )
+
+
+def test_schedule_rejects_unknown_runtime_adapter(tmp_path: Path) -> None:
+    project = _fixture_project(tmp_path)
+    method = project["methods"][0]
+    config = yaml.safe_load(method.read_text(encoding="utf-8"))
+    config["runtime_adapter"] = "unregistered_adapter"
+    _write_yaml(method, config)
+
+    with pytest.raises(ScheduleError, match="unsupported runtime_adapter"):
+        _freeze(project, "unknown_runtime", method_paths=[method])
+
+
+def test_runner_rejects_runtime_adapter_launch_column_drift_before_reservation(
+    tmp_path: Path,
+) -> None:
+    project = _fixture_project(tmp_path)
+    _, schedule_dir = _freeze(project, "runtime_launch_drift")
+    row = _rows(schedule_dir / "run_schedule.csv")[0]
+    manifest_path = schedule_dir / "schedule_freeze_manifest.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["launch"]["argument_columns"]["runtime_adapter"] = "strategy"
+    _write_yaml(manifest_path, manifest)
+    root = project["root"]
+
+    with pytest.raises(RunnerError, match="must pass runtime_adapter"):
+        load_run_plan(
+            root=root,
+            schedule_dir=schedule_dir,
+            schedule_id=row["schedule_id"],
+        )
+    assert not (root / row["run_output_dir"]).exists()
+
+
+def test_schedule_requires_runtime_adapter_field(tmp_path: Path) -> None:
+    project = _fixture_project(tmp_path)
+    method = project["methods"][0]
+    config = yaml.safe_load(method.read_text(encoding="utf-8"))
+    config.pop("runtime_adapter")
+    _write_yaml(method, config)
+
+    with pytest.raises(ScheduleError, match="invalid runtime_adapter"):
+        _freeze(project, "missing_runtime", method_paths=[method])
+
+
+def test_external_adapter_rejects_alias_method_identity(tmp_path: Path) -> None:
+    project = _fixture_project(tmp_path)
+    method = project["methods"][0]
+    config = yaml.safe_load(method.read_text(encoding="utf-8"))
+    config["runtime_adapter"] = "frontier_mrtsp_dp_external"
+    _write_yaml(method, config)
+
+    with pytest.raises(ScheduleError, match="requires method ID"):
+        _freeze(project, "external_alias", method_paths=[method])
 
 
 def test_randomization_seed_changes_only_deterministic_method_order(
@@ -1402,6 +1494,7 @@ def _dummy_run_plan(tmp_path: Path, command: tuple[str, ...]) -> RunPlan:
             "world_name": "dummy_world",
             "start_id": "start_a",
             "method": "sstg",
+            "runtime_adapter": "sstg_policy",
             "condition": "nominal",
             "replicate_seed": "101",
         },
@@ -1520,9 +1613,11 @@ def _artifact_writer_program() -> str:
             "def write_jsonl(name, values):",
             "    text = ''.join(json.dumps(value) + '\\n' for value in values)",
             "    (output / name).write_text(text)",
+            "print('[INFO] [policy_node-21]: process started with pid [21]', flush=True)",
             "write_json('policy_manifest.json', {",
             "    'schema': 'sstg_system_sim_policy_manifest/v1',",
             "    'truth_access': False,",
+            "    'runtime_adapter': 'sstg_policy',",
             "    'parameters': {",
             "        'max_duration_s': 900.0,",
             "        'max_distance_m': 150.0,",
@@ -1917,6 +2012,22 @@ def test_artifact_audit_rejects_runtime_budget_drift(tmp_path: Path) -> None:
     )
 
 
+def test_artifact_audit_rejects_runtime_adapter_drift(tmp_path: Path) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    subprocess.run(
+        [sys.executable, "-c", _artifact_writer_program(), str(output), "exit"],
+        check=True,
+    )
+
+    audit = validate_completed_artifacts(
+        output, expected_runtime_adapter="frontier_mrtsp_dp_external"
+    )
+
+    assert audit["valid"] is False
+    assert any("runtime_adapter disagrees" in error for error in audit["errors"])
+
+
 def test_artifact_audit_rejects_evaluator_without_simulation_clock(
     tmp_path: Path,
 ) -> None:
@@ -2138,6 +2249,83 @@ def test_artifact_audit_rejects_required_process_clean_exit_before_shutdown(
     assert any(
         "required process exited before coordinated shutdown: policy_node-21"
         in error
+        for error in audit["errors"]
+    )
+
+
+def test_artifact_audit_requires_selected_adapter_processes(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    subprocess.run(
+        [sys.executable, "-c", _artifact_writer_program(), str(output), "exit"],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    manifest_path = output / "policy_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["runtime_adapter"] = "frontier_mrtsp_dp_external"
+    manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+    (output / "launch.log").write_text(
+        "[INFO] [frontier_explorer-3]: process started with pid [30]\n",
+        encoding="utf-8",
+    )
+
+    audit = validate_completed_artifacts(
+        output, expected_runtime_adapter="frontier_mrtsp_dp_external"
+    )
+
+    assert audit["valid"] is False
+    assert (
+        "launch.log: required adapter process did not start: "
+        "frontier_action_adapter-"
+    ) in audit["errors"]
+
+
+def test_external_process_gate_is_adapter_specific(tmp_path: Path) -> None:
+    launch_log = tmp_path / "launch.log"
+    launch_log.write_text(
+        "[INFO] [frontier_explorer-3]: process started with pid [30]\n"
+        "[INFO] [frontier_action_adapter-4]: process started with pid [40]\n"
+        "[INFO] [policy_node-5]: process has finished cleanly [pid 50]\n",
+        encoding="utf-8",
+    )
+
+    assert system_sim_runner._launch_log_runtime_errors(
+        launch_log, "frontier_mrtsp_dp_external"
+    ) == []
+
+    launch_log.write_text(
+        launch_log.read_text(encoding="utf-8")
+        + "[INFO] [frontier_explorer-3]: process has finished cleanly [pid 30]\n",
+        encoding="utf-8",
+    )
+    errors = system_sim_runner._launch_log_runtime_errors(
+        launch_log, "frontier_mrtsp_dp_external"
+    )
+    assert errors == [
+        "required process exited before coordinated shutdown: "
+        "frontier_explorer-3"
+    ]
+
+
+def test_artifact_audit_rejects_unknown_expected_adapter(tmp_path: Path) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    subprocess.run(
+        [sys.executable, "-c", _artifact_writer_program(), str(output), "exit"],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+
+    audit = validate_completed_artifacts(
+        output, expected_runtime_adapter="unknown_adapter"
+    )
+
+    assert audit["valid"] is False
+    assert any(
+        "unsupported expected runtime_adapter" in error
         for error in audit["errors"]
     )
 
