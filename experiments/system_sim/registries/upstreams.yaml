@@ -121,10 +121,9 @@ components:
       budget_clock: ros_sim_time
       path_frame: odom
       decision_compute_time: unavailable_from_public_upstream_api
-    verification_status: local_build_upstream_unit_and_adapter_contract_tests_verified_e2e_pending
+    verification_status: local_build_adapter_runtime_and_gazebo_e2e_artifacts_verified_budget_semantics_pending
     formal_baseline_eligible: false
     blockers:
-      - action_proxy_overlap_cancel_and_result_transparency_runtime_test_pending
-      - gazebo_nav2_slam_end_to_end_pending
+      - cancel_aware_navigation_metrics_and_nonbinding_action_cap_pending
       - frozen_sensor_matched_parameters_pending
     naming_constraint: Do not label this implementation classic nearest-frontier.

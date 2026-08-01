@@ -122,9 +122,14 @@ The first public candidate is the pinned Apache-2.0
 `frontier_exploration_ros2` v1.6.1 commit, recorded under the unambiguous ID
 `frontier_mrtsp_dp_external_v1_6_1`.  Source and upstream Jazzy CI have been
 audited, and an unmodified-source Nav2 action/trace/budget proxy is now wired
-through the frozen `runtime_adapter` schedule field.  It remains ineligible
-until overlapping-goal transparency and local Gazebo--SLAM--Nav2 end-to-end
-tests pass.  Its frontier-
+through the frozen `runtime_adapter` schedule field.  Real ROS graph tests now
+cover overlapping goals, out-of-order results, rejection, feedback,
+cancel-before-accept and bounded cancel failure.  The first local
+Gazebo--SLAM--Nav2 run also passed the complete process, trace, evaluator and
+MCAP audit.  It remains development-only while cancel-aware navigation metrics
+and a nonbinding action cap are calibrated: the upstream algorithm uses
+CANCELED as an expected revealed-frontier preemption path, so raw dispatch
+count is not a fair primary stopping rule against sequential policies.  Its frontier-
 exhaustion event is only a termination reason; the evaluator, not the method,
 determines coverage and joint success.
 
