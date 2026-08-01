@@ -1,0 +1,32 @@
+# Development adapter for the unmodified upstream v1.6.1 parameter file.
+# This file contains only integration overrides; all algorithm parameters not
+# listed here come from frontier_exploration_ros2/config/params.yaml and retain
+# that file's audited SHA-256 identity.
+frontier_explorer:
+  ros__parameters:
+    use_sim_time: true
+    autostart: false
+    control_service_enabled: true
+    navigate_to_pose_action_name: /baseline/frontier_mrtsp_dp/navigate_to_pose
+    completion_event_enabled: true
+    completion_event_topic: /baseline/frontier_mrtsp_dp/exploration_complete
+    return_to_start_on_complete: false
+
+frontier_baseline_adapter:
+  ros__parameters:
+    use_sim_time: true
+    auto_start: true
+    method_id: frontier_mrtsp_dp_external
+    map_topic: /map
+    map_frame: map
+    base_frame: base_footprint
+    execution_frame: odom
+    proxy_action_name: /baseline/frontier_mrtsp_dp/navigate_to_pose
+    nav2_action_name: /navigate_to_pose
+    nav2_lifecycle_state_service: /bt_navigator/get_state
+    control_service_name: /control_exploration
+    completion_topic: /baseline/frontier_mrtsp_dp/exploration_complete
+    monitor_period_s: 0.1
+    start_delay_s: 0.5
+    topological_merge_distance_m: 0.25
+    allow_existing_output: false

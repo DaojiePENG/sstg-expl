@@ -595,10 +595,38 @@ def test_action_trace_accumulator_counts_and_recomputes_path_length():
     assert snapshot["execution_count"] == 1
     assert snapshot["navigation_success_rate"] == 1.0
     assert snapshot["decision_time_ms_mean"] == 12.5
+    assert snapshot["decision_time_observed_count"] == 1
+    assert snapshot["decision_time_unavailable_count"] == 0
     assert snapshot["trace_reported_translation_m"] == 6.0
     assert snapshot["trace_recomputed_path_length_m"] == 5.0
     assert snapshot["trace_translation_disagreement_m"] == 1.0
     assert snapshot["execution_reasons"] == {"nav2_status_4": 1}
+
+
+def test_action_trace_preserves_unavailable_upstream_decision_time():
+    actions = ActionTraceAccumulator()
+    actions.ingest(_record("decision", {
+        "decision_id": 1,
+        "status": "navigate",
+        "decision_time_ms": None,
+        "decision_time_semantics": "unavailable_upstream_internal_compute_time",
+    }))
+
+    snapshot = actions.snapshot()
+    assert snapshot["decision_count"] == 1
+    assert snapshot["decision_time_ms_mean"] is None
+    assert snapshot["decision_time_ms_total"] == 0.0
+    assert snapshot["decision_time_observed_count"] == 0
+    assert snapshot["decision_time_unavailable_count"] == 1
+
+
+def test_action_trace_rejects_silent_missing_decision_time():
+    actions = ActionTraceAccumulator()
+    with pytest.raises(ValueError, match="explicit upstream-unavailable"):
+        actions.ingest(_record("decision", {
+            "decision_id": 1,
+            "status": "navigate",
+        }))
 
 
 def test_action_trace_rejects_malformed_motion_payload():

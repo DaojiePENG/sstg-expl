@@ -1621,6 +1621,8 @@ class ActionTraceAccumulator:
         self.decision_error_count = 0
         self.session_finished_count = 0
         self.decision_time_ms_total = 0.0
+        self.decision_time_observed_count = 0
+        self.decision_time_unavailable_count = 0
         self.trace_reported_translation_m = 0.0
         self.trace_recomputed_path_length_m = 0.0
         self.trace_reported_rotation_deg = 0.0
@@ -1644,15 +1646,27 @@ class ActionTraceAccumulator:
 
         if event == "decision":
             decision_id = int(payload["decision_id"])
-            decision_time = _finite_float(
-                payload.get("decision_time_ms", 0.0), "decision_time_ms"
-            )
-            if decision_time < 0.0:
-                raise ValueError("decision_time_ms must be non-negative")
+            raw_decision_time = payload.get("decision_time_ms")
+            if raw_decision_time is None:
+                if payload.get("decision_time_semantics") != (
+                    "unavailable_upstream_internal_compute_time"
+                ):
+                    raise ValueError(
+                        "unavailable decision_time_ms requires an explicit "
+                        "upstream-unavailable semantic"
+                    )
+                self.decision_time_unavailable_count += 1
+            else:
+                decision_time = _finite_float(
+                    raw_decision_time, "decision_time_ms"
+                )
+                if decision_time < 0.0:
+                    raise ValueError("decision_time_ms must be non-negative")
+                self.decision_time_ms_total += decision_time
+                self.decision_time_observed_count += 1
             status = str(payload.get("status", ""))
             self.decision_count += 1
             self.navigation_goal_count += int(status == "navigate")
-            self.decision_time_ms_total += decision_time
             self.latest_decision_id = decision_id
         elif event == "execution":
             decision_id = int(payload["decision_id"])
@@ -1695,8 +1709,8 @@ class ActionTraceAccumulator:
             self.navigation_success_count, self.execution_count
         )
         average_decision_time = (
-            self.decision_time_ms_total / self.decision_count
-            if self.decision_count else None
+            self.decision_time_ms_total / self.decision_time_observed_count
+            if self.decision_time_observed_count else None
         )
         return {
             "accepted_trace_events": self.accepted_trace_events,
@@ -1710,6 +1724,10 @@ class ActionTraceAccumulator:
             "session_finished_count": self.session_finished_count,
             "decision_time_ms_total": self.decision_time_ms_total,
             "decision_time_ms_mean": average_decision_time,
+            "decision_time_observed_count": self.decision_time_observed_count,
+            "decision_time_unavailable_count": (
+                self.decision_time_unavailable_count
+            ),
             "trace_reported_translation_m": self.trace_reported_translation_m,
             "trace_recomputed_path_length_m": self.trace_recomputed_path_length_m,
             "trace_translation_disagreement_m": (
