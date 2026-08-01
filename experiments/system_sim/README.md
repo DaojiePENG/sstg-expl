@@ -88,10 +88,18 @@ cd /home/daojie/SSTG_Explorer/sstg-expl
 cd ros2_ws
 unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH COLCON_PREFIX_PATH
 unset LD_LIBRARY_PATH PYTHONPATH PKG_CONFIG_PATH
-unset RMW_IMPLEMENTATION CYCLONEDDS_URI FASTRTPS_DEFAULT_PROFILES_FILE
-unset RMW_FASTRTPS_USE_QOS_FROM_XML
-export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/ros/jazzy/bin
+unset RMW_IMPLEMENTATION CYCLONEDDS_URI
+unset ROS_DOMAIN_ID ROS_AUTOMATIC_DISCOVERY_RANGE ROS_LOCALHOST_ONLY
+unset ROS_STATIC_PEERS ROS_DISCOVERY_SERVER ROS_SUPER_CLIENT
+for name in ${!FASTDDS_@} ${!FASTRTPS_@} ${!RMW_FASTRTPS_@} ${!ROS_SECURITY_@}; do
+  unset "$name"
+done
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/ros/jazzy/bin
 source /opt/ros/jazzy/setup.bash
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export ROS_DOMAIN_ID=42
+export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+export SKIP_DEFAULT_XML=1
 /usr/bin/colcon build --symlink-install \
   --packages-select ros_gz_bridge \
   --allow-overriding ros_gz_bridge \
@@ -109,9 +117,6 @@ source /opt/ros/jazzy/setup.bash
   -DPython3_EXECUTABLE=/usr/bin/python3 \
   -DPYTHON_EXECUTABLE=/usr/bin/python3
 source install/setup.bash
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-unset CYCLONEDDS_URI FASTRTPS_DEFAULT_PROFILES_FILE
-unset RMW_FASTRTPS_USE_QOS_FROM_XML
 cd ..
 /usr/bin/python3 scripts/preflight_system_sim.py --require-runtime
 ros2 launch sstg_nav_bringup system_sim.launch.py \
@@ -130,12 +135,19 @@ Run the upstream bridge tests from the workspace directory:
 cd /home/daojie/SSTG_Explorer/sstg-expl/ros2_ws
 unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH COLCON_PREFIX_PATH
 unset LD_LIBRARY_PATH PYTHONPATH PKG_CONFIG_PATH
-unset RMW_IMPLEMENTATION CYCLONEDDS_URI FASTRTPS_DEFAULT_PROFILES_FILE
-unset RMW_FASTRTPS_USE_QOS_FROM_XML
-export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/ros/jazzy/bin
+unset RMW_IMPLEMENTATION CYCLONEDDS_URI
+unset ROS_DOMAIN_ID ROS_AUTOMATIC_DISCOVERY_RANGE ROS_LOCALHOST_ONLY
+unset ROS_STATIC_PEERS ROS_DISCOVERY_SERVER ROS_SUPER_CLIENT
+for name in ${!FASTDDS_@} ${!FASTRTPS_@} ${!RMW_FASTRTPS_@} ${!ROS_SECURITY_@}; do
+  unset "$name"
+done
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/ros/jazzy/bin
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export ROS_DOMAIN_ID=42
+export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+export SKIP_DEFAULT_XML=1
 /usr/bin/colcon test --packages-select ros_gz_bridge \
   --event-handlers console_direct+
 /usr/bin/colcon test-result --test-result-base build/ros_gz_bridge --verbose
@@ -199,14 +211,16 @@ it is not a claim of bitwise-identical trajectories, so repeat runs remain part
 of the development gate.
 
 ROS middleware is fixed to the Jazzy apt `rmw_fastrtps_cpp` 8.4.4 build.
-Execution requires the explicit `RMW_IMPLEMENTATION` value, rejects custom DDS
-profile variables, and audits all ROS prefix-path environment variables against
-only this workspace's install/build artifacts and `/opt/ros/jazzy`.  The build
-root is needed by Python packages produced with `colcon --symlink-install`.  The
-gate also hashes the selected RMW library and confirms its shared Fast DDS
-dependencies resolve below the official ROS prefix.  This prevents a real-robot
-or Conda underlay from changing simulator scheduling as an undeclared control
-variable.
+Execution requires Fast DDS, domain 42 and localhost-only automatic discovery.
+It requires `SKIP_DEFAULT_XML=1`, rejects every Fast DDS/RMW profile override,
+and audits process search/prefix paths against the workspace install,
+`/opt/ros/jazzy` and fixed system executable roots; only `PYTHONPATH` may
+additionally use `ros2_ws/build`, as required by Python packages produced with
+`colcon --symlink-install`.  Empty or relative path segments are rejected.  The
+gate verifies the apt build, hashes the selected RMW library and its linked Fast
+DDS dependencies, and records the complete policy.  This prevents a real-robot
+or Conda underlay, an implicit XML profile, or host discovery settings from
+becoming undeclared control variables.
 
 The `ros_gz_bridge` source-overlay contract follows the same fail-closed path.
 Freezing copies its exact version, official tag and commit, required fix,

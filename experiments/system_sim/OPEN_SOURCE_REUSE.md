@@ -34,8 +34,9 @@ bridge configuration, and spawn composition remain upstream code; no local
 converter patch is carried.
 
 ROS transport uses the unmodified Jazzy apt `rmw_fastrtps_cpp` 8.4.4 package.
-The experiment contract disables custom DDS profiles and excludes personal ROS
-underlays; the runner records the selected RMW library and its Fast DDS linkage.
+The experiment contract disables implicit/custom DDS profiles, fixes local-only
+discovery, and excludes personal ROS underlays; the runner hashes the selected
+RMW library and its Fast DDS linkage.
 
 The existing `frontier`, `nbv`, and `rrt_adapted` strategy switches in the SSTG
 codebase are internal algorithmic ablations.  They are useful for development

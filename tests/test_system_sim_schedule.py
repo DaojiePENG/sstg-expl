@@ -144,10 +144,9 @@ def _fixture_project(tmp_path: Path) -> dict[str, object]:
             "backend": "gazebo_harmonic",
             "ros_distribution": "jazzy",
             "ros_gz_bridge": dict(ROS_GZ_BRIDGE_CONTRACT),
-            "ros_middleware": {
-                key: list(value) if isinstance(value, list) else value
-                for key, value in ROS_MIDDLEWARE_CONTRACT.items()
-            },
+            "ros_middleware": validate_ros_middleware_contract(
+                ROS_MIDDLEWARE_CONTRACT
+            ),
             "physics": {
                 "seed_source": "replicate_seed",
                 "seed_valid_range_inclusive": [1, 0x7FFFFFFF],
@@ -1004,10 +1003,21 @@ def _configure_clean_middleware_environment(
 ) -> None:
     contract = ROS_MIDDLEWARE_CONTRACT
     monkeypatch.setenv("RMW_IMPLEMENTATION", contract["implementation"])
+    for name, value in contract["required_environment"].items():
+        monkeypatch.setenv(name, value)
     for name in contract["forbidden_environment"]:
         monkeypatch.delenv(name, raising=False)
+    for name in list(os.environ):
+        if any(
+            name.startswith(prefix)
+            for prefix in contract["forbidden_environment_prefixes"]
+        ):
+            monkeypatch.delenv(name, raising=False)
     for name in contract["prefix_path_environment"]:
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(
+        "PATH", "/usr/bin:/bin:/usr/sbin:/sbin:/opt/ros/jazzy/bin"
+    )
     workspace_install = root / "ros2_ws/install"
     monkeypatch.setenv(
         "AMENT_PREFIX_PATH",
@@ -1039,11 +1049,26 @@ def _configure_clean_middleware_environment(
 
 
 def _fake_middleware_run(
-    command: list[str], *, wrong_dependency: bool = False, **_kwargs: object
+    command: list[str],
+    *,
+    wrong_dependency: bool = False,
+    wrong_apt_version: bool = False,
+    **_kwargs: object,
 ) -> subprocess.CompletedProcess[str]:
     arguments = list(command)
     if arguments == ["ros2", "pkg", "prefix", "rmw_fastrtps_cpp"]:
         output = "/opt/ros/jazzy\n"
+    elif arguments == [
+        "dpkg-query",
+        "-W",
+        "-f=${Version}\\n",
+        "ros-jazzy-rmw-fastrtps-cpp",
+    ]:
+        output = (
+            "8.4.3-1noble.invalid\n"
+            if wrong_apt_version
+            else "8.4.4-1noble.20260615.124621\n"
+        )
     elif arguments == ["ldd", "/opt/ros/jazzy/lib/librmw_fastrtps_cpp.so"]:
         dependency_root = "/tmp/custom" if wrong_dependency else "/opt/ros/jazzy/lib"
         output = "\n".join(
@@ -1072,12 +1097,17 @@ def test_middleware_runtime_attestation_is_clean_and_pinned(
 
     assert attestation["implementation"] == "rmw_fastrtps_cpp"
     assert attestation["version"] == "8.4.4"
+    assert attestation["apt_version"] == "8.4.4-1noble.20260615.124621"
     assert len(attestation["library"]["sha256"]) == 64
     assert set(attestation["linked_dependencies"]) == {
         "rmw_fastrtps_shared_cpp",
         "fastrtps",
         "fastcdr",
     }
+    assert all(
+        len(dependency["sha256"]) == 64
+        for dependency in attestation["linked_dependencies"].values()
+    )
     assert attestation["environment"]["forbidden_variables_set"] == []
 
 
@@ -1085,9 +1115,19 @@ def test_middleware_runtime_attestation_is_clean_and_pinned(
     ("failure_mode", "message"),
     [
         ("implementation", "RMW_IMPLEMENTATION must be"),
+        ("required_discovery", "required ROS environment does not match"),
+        ("discovery_range", "required ROS environment does not match"),
+        ("default_xml", "required ROS environment does not match"),
+        ("publication_mode", "custom middleware environment is forbidden"),
+        ("transport", "custom middleware environment is forbidden"),
         ("profile", "custom middleware environment is forbidden"),
+        ("localhost_legacy", "custom middleware environment is forbidden"),
         ("underlay", "undeclared underlay paths"),
+        ("toolchain_path", "undeclared underlay paths"),
+        ("empty_path", "empty segment"),
+        ("build_library", "undeclared underlay paths"),
         ("linkage", "resolves outside"),
+        ("apt_version", "version must be"),
     ],
 )
 def test_middleware_runtime_attestation_fails_closed(
@@ -1100,15 +1140,37 @@ def test_middleware_runtime_attestation_fails_closed(
     _configure_clean_middleware_environment(monkeypatch, root)
     if failure_mode == "implementation":
         monkeypatch.setenv("RMW_IMPLEMENTATION", "rmw_cyclonedds_cpp")
+    elif failure_mode == "required_discovery":
+        monkeypatch.setenv("ROS_DOMAIN_ID", "77")
+    elif failure_mode == "discovery_range":
+        monkeypatch.setenv("ROS_AUTOMATIC_DISCOVERY_RANGE", "SUBNET")
+    elif failure_mode == "default_xml":
+        monkeypatch.setenv("SKIP_DEFAULT_XML", "0")
+    elif failure_mode == "publication_mode":
+        monkeypatch.setenv("RMW_FASTRTPS_PUBLICATION_MODE", "ASYNCHRONOUS")
+    elif failure_mode == "transport":
+        monkeypatch.setenv("FASTDDS_BUILTIN_TRANSPORTS", "UDPv4")
     elif failure_mode == "profile":
         monkeypatch.setenv("FASTRTPS_DEFAULT_PROFILES_FILE", "/tmp/custom.xml")
+    elif failure_mode == "localhost_legacy":
+        monkeypatch.setenv("ROS_LOCALHOST_ONLY", "1")
     elif failure_mode == "underlay":
         monkeypatch.setenv("AMENT_PREFIX_PATH", "/tmp/custom_underlay")
+    elif failure_mode == "toolchain_path":
+        monkeypatch.setenv("PATH", "/tmp/conda/bin:/usr/bin")
+    elif failure_mode == "empty_path":
+        monkeypatch.setenv("LD_LIBRARY_PATH", ":/opt/ros/jazzy/lib")
+    elif failure_mode == "build_library":
+        monkeypatch.setenv(
+            "LD_LIBRARY_PATH", str(root / "ros2_ws/build/custom/lib")
+        )
     monkeypatch.setattr(
         system_sim_runner.subprocess,
         "run",
         lambda command, **_kwargs: _fake_middleware_run(
-            command, wrong_dependency=failure_mode == "linkage"
+            command,
+            wrong_dependency=failure_mode == "linkage",
+            wrong_apt_version=failure_mode == "apt_version",
         ),
     )
 

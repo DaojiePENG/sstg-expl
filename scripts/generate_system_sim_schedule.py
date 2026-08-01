@@ -9,6 +9,7 @@ the exact source, configuration, and world hashes used to create the CSV.
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import csv
 import hashlib
 import io
@@ -56,26 +57,45 @@ ROS_MIDDLEWARE_CONTRACT = {
     "package": "rmw_fastrtps_cpp",
     "required_version": "8.4.4",
     "required_prefix": "/opt/ros/jazzy",
+    "apt_package": "ros-jazzy-rmw-fastrtps-cpp",
     "apt_version_observed": "8.4.4-1noble.20260615.124621",
     "custom_underlays_eligible": False,
+    "required_environment": {
+        "ROS_DISTRO": "jazzy",
+        "ROS_DOMAIN_ID": "42",
+        "ROS_AUTOMATIC_DISCOVERY_RANGE": "LOCALHOST",
+        "SKIP_DEFAULT_XML": "1",
+    },
     "forbidden_environment": [
         "CYCLONEDDS_URI",
-        "FASTRTPS_DEFAULT_PROFILES_FILE",
-        "RMW_FASTRTPS_USE_QOS_FROM_XML",
+        "ROS_DISCOVERY_SERVER",
+        "ROS_LOCALHOST_ONLY",
+        "ROS_STATIC_PEERS",
+        "ROS_SUPER_CLIENT",
+    ],
+    "forbidden_environment_prefixes": [
+        "FASTDDS_",
+        "FASTRTPS_",
+        "RMW_FASTRTPS_",
+        "ROS_SECURITY_",
     ],
     "prefix_path_environment": [
         "AMENT_PREFIX_PATH",
         "CMAKE_PREFIX_PATH",
         "COLCON_PREFIX_PATH",
         "LD_LIBRARY_PATH",
+        "PATH",
         "PKG_CONFIG_PATH",
         "PYTHONPATH",
     ],
     "allowed_prefix_roots": [
         "ros2_ws/install",
-        "ros2_ws/build",
         "/opt/ros/jazzy",
     ],
+    "additional_allowed_prefix_roots": {
+        "PATH": ["/usr/bin", "/usr/sbin"],
+        "PYTHONPATH": ["ros2_ws/build"],
+    },
 }
 CORE_BAG_TOPICS = (
     "/clock",
@@ -243,10 +263,7 @@ def validate_ros_middleware_contract(
         actual = value[field]
         if type(actual) is not type(expected) or actual != expected:
             raise ScheduleError(f"{label}.{field} must be {expected!r}")
-    return {
-        field: list(expected) if isinstance(expected, list) else expected
-        for field, expected in ROS_MIDDLEWARE_CONTRACT.items()
-    }
+    return deepcopy(ROS_MIDDLEWARE_CONTRACT)
 
 
 def validate_recording_contract(

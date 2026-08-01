@@ -1216,11 +1216,30 @@ def verify_ros_middleware_runtime(
             f"{expected['implementation']}, observed: "
             f"{implementation or '<unset>'}"
         )
+    mismatched_required = [
+        f"{name}={os.environ.get(name, '<unset>')}"
+        for name, value in expected["required_environment"].items()
+        if os.environ.get(name) != value
+    ]
+    if mismatched_required:
+        raise RunnerError(
+            "required ROS environment does not match the frozen contract: "
+            + ", ".join(mismatched_required)
+        )
     configured_forbidden = [
         name
         for name in expected["forbidden_environment"]
-        if os.environ.get(name)
+        if name in os.environ
     ]
+    configured_forbidden.extend(
+        name
+        for name in sorted(os.environ)
+        if any(
+            name.startswith(prefix)
+            for prefix in expected["forbidden_environment_prefixes"]
+        )
+    )
+    configured_forbidden = sorted(set(configured_forbidden))
     if configured_forbidden:
         raise RunnerError(
             "custom middleware environment is forbidden: "
@@ -1235,18 +1254,41 @@ def verify_ros_middleware_runtime(
         )
         for value in expected["allowed_prefix_roots"]
     ]
+    additional_roots = {
+        name: [
+            (
+                (root / Path(value)).resolve()
+                if not Path(value).is_absolute()
+                else Path(value).resolve()
+            )
+            for value in values
+        ]
+        for name, values in expected[
+            "additional_allowed_prefix_roots"
+        ].items()
+    }
     prefix_environment: dict[str, list[str]] = {}
     outside_prefixes: list[str] = []
     for name in expected["prefix_path_environment"]:
-        paths = [
-            value
-            for value in os.environ.get(name, "").split(os.pathsep)
-            if value
-        ]
+        if name not in os.environ:
+            prefix_environment[name] = []
+            continue
+        paths = os.environ[name].split(os.pathsep)
+        if any(not value for value in paths):
+            raise RunnerError(
+                f"ROS path environment contains an empty segment: {name}"
+            )
         prefix_environment[name] = paths
+        name_allowed_roots = allowed_roots + additional_roots.get(name, [])
         for value in paths:
+            if not Path(value).is_absolute():
+                outside_prefixes.append(f"{name}={value} (relative)")
+                continue
             resolved = Path(value).resolve()
-            if not any(resolved.is_relative_to(allowed) for allowed in allowed_roots):
+            if not any(
+                resolved.is_relative_to(allowed)
+                for allowed in name_allowed_roots
+            ):
                 outside_prefixes.append(f"{name}={value}")
     if outside_prefixes:
         raise RunnerError(
@@ -1283,6 +1325,22 @@ def verify_ros_middleware_runtime(
             f"{expected['package']} version must be {expected['required_version']}, "
             f"observed: {version or '<empty>'}"
         )
+    apt_result = _runtime_command(
+        [
+            "dpkg-query",
+            "-W",
+            "-f=${Version}\\n",
+            expected["apt_package"],
+        ],
+        label="ROS middleware apt package version",
+    )
+    apt_version = apt_result.stdout.strip()
+    if apt_version != expected["apt_version_observed"]:
+        raise RunnerError(
+            f"{expected['apt_package']} version must be "
+            f"{expected['apt_version_observed']}, observed: "
+            f"{apt_version or '<empty>'}"
+        )
 
     library = prefix / "lib" / "librmw_fastrtps_cpp.so"
     if not library.is_file():
@@ -1293,7 +1351,7 @@ def verify_ros_middleware_runtime(
         "fastrtps": r"libfastrtps\.so(?:\.\S+)?",
         "fastcdr": r"libfastcdr\.so(?:\.\S+)?",
     }
-    linked_dependencies: dict[str, str] = {}
+    linked_dependencies: dict[str, dict[str, str]] = {}
     for label, pattern in dependency_patterns.items():
         match = re.search(
             rf"^\s*{pattern}\s*=>\s*(\S+)",
@@ -1307,12 +1365,19 @@ def verify_ros_middleware_runtime(
             raise RunnerError(
                 f"middleware dependency {label} resolves outside {prefix}: {linked}"
             )
-        linked_dependencies[label] = linked.as_posix()
+        if not linked.is_file():
+            raise RunnerError(f"middleware dependency {label} is missing: {linked}")
+        linked_dependencies[label] = {
+            "path": linked.as_posix(),
+            "sha256": sha256_file(linked),
+        }
 
     return {
         "implementation": implementation,
         "package": expected["package"],
         "version": version,
+        "apt_package": expected["apt_package"],
+        "apt_version": apt_version,
         "prefix": prefix.as_posix(),
         "library": {
             "path": library.as_posix(),
@@ -1321,7 +1386,12 @@ def verify_ros_middleware_runtime(
         "linked_dependencies": linked_dependencies,
         "environment": {
             "forbidden_variables_set": [],
+            "required_variables": dict(expected["required_environment"]),
             "allowed_prefix_roots": [path.as_posix() for path in allowed_roots],
+            "additional_allowed_prefix_roots": {
+                name: [path.as_posix() for path in paths]
+                for name, paths in additional_roots.items()
+            },
             "prefix_paths": prefix_environment,
         },
     }

@@ -19,23 +19,42 @@ ros_middleware:
   package: rmw_fastrtps_cpp
   required_version: 8.4.4
   required_prefix: /opt/ros/jazzy
+  apt_package: ros-jazzy-rmw-fastrtps-cpp
   apt_version_observed: 8.4.4-1noble.20260615.124621
   custom_underlays_eligible: false
+  required_environment:
+    ROS_DISTRO: jazzy
+    ROS_DOMAIN_ID: '42'
+    ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+    SKIP_DEFAULT_XML: '1'
   forbidden_environment:
     - CYCLONEDDS_URI
-    - FASTRTPS_DEFAULT_PROFILES_FILE
-    - RMW_FASTRTPS_USE_QOS_FROM_XML
+    - ROS_DISCOVERY_SERVER
+    - ROS_LOCALHOST_ONLY
+    - ROS_STATIC_PEERS
+    - ROS_SUPER_CLIENT
+  forbidden_environment_prefixes:
+    - FASTDDS_
+    - FASTRTPS_
+    - RMW_FASTRTPS_
+    - ROS_SECURITY_
   prefix_path_environment:
     - AMENT_PREFIX_PATH
     - CMAKE_PREFIX_PATH
     - COLCON_PREFIX_PATH
     - LD_LIBRARY_PATH
+    - PATH
     - PKG_CONFIG_PATH
     - PYTHONPATH
   allowed_prefix_roots:
     - ros2_ws/install
-    - ros2_ws/build
     - /opt/ros/jazzy
+  additional_allowed_prefix_roots:
+    PATH:
+      - /usr/bin
+      - /usr/sbin
+    PYTHONPATH:
+      - ros2_ws/build
 use_sim_time: true
 physics:
   engine: gz_default

@@ -48,6 +48,7 @@ components:
     role: frozen_ros_middleware
     acquisition: ros_apt
     package: rmw_fastrtps_cpp
+    apt_package: ros-jazzy-rmw-fastrtps-cpp
     apt_version: 8.4.4-1noble.20260615.124621
     repository: https://github.com/ros2/rmw_fastrtps
     license: Apache-2.0
