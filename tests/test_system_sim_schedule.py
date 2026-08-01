@@ -892,7 +892,7 @@ def test_artifact_audit_rejects_runtime_budget_drift(tmp_path: Path) -> None:
     )
 
 
-def test_artifact_audit_rejects_child_crash_but_allows_gazebo_sigint(
+def test_artifact_audit_rejects_child_crash_but_allows_coordinated_sigint(
     tmp_path: Path,
 ) -> None:
     output = tmp_path / "artifacts"
@@ -909,6 +909,10 @@ def test_artifact_audit_rejects_child_crash_but_allows_gazebo_sigint(
         launch_log.write(
             "[ERROR] [gazebo-1]: process has died "
             "[pid 10, exit code -2, cmd gz]\n"
+        )
+        launch_log.write(
+            "[ERROR] [planner_server-2]: process has died "
+            "[pid 12, exit code -2, cmd planner_server]\n"
         )
 
     clean = validate_completed_artifacts(output)

@@ -115,7 +115,7 @@ FATAL_LAUNCH_MARKERS = (
 
 
 def _launch_log_runtime_errors(path: Path) -> list[str]:
-    """Detect child crashes while allowing Gazebo's coordinated SIGINT exit."""
+    """Detect child crashes while allowing coordinated SIGINT exits."""
     try:
         content = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
@@ -131,7 +131,7 @@ def _launch_log_runtime_errors(path: Path) -> list[str]:
             continue
         process = match.group("process")
         code = int(match.group("code"))
-        if process.startswith("gazebo-") and code == -2 and coordinated_shutdown:
+        if code == -signal.SIGINT and coordinated_shutdown:
             continue
         detected.append(f"child process crashed: {process} exit code {code}")
     return list(dict.fromkeys(detected))

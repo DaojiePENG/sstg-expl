@@ -149,7 +149,7 @@ return code is not sufficient for completion.  `terminal_completed` is written
 only when both manifests, all policy/evaluator JSONL evidence, evaluator
 ingestion of `session_finished`, the final evaluator snapshot, and their
 SHA-256 hashes pass the runner audit.  The audit also rejects fatal runtime
-markers and any child-process crash in `launch.log`; Gazebo's expected `-2`
+markers and any child-process crash in `launch.log`; an expected `-2` signal
 exit is accepted only during a coordinated SIGINT shutdown.  Other terminal statuses include
 `timeout`, `early_exit`, `manual_interrupt`, and
 `artifact_validation_failed`; `shutdown_failed` is used if the launch leader
