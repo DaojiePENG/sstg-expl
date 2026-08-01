@@ -47,6 +47,19 @@ def _gazebo_exit_guard():
     )
 
 
+def _validated_simulation_seed(value):
+    """Return a Gazebo-compatible deterministic RNG seed."""
+    try:
+        seed = int(value)
+    except (TypeError, ValueError) as error:
+        raise RuntimeError(
+            "simulation_seed must be an unsigned 32-bit integer"
+        ) from error
+    if str(seed) != str(value).strip() or not 0 <= seed <= 0xFFFFFFFF:
+        raise RuntimeError("simulation_seed must be an unsigned 32-bit integer")
+    return seed
+
+
 def _launch_setup(context):
     package_share = get_package_share_directory("sstg_gazebo")
     ros_gz_share = get_package_share_directory("ros_gz_sim")
@@ -60,8 +73,11 @@ def _launch_setup(context):
     start_yaw = LaunchConfiguration("start_yaw").perform(context)
     robot_name = LaunchConfiguration("robot_name").perform(context)
     robot_sdf_xacro = LaunchConfiguration("robot_sdf_xacro").perform(context)
+    simulation_seed = _validated_simulation_seed(
+        LaunchConfiguration("simulation_seed").perform(context)
+    )
     headless_args = "-s --headless-rendering " if headless else ""
-    gz_args = f"-r {headless_args}-v 3 {world}"
+    gz_args = f"-r {headless_args}-v 3 --seed {simulation_seed} {world}"
     world_stats_topic = f"/world/{world_name}/stats"
     prepared_robot = prepare_instrumented_tb3_sdf(
         robot_sdf_xacro,
@@ -105,7 +121,8 @@ def _launch_setup(context):
                 f"(xacro_sha256={prepared_robot.source_xacro_sha256}, "
                 f"contacts={prepared_robot.instrumentation.contact_sensor_count}, "
                 "imu_backport="
-                f"{prepared_robot.instrumentation.imu_joint_backported})"
+                f"{prepared_robot.instrumentation.imu_joint_backported}, "
+                f"simulation_seed={simulation_seed})"
             )
         ),
         AppendEnvironmentVariable(
@@ -151,13 +168,18 @@ def _launch_setup(context):
         Node(
             package="ros_gz_bridge",
             executable="parameter_bridge",
-            name="sstg_world_stats_bridge",
+            name="sstg_auxiliary_bridge",
             output="screen",
             arguments=[
                 world_stats_topic
-                + "@ros_gz_interfaces/msg/WorldStatistics[gz.msgs.WorldStatistics"
+                + "@ros_gz_interfaces/msg/WorldStatistics[gz.msgs.WorldStatistics",
+                camera_info_topic
+                + "@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
             ],
-            remappings=[(world_stats_topic, "/evaluation/world_stats")],
+            remappings=[
+                (world_stats_topic, "/evaluation/world_stats"),
+                (camera_info_topic, "/task_camera/camera_info"),
+            ],
             parameters=[{"use_sim_time": True}],
         ),
         Node(
@@ -167,20 +189,6 @@ def _launch_setup(context):
             output="screen",
             arguments=[depth_image_topic],
             remappings=[(depth_image_topic, "/task_camera/image_raw")],
-            parameters=[{"use_sim_time": True}],
-        ),
-        Node(
-            package="ros_gz_bridge",
-            executable="parameter_bridge",
-            name="sstg_task_camera_info_bridge",
-            output="screen",
-            arguments=[
-                camera_info_topic
-                + "@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo"
-            ],
-            remappings=[
-                (camera_info_topic, "/task_camera/camera_info")
-            ],
             parameters=[{"use_sim_time": True}],
         ),
     ]
@@ -205,6 +213,7 @@ def generate_launch_description():
         DeclareLaunchArgument("start_y", default_value="-4.5"),
         DeclareLaunchArgument("start_z", default_value="0.01"),
         DeclareLaunchArgument("start_yaw", default_value="0.0"),
+        DeclareLaunchArgument("simulation_seed", default_value="0"),
         DeclareLaunchArgument(
             "robot_name", default_value="turtlebot3_waffle"
         ),

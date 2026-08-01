@@ -32,6 +32,7 @@ def generate_launch_description():
     strategy = LaunchConfiguration("strategy")
     coverage_objective = LaunchConfiguration("coverage_objective")
     policy_seed = LaunchConfiguration("policy_seed")
+    simulation_seed = LaunchConfiguration("simulation_seed")
     max_duration_s = LaunchConfiguration("max_duration_s")
     max_distance_m = LaunchConfiguration("max_distance_m")
     max_decisions = LaunchConfiguration("max_decisions")
@@ -68,6 +69,7 @@ def generate_launch_description():
             "start_y": start_y,
             "start_z": start_z,
             "start_yaw": start_yaw,
+            "simulation_seed": simulation_seed,
         }.items(),
     )
     slam = IncludeLaunchDescription(
@@ -164,7 +166,14 @@ def generate_launch_description():
         DeclareLaunchArgument("policy_params", default_value=default_policy),
         DeclareLaunchArgument("strategy", default_value="sstg"),
         DeclareLaunchArgument("coverage_objective", default_value="joint"),
-        DeclareLaunchArgument("policy_seed", default_value="42"),
+        DeclareLaunchArgument(
+            "policy_seed",
+            description="required frozen policy random-number seed",
+        ),
+        DeclareLaunchArgument(
+            "simulation_seed",
+            description="required frozen Gazebo random-number seed",
+        ),
         DeclareLaunchArgument(
             "max_duration_s",
             description="required frozen policy duration budget",

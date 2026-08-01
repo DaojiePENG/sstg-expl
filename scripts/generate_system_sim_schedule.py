@@ -614,8 +614,12 @@ def freeze_schedule(
         raise ScheduleError("at least one replicate seed is required")
     if len(seeds) != len(replicate_seeds):
         raise ScheduleError("replicate seeds must be unique")
-    if any(seed < 0 for seed in seeds) or randomization_seed < 0:
-        raise ScheduleError("replicate and randomization seeds must be non-negative")
+    if any(not 0 <= seed <= 0xFFFFFFFF for seed in seeds):
+        raise ScheduleError(
+            "replicate seeds must be unsigned 32-bit integers for Gazebo"
+        )
+    if randomization_seed < 0:
+        raise ScheduleError("randomization seed must be a non-negative integer")
 
     world_registry_path = _resolve_inside(root, world_registry_path)
     shared_stack_path = _resolve_inside(root, shared_stack_path)
@@ -952,6 +956,7 @@ def freeze_schedule(
                 "strategy": "strategy",
                 "coverage_objective": "coverage_objective",
                 "policy_seed": "replicate_seed",
+                "simulation_seed": "replicate_seed",
                 "max_duration_s": "max_duration_s",
                 "max_distance_m": "max_distance_m",
                 "max_decisions": "max_decisions",

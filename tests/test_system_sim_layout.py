@@ -428,6 +428,20 @@ def test_headless_launch_keeps_gpu_sensor_rendering_and_dynamic_world_stats():
         in source
     )
     assert '(world_stats_topic, "/evaluation/world_stats")' in source
+    assert "--seed {simulation_seed}" in source
+    assert "_validated_simulation_seed" in source
+    assert 'name="sstg_auxiliary_bridge"' in source
+    assert 'name="sstg_task_camera_info_bridge"' not in source
+
+
+def test_simulation_seed_validation_is_fail_closed():
+    module = _load_sim_launch_module()
+
+    assert module._validated_simulation_seed("0") == 0
+    assert module._validated_simulation_seed("4294967295") == 0xFFFFFFFF
+    for invalid in ("-1", "1.0", "4294967296", "seed"):
+        with pytest.raises(RuntimeError, match="unsigned 32-bit"):
+            module._validated_simulation_seed(invalid)
 
 
 def test_gazebo_exit_guard_replaces_upstream_unconditional_shutdown():
@@ -648,6 +662,14 @@ def test_system_sim_budget_matches_policy_and_is_required_by_launch():
         required_declaration = (
             'DeclareLaunchArgument(\n'
             f'            "{field}",\n'
+            '            description="required frozen'
+        )
+        assert required_declaration in launch
+
+    for seed_name in ("policy_seed", "simulation_seed"):
+        required_declaration = (
+            'DeclareLaunchArgument(\n'
+            f'            "{seed_name}",\n'
             '            description="required frozen'
         )
         assert required_declaration in launch

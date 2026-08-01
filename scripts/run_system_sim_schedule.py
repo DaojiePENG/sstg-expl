@@ -16,6 +16,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import signal
 import shutil
 import subprocess
@@ -100,6 +101,40 @@ REQUIRED_COMPLETION_ARTIFACTS = (
     "evaluation_observed_policy_trace.jsonl",
     "launch.log",
 )
+
+PROCESS_DIED_PATTERN = re.compile(
+    r"\[ERROR\] \[(?P<process>[^\]]+)\]: process has died .*"
+    r"exit code (?P<code>-?\d+)"
+)
+FATAL_LAUNCH_MARKERS = (
+    "Traceback (most recent call last):",
+    "corrupted double-linked list",
+    "double free or corruption",
+    "terminate called after throwing",
+)
+
+
+def _launch_log_runtime_errors(path: Path) -> list[str]:
+    """Detect child crashes while allowing Gazebo's coordinated SIGINT exit."""
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        return [f"cannot inspect runtime log: {error}"]
+    coordinated_shutdown = "user interrupted with ctrl-c (SIGINT)" in content
+    detected: list[str] = []
+    for marker in FATAL_LAUNCH_MARKERS:
+        if marker in content:
+            detected.append(f"fatal runtime marker: {marker}")
+    for line in content.splitlines():
+        match = PROCESS_DIED_PATTERN.search(line)
+        if match is None:
+            continue
+        process = match.group("process")
+        code = int(match.group("code"))
+        if process.startswith("gazebo-") and code == -2 and coordinated_shutdown:
+            continue
+        detected.append(f"child process crashed: {process} exit code {code}")
+    return list(dict.fromkeys(detected))
 
 
 def _jsonl_records(path: Path) -> tuple[list[dict[str, Any]], list[str]]:
@@ -228,6 +263,15 @@ def validate_completed_artifacts(
             "evaluation_manifest.json: truth_access must be evaluator_only"
         )
 
+    launch_runtime_errors: list[str] = []
+    launch_log_path = output_dir / "launch.log"
+    if launch_log_path.is_file():
+        launch_runtime_errors = _launch_log_runtime_errors(launch_log_path)
+        errors.extend(
+            f"launch.log: {runtime_error}"
+            for runtime_error in launch_runtime_errors
+        )
+
     jsonl: dict[str, list[dict[str, Any]]] = {}
     for name in (
         "policy_trace.jsonl",
@@ -292,6 +336,7 @@ def validate_completed_artifacts(
             ),
             "evaluator_ingested_session_finished": ingested_terminal,
             "evaluator_final_snapshot": final_snapshot,
+            "launch_log_clean": not launch_runtime_errors,
         },
     }
 

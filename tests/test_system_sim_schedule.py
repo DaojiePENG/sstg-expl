@@ -250,6 +250,9 @@ def test_schedule_is_matched_block_deterministic_and_hashed(tmp_path: Path) -> N
     }
     assert manifest_a["inputs"]["worlds"][0]["world_name"] == "office"
     assert manifest_a["launch"]["argument_columns"]["world_name"] == "world_name"
+    assert manifest_a["launch"]["argument_columns"]["simulation_seed"] == (
+        "replicate_seed"
+    )
     assert manifest_a["experiment_budget"] == EXPERIMENT_BUDGET
     assert manifest_a["budget_provenance"] == {
         "source": "shared_stack",
@@ -554,6 +557,7 @@ def test_run_plan_carries_frozen_world_pose_truth_and_output_args(
     )
 
     assert plan.launch_arguments["world_name"] == "office"
+    assert plan.launch_arguments["simulation_seed"] == row["replicate_seed"]
     assert float(plan.launch_arguments["start_yaw"]) == pytest.approx(math.pi / 2.0)
     assert float(plan.launch_arguments["truth_to_map_x_m"]) == pytest.approx(-2.0)
     assert float(plan.launch_arguments["truth_to_map_y_m"]) == pytest.approx(1.0)
@@ -678,8 +682,11 @@ def _dummy_run_plan(tmp_path: Path, command: tuple[str, ...]) -> RunPlan:
 def _artifact_writer_program() -> str:
     return "\n".join(
         (
-            "import json, pathlib, sys, time",
+            "import json, pathlib, signal, sys, time",
             "output = pathlib.Path(sys.argv[1])",
+            "def stop(*_args):",
+            "    raise SystemExit(0)",
+            "signal.signal(signal.SIGINT, stop)",
             "def write_json(name, value):",
             "    (output / name).write_text(json.dumps(value) + '\\n')",
             "def write_jsonl(name, values):",
@@ -883,3 +890,64 @@ def test_artifact_audit_rejects_runtime_budget_drift(tmp_path: Path) -> None:
         "runtime experiment budget disagrees" in error
         for error in audit["errors"]
     )
+
+
+def test_artifact_audit_rejects_child_crash_but_allows_gazebo_sigint(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    with (output / "launch.log").open("w", encoding="utf-8") as launch_log:
+        subprocess.run(
+            [sys.executable, "-c", _artifact_writer_program(), str(output), "exit"],
+            check=True,
+            stdout=launch_log,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        launch_log.write("[WARNING] [launch]: user interrupted with ctrl-c (SIGINT)\n")
+        launch_log.write(
+            "[ERROR] [gazebo-1]: process has died "
+            "[pid 10, exit code -2, cmd gz]\n"
+        )
+
+    clean = validate_completed_artifacts(output)
+    assert clean["valid"] is True
+    assert clean["completion_checks"]["launch_log_clean"] is True
+
+    with (output / "launch.log").open("a", encoding="utf-8") as launch_log:
+        launch_log.write("[parameter_bridge-8] corrupted double-linked list\n")
+        launch_log.write(
+            "[ERROR] [parameter_bridge-8]: process has died "
+            "[pid 11, exit code -6, cmd parameter_bridge]\n"
+        )
+    crashed = validate_completed_artifacts(output)
+    assert crashed["valid"] is False
+    assert crashed["completion_checks"]["launch_log_clean"] is False
+    assert any(
+        "parameter_bridge-8 exit code -6" in error
+        for error in crashed["errors"]
+    )
+
+
+def test_replicate_seed_must_fit_gazebo_unsigned_32_bit_range(
+    tmp_path: Path,
+) -> None:
+    project = _fixture_project(tmp_path)
+    root = project["root"]
+    assert isinstance(root, Path)
+
+    with pytest.raises(ScheduleError, match="unsigned 32-bit"):
+        freeze_schedule(
+            root=root,
+            study_id="invalid_seed",
+            output_dir=root / "experiments/system_sim/studies/invalid_seed",
+            world_registry_path=project["registry"],
+            shared_stack_path=project["shared"],
+            method_paths=project["methods"],
+            condition_path=project["condition"],
+            world_ids=["dev_office_01"],
+            replicate_seeds=[0x100000000],
+            randomization_seed=1,
+            source_paths=project["source_paths"],
+        )

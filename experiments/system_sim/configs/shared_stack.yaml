@@ -6,6 +6,7 @@ ros_distribution: jazzy
 use_sim_time: true
 physics:
   engine: gz_default
+  seed_source: replicate_seed
   max_step_size_s: 0.004
   target_real_time_factor: 1.0
 robot:

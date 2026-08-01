@@ -76,6 +76,7 @@ source install/setup.bash
 cd ..
 /usr/bin/python3 scripts/preflight_system_sim.py --require-runtime
 ros2 launch sstg_nav_bringup system_sim.launch.py \
+  policy_seed:=101 simulation_seed:=101 \
   max_duration_s:=300 max_distance_m:=60 \
   max_decisions:=30 goal_timeout_s:=90
 ```
@@ -85,6 +86,7 @@ Headless smoke run:
 ```bash
 ros2 launch sstg_nav_bringup system_sim.launch.py \
   headless:=true rviz:=false \
+  policy_seed:=101 simulation_seed:=101 \
   max_duration_s:=300 max_distance_m:=60 \
   max_decisions:=30 goal_timeout_s:=90 \
   output_dir:=system_sim_outputs/runs/gazebo_dev_v0/manual_smoke
@@ -119,6 +121,12 @@ them with `--max-duration-s`, `--max-distance-m`, `--max-decisions` and
 `--goal-timeout-s`; formal schedules reject every such override and always use
 the frozen shared-stack values.
 
+The replicate seed is also copied to both `policy_seed` and
+`simulation_seed`.  Gazebo is launched with that seed, so the simulator's
+LiDAR/IMU noise stream and the policy's stochastic choices are paired within a
+matched block.  Direct development launches must set both arguments explicitly;
+the schedule runner does this automatically and records the values.
+
 Inspect one row's exact launch plan without starting ROS or writing files:
 
 ```bash
@@ -140,7 +148,9 @@ of reusing it, because the runtime JSONL writers append.  A zero ROS launch
 return code is not sufficient for completion.  `terminal_completed` is written
 only when both manifests, all policy/evaluator JSONL evidence, evaluator
 ingestion of `session_finished`, the final evaluator snapshot, and their
-SHA-256 hashes pass the runner audit.  Other terminal statuses include
+SHA-256 hashes pass the runner audit.  The audit also rejects fatal runtime
+markers and any child-process crash in `launch.log`; Gazebo's expected `-2`
+exit is accepted only during a coordinated SIGINT shutdown.  Other terminal statuses include
 `timeout`, `early_exit`, `manual_interrupt`, and
 `artifact_validation_failed`; `shutdown_failed` is used if the launch leader
 survives the full signal escalation.
