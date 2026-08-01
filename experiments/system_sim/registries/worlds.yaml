@@ -1,0 +1,33 @@
+schema: sstg_system_sim_world_registry/v1
+worlds:
+  - world_id: dev_office_01
+    backend: gazebo_harmonic
+    split: development
+    site_family: multi_room_office
+    bundle: ros2_ws/src/sstg_gazebo/worlds/development/multi_room_office/dev_office_01
+    formal_result_eligible: false
+  - world_id: dev_lab_01
+    backend: gazebo_harmonic
+    split: development
+    site_family: dense_laboratory
+    bundle: ros2_ws/src/sstg_gazebo/worlds/development/dense_laboratory/dev_lab_01
+    formal_result_eligible: false
+  - world_id: dev_warehouse_01
+    backend: gazebo_harmonic
+    split: development
+    site_family: warehouse_aisles
+    bundle: ros2_ws/src/sstg_gazebo/worlds/development/warehouse_aisles/dev_warehouse_01
+    formal_result_eligible: false
+  - world_id: dev_corridor_01
+    backend: gazebo_harmonic
+    split: development
+    site_family: corridor_alcoves
+    bundle: ros2_ws/src/sstg_gazebo/worlds/development/corridor_alcoves/dev_corridor_01
+    formal_result_eligible: false
+reserved_test_families:
+  - multi_room_office
+  - dense_laboratory
+  - warehouse_aisles
+  - corridor_alcoves
+development_world_status: four_families_implemented_office_runtime_verified_others_static
+test_world_status: unopened_not_implemented

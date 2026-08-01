@@ -1,0 +1,30 @@
+schema: sstg_system_sim_topic_access/v1
+enforcement: audit_only_development
+policy:
+  subscriptions:
+    - /map
+    - /tf
+    - /tf_static
+    - /navigate_to_pose/_action/*
+  publications:
+    - /navigate_to_pose/_action/*
+    - /policy/status
+    - /policy/candidates
+    - /policy/decision_trace
+  forbidden_prefixes:
+    - /evaluation/
+    - /world/
+    - /gazebo/
+  forbidden_files:
+    - evaluation/**
+    - truth_map.*
+    - target_truth.yaml
+evaluator:
+  may_read:
+    - /evaluation/*
+    - /world/*
+    - /policy/*
+    - /map
+    - /tf
+    - /odom
+formal_gate: Use a separate ROS domain/process relay and filesystem mount allowlist before Stage 3.

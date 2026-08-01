@@ -1,0 +1,37 @@
+schema: sstg_system_sim_truth_map/v1
+world_id: dev_warehouse_01
+source_world: ../world.sdf
+slice_z_m: 0.15
+resolution_m: 0.05
+origin_m:
+- -8.0
+- -6.0
+shape:
+- 240
+- 320
+occupied_cells: 17880
+free_cells: 58920
+collision_models:
+- wall_north
+- wall_south
+- wall_west
+- wall_east
+- shelf_01
+- shelf_02
+- shelf_03
+- shelf_04
+- packing_table
+- pallet_01
+- pallet_02
+- pallet_03
+- loading_island
+target_count: 4
+sha256:
+  world.sdf: 33fb04ac0f1338136638e06d935f183e6dfca9191ce5e3ea79ec3cc0678798bb
+  metadata.yaml: fe24d7e6da77e913223c088dda63717fdf75cde63f404c1f7a7ce19f28980c69
+  starts.yaml: 79560371bc65ea598ff318ec1da8699c0c30c030f835812f8b76e5b8603b1e39
+  targets.yaml: dd1ed88d98c591b3cdf31b047129e6da394f40b1a7aeca16250647d0f65371b2
+  truth_map.pgm: 8147a0e115cf15d83fbd2959cf39698ada01d96e87d7538c83365a07e69545d7
+  truth_map.yaml: d9da451897aad747bb8d1773e41f6d1464c49588ff0a777b12a49b1d54ce0a41
+  scene.yaml: 1e6cf4572fc9263593705ab996818f98fd6bd618531c2e08954218b93a0b7896
+generated_scene_spec: ../scene.yaml

@@ -1,0 +1,15 @@
+schema: sstg_system_sim_world/v1
+world_id: dev_office_01
+split: development
+backend: gazebo_harmonic
+site_family: multi_room_office
+layout_version: 0.1.0
+dimensions_m: {width: 16.0, height: 12.0}
+origin_m: {x: -8.0, y: -6.0}
+truth_resolution_m: 0.05
+room_count: 6
+door_opening_width_m: [1.4, 1.5, 1.6]
+furniture_profile: simple_collision_geometry_v1
+truth_access: evaluator_only
+formal_result_eligible: false
+notes: Development-only bring-up world; never include it in confirmatory statistics.

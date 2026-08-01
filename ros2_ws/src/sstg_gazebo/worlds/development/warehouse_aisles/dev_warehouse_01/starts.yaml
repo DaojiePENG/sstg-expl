@@ -1,0 +1,11 @@
+schema: sstg_system_sim_starts/v1
+world_id: dev_warehouse_01
+starts:
+- start_id: start_southwest
+  x_m: -6.6
+  y_m: -5.0
+  yaw_deg: 90.0
+- start_id: start_southeast
+  x_m: 6.6
+  y_m: -5.0
+  yaw_deg: 90.0

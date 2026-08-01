@@ -1,0 +1,119 @@
+schema: sstg_system_sim_schedule_freeze/v2
+study_id: gazebo_smoke_activegate_20260801
+backend: gazebo_harmonic
+eligibility:
+  evidence_tier: development
+  formal_result_eligible: false
+  reasons:
+  - evidence_tier_is_development
+  - shared_stack_not_frozen:development
+  - condition_not_frozen:development
+  - method_not_frozen:sstg:frozen_from_procedural_benchmark_for_development
+  - world_not_test_split:dev_office_01:development
+  - world_not_formal_eligible:dev_office_01
+  - source_paths_dirty
+design:
+  matching_unit:
+  - world_id
+  - start_id
+  - condition
+  - replicate_seed
+  randomization_unit: block_id
+  randomized_factor: method
+  method_order_algorithm: sha256-key-sort/v1
+  methods:
+  - sstg
+  condition: nominal
+  replicate_seeds:
+  - 103
+  start_policy: first
+  run_output_root: system_sim_outputs/runs/gazebo_smoke_activegate_20260801
+  block_count: 1
+  methods_per_block: 1
+  scheduled_run_count: 1
+randomization:
+  seed: 711
+source:
+  repository_commit: 3b06387899d0f35a7dc5fbf8a747302deef6bb9a
+  repository_dirty: true
+  source_tree_sha256: a7b224ad8f8e76f1b56d6e2023ee193598a2eba07a8fa271a93ca99c24740dd2
+  source_paths:
+  - src
+  - ros2_ws/src
+  tool_path: scripts/generate_system_sim_schedule.py
+  tool_sha256: 88f386a6541561add915b3194d8a8c94498df67226261ebb87af67c9edc4cbf4
+  runner_tool_path: scripts/run_system_sim_schedule.py
+  runner_tool_sha256: 1d8ef02e952c90daf8c6dc147a8c9056a7cacd4de36974ca41db4cd94103b352
+  tree_hash_algorithm: sha256(path-length || path || file-sha256)/v1
+inputs:
+  study_config_sha256: caef4c7053788a37bf5d773c04e6701e612caad079a46647996a71a16be6cf67
+  world_registry:
+    path: experiments/system_sim/registries/worlds.yaml
+    sha256: cbd133c473809d5692fb3245dee2df73ee92aa694fe430916e1d54e3d53b7ee3
+  shared_stack:
+    path: experiments/system_sim/configs/shared_stack.yaml
+    sha256: a7b1713832328d0a2378528af8033715e80c0c4c5efa600667eeb9a9e0dfc9fc
+    freeze_status: development
+  condition:
+    condition: nominal
+    path: experiments/system_sim/configs/conditions/nominal.yaml
+    sha256: 6cbb040a8ee64636241718690d66d4e4e7fcec5ec3f384a030ea3d66339d6c2e
+    status: development
+  methods:
+  - method: sstg
+    path: experiments/system_sim/configs/methods/sstg.yaml
+    sha256: 25c5c3016bacf3a012c0daac4c81ca717f15978f2437f6291cfba9fdc012a3d7
+    status: frozen_from_procedural_benchmark_for_development
+  worlds:
+  - world_id: dev_office_01
+    site_family: multi_room_office
+    split: development
+    formal_result_eligible: false
+    bundle: ros2_ws/src/sstg_gazebo/worlds/development/multi_room_office/dev_office_01
+    world_sdf: ros2_ws/src/sstg_gazebo/worlds/development/multi_room_office/dev_office_01/world.sdf
+    world_name: dev_office_01
+    truth_map_yaml: ros2_ws/src/sstg_gazebo/worlds/development/multi_room_office/dev_office_01/evaluation/truth_map.yaml
+    starts:
+    - start_id: start_southwest
+      x_m: -6.5
+      y_m: -4.5
+      yaw_deg: 0.0
+      spawn_yaw_rad: 0.0
+      truth_to_map_x_m: 6.5
+      truth_to_map_y_m: 4.5
+      truth_to_map_yaw_rad: 0.0
+    sha256:
+      bundle: f2a92c4f4f87106b7c05aa0d7257f2dc1f444dd0893f066b240131c3f75e0ddf
+      world.sdf: 1e84f9cb4637b2a85b67b86b0f6a7cd9c0a50942434681337bb19cfd86087d0d
+      metadata.yaml: 2731130e14804f864bf05f87c92a194df948c0dc4c2ab81e6018d8d2d2d7ee1d
+      starts.yaml: 7e2800af28045b11b05be3513d7b1e3765ad46aff428347a0b81b97051fdfa25
+      targets.yaml: 7ca13f397797d520102cd8b17281f7697bd44352351bd2516e7f6b126f51990e
+      evaluation/truth_map.yaml: d9da451897aad747bb8d1773e41f6d1464c49588ff0a777b12a49b1d54ce0a41
+launch:
+  package: sstg_nav_bringup
+  file: system_sim.launch.py
+  fixed_arguments:
+    headless: 'true'
+    rviz: 'false'
+    evaluator: 'true'
+  argument_columns:
+    world: world_sdf
+    world_name: world_name
+    start_x: start_x_m
+    start_y: start_y_m
+    start_yaw: start_yaw_rad
+    output_dir: run_output_dir
+    strategy: strategy
+    coverage_objective: coverage_objective
+    policy_seed: replicate_seed
+    truth_map_yaml: truth_map_yaml
+    truth_registration_id: truth_registration_id
+    truth_to_map_x_m: truth_to_map_x_m
+    truth_to_map_y_m: truth_to_map_y_m
+    truth_to_map_yaw_rad: truth_to_map_yaw_rad
+outputs:
+  run_schedule: run_schedule.csv
+  run_schedule_sha256: 487331dedb921d0a17bb9c1d9929159926fc3e333764220a7588b3b968ce1107
+execution:
+  simulator_invoked: false
+  status: not_started

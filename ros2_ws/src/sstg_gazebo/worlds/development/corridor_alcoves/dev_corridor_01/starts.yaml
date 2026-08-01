@@ -1,0 +1,11 @@
+schema: sstg_system_sim_starts/v1
+world_id: dev_corridor_01
+starts:
+- start_id: start_west
+  x_m: -6.5
+  y_m: 0.0
+  yaw_deg: 0.0
+- start_id: start_center
+  x_m: 0.0
+  y_m: 0.0
+  yaw_deg: 0.0

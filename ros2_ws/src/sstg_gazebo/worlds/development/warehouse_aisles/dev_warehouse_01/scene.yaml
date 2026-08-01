@@ -1,0 +1,28 @@
+schema: sstg_system_sim_scene_spec/v1
+world_id: dev_warehouse_01
+site_family: warehouse_aisles
+layout_version: 0.1.0
+dimensions_m: {width: 16.0, height: 12.0}
+truth_resolution_m: 0.05
+room_count: 5
+door_opening_width_m: [2.5, 2.7]
+furniture_profile: long_shelves_and_pallets_v1
+notes: Development-only warehouse aisles; never use for confirmatory statistics.
+starts:
+  - {start_id: start_southwest, x_m: -6.6, y_m: -5.0, yaw_deg: 90.0}
+  - {start_id: start_southeast, x_m: 6.6, y_m: -5.0, yaw_deg: 90.0}
+targets:
+  - {target_id: target_panel_01, class: inspection_panel, x_m: -7.76, y_m: 0.0, z_m: 1.05, surface_normal_yaw_deg: 0.0}
+  - {target_id: target_panel_02, class: inspection_panel, x_m: -1.8, y_m: -3.94, z_m: 1.05, surface_normal_yaw_deg: -90.0}
+  - {target_id: target_panel_03, class: inspection_panel, x_m: 1.8, y_m: 3.94, z_m: 1.05, surface_normal_yaw_deg: 90.0}
+  - {target_id: target_panel_04, class: inspection_panel, x_m: 7.76, y_m: 0.0, z_m: 1.05, surface_normal_yaw_deg: 180.0}
+boxes:
+  - {id: shelf_01, x_m: -5.2, y_m: 0.0, z_m: 1.0, size_m: [0.9, 7.6, 2.0], color_rgb: [0.30, 0.34, 0.38]}
+  - {id: shelf_02, x_m: -1.8, y_m: 0.0, z_m: 1.0, size_m: [0.9, 7.6, 2.0], color_rgb: [0.30, 0.34, 0.38]}
+  - {id: shelf_03, x_m: 1.8, y_m: 0.0, z_m: 1.0, size_m: [0.9, 7.6, 2.0], color_rgb: [0.30, 0.34, 0.38]}
+  - {id: shelf_04, x_m: 5.2, y_m: 0.0, z_m: 1.0, size_m: [0.9, 7.6, 2.0], color_rgb: [0.30, 0.34, 0.38]}
+  - {id: packing_table, x_m: 0.0, y_m: -4.8, z_m: 0.45, size_m: [2.0, 0.8, 0.9], color_rgb: [0.48, 0.30, 0.12]}
+  - {id: pallet_01, x_m: 0.0, y_m: 1.0, z_m: 0.35, size_m: [1.0, 1.0, 0.7], yaw_deg: 10, color_rgb: [0.55, 0.35, 0.12]}
+  - {id: pallet_02, x_m: 3.5, y_m: -1.5, z_m: 0.35, size_m: [0.8, 1.2, 0.7], yaw_deg: -8, color_rgb: [0.55, 0.35, 0.12]}
+  - {id: pallet_03, x_m: -3.5, y_m: 2.2, z_m: 0.35, size_m: [0.9, 1.1, 0.7], yaw_deg: 7, color_rgb: [0.55, 0.35, 0.12]}
+  - {id: loading_island, x_m: 0.0, y_m: 4.8, z_m: 0.5, size_m: [2.2, 0.8, 1.0], color_rgb: [0.22, 0.38, 0.28]}

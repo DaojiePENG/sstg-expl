@@ -1,0 +1,11 @@
+schema: sstg_system_sim_method/v1
+method: rrt_adapted
+strategy: rrt
+display_name: SSTG internal RRT-style ablation
+comparison_role: internal_algorithmic_ablation
+implementation_origin: repository_native_strategy_switch
+independent_public_baseline: false
+formal_method_eligible: false
+coverage_objective: joint
+topological_radius_m: 2.0
+status: development_adapter

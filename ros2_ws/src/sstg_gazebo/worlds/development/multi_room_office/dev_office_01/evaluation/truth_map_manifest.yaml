@@ -1,0 +1,38 @@
+schema: sstg_system_sim_truth_map/v1
+world_id: dev_office_01
+source_world: ../world.sdf
+slice_z_m: 0.15
+resolution_m: 0.05
+origin_m:
+- -8.0
+- -6.0
+shape:
+- 240
+- 320
+occupied_cells: 9866
+free_cells: 66934
+collision_models:
+- wall_north
+- wall_south
+- wall_west
+- wall_east
+- wall_v1_s
+- wall_v1_n
+- wall_v2_s
+- wall_v2_n
+- wall_h1_w
+- wall_h1_e
+- desk_01
+- desk_02
+- meeting_table
+- cabinet_01
+- cabinet_02
+- island_01
+target_count: 4
+sha256:
+  world.sdf: 1e84f9cb4637b2a85b67b86b0f6a7cd9c0a50942434681337bb19cfd86087d0d
+  metadata.yaml: 2731130e14804f864bf05f87c92a194df948c0dc4c2ab81e6018d8d2d2d7ee1d
+  starts.yaml: 7e2800af28045b11b05be3513d7b1e3765ad46aff428347a0b81b97051fdfa25
+  targets.yaml: 7ca13f397797d520102cd8b17281f7697bd44352351bd2516e7f6b126f51990e
+  truth_map.pgm: d7ab108e241e1b02d2a14df45070adc8c63af5a53b6f2d2d1ff7980926b8aec0
+  truth_map.yaml: d9da451897aad747bb8d1773e41f6d1464c49588ff0a777b12a49b1d54ce0a41

@@ -1,0 +1,27 @@
+schema: sstg_system_sim_media_index/v1
+captures:
+  - path: raw/gazebo_overview.png
+    role: gazebo_overview
+    source: screen_capture
+    captured_at_utc: 'YYYY-MM-DDTHH:MM:SSZ'
+    description: Gazebo overview with the robot and scene visible.
+  - path: raw/rviz_navigation.png
+    role: rviz_navigation
+    source: screen_capture
+    captured_at_utc: 'YYYY-MM-DDTHH:MM:SSZ'
+    description: RViz map, TF, scan, global plan and policy markers.
+  - path: raw/sensor_sanity.png
+    role: sensor_sanity
+    source: ros_topic_render
+    captured_at_utc: 'YYYY-MM-DDTHH:MM:SSZ'
+    description: LiDAR or task-camera sanity view.
+  - path: raw/final_state.png
+    role: final_state
+    source: screen_capture
+    captured_at_utc: 'YYYY-MM-DDTHH:MM:SSZ'
+    description: Final map, path and robot state before shutdown.
+  - path: raw/key_interval.mp4
+    role: key_interval_video
+    source: ffmpeg_screen_capture
+    captured_at_utc: 'YYYY-MM-DDTHH:MM:SSZ'
+    description: Short unedited key interval from this run.

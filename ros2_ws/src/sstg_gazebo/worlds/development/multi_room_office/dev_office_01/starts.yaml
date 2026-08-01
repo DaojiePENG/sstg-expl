@@ -1,0 +1,5 @@
+schema: sstg_system_sim_starts/v1
+world_id: dev_office_01
+starts:
+  - {start_id: start_southwest, x_m: -6.5, y_m: -4.5, yaw_deg: 0.0}
+  - {start_id: start_center, x_m: 0.0, y_m: 0.0, yaw_deg: 90.0}

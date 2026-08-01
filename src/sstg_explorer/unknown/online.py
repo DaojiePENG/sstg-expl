@@ -58,6 +58,7 @@ class ExecutionRecord:
     commanded_pose: Pose2D
     reached_pose: Pose2D
     path: List[Point2D]
+    path_frame: str
     translation_m: float
     rotation_deg: float
     topological_node_created: bool
@@ -234,6 +235,7 @@ class OnlineExplorerSession:
         reached_pose: Pose2D,
         executed_path: Optional[Sequence[Point2D]] = None,
         reason: str = "navigation_result",
+        executed_path_frame: str = "map",
     ) -> ExecutionRecord:
         """Record a navigation outcome and update the online topology."""
         if self._pending is None or self._pending.decision_id != decision_id:
@@ -243,16 +245,27 @@ class OnlineExplorerSession:
             raise RuntimeError("pending navigation decision has no target")
 
         reached = self._normalize_pose(reached_pose)
+        path_frame = str(executed_path_frame).strip()
+        if not path_frame:
+            raise ValueError("executed_path_frame must be non-empty")
+        source_path = (
+            decision.planned_path if executed_path is None else executed_path
+        )
         path = [
             (float(point[0]), float(point[1]))
-            for point in (executed_path or decision.planned_path)
+            for point in source_path
         ]
-        if not path:
-            path = [self.current_pose[:2], reached[:2]]
-        elif path[0] != self.current_pose[:2]:
-            path.insert(0, self.current_pose[:2])
-        if path[-1] != reached[:2]:
-            path.append(reached[:2])
+        # Map-frame paths can be completed with the estimated start and end
+        # poses.  A path sampled in odom (or another continuous execution
+        # frame) must not be mixed with map-frame coordinates when a SLAM loop
+        # closure changes map -> odom.
+        if path_frame == "map":
+            if not path:
+                path = [self.current_pose[:2], reached[:2]]
+            elif path[0] != self.current_pose[:2]:
+                path.insert(0, self.current_pose[:2])
+            if path[-1] != reached[:2]:
+                path.append(reached[:2])
 
         translation = self._path_length(path)
         rotation = self.policy._angle_delta(
@@ -313,6 +326,7 @@ class OnlineExplorerSession:
             commanded_pose=decision.target_pose,
             reached_pose=reached,
             path=path,
+            path_frame=path_frame,
             translation_m=translation,
             rotation_deg=rotation,
             topological_node_created=node_created,

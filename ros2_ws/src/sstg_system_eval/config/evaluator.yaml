@@ -1,0 +1,58 @@
+sstg_system_eval:
+  ros__parameters:
+    use_sim_time: true
+    truth_map_yaml: ""
+    truth_registration_id: ""
+    truth_to_map_x_m: 0.0
+    truth_to_map_y_m: 0.0
+    truth_to_map_yaw_rad: 0.0
+    targets_yaml: ""
+    map_topic: /map
+    trace_topic: /policy/decision_trace
+    metrics_topic: /evaluation/metrics
+    status_topic: /evaluation/status
+    ground_truth_odom_topic: /evaluation/ground_truth_odom
+    contacts_topic: /evaluation/contacts
+    world_stats_topic: /evaluation/world_stats
+    map_frame: map
+    path_frame: odom
+    base_frame: base_footprint
+    ground_truth_frame: world
+    ground_truth_child_frame: base_footprint_truth
+    known_free_threshold: 50
+    tf_sample_period_s: 0.1
+    tf_minimum_step_m: 0.002
+    ground_truth_minimum_step_m: 0.002
+    # Nav2's upstream TB3 Waffle radius plus the frozen costmap padding.
+    robot_clearance_radius_m: 0.24
+    ate_pairing_delay_s: 0.15
+    ate_tf_expiration_s: 2.0
+    robot_collision_name_tokens:
+      - sstg_tb3_evaluation_overlay
+      - footprint_probe
+      - turtlebot3_waffle
+      - base_collision
+      - wheel_left
+      - wheel_right
+      - caster_back
+    ground_collision_name_tokens: [floor, ground_plane]
+    collision_event_separation_s: 1.0
+    collision_minimum_depth_m: 0.0
+    camera_x_offset_m: 0.133
+    camera_y_offset_m: -0.094
+    camera_height_m: 0.214
+    camera_yaw_offset_rad: 0.0
+    camera_pitch_rad: 0.0
+    camera_horizontal_fov_rad: 1.047
+    camera_vertical_fov_rad: 0.8171093547878163
+    camera_minimum_range_m: 0.001
+    camera_maximum_range_m: 5.0
+    target_maximum_incidence_rad: 1.3962634016
+    target_los_endpoint_clearance_m: 0.10
+    topological_radius_m: 2.0
+    topological_node_dedup_tolerance_m: 0.01
+    information_coverage_target: 0.95
+    topological_coverage_target: 0.95
+    metrics_publish_period_s: 1.0
+    output_dir: system_sim_outputs/runs/development/manual
+    allow_existing_output: false

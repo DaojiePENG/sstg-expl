@@ -1,0 +1,13 @@
+# Primary robot topics use nav2_minimal_tb3_sim's upstream bridge.  Only
+# evaluator-only instrumentation is bridged here.
+- ros_topic_name: /evaluation/ground_truth_odom
+  gz_topic_name: /evaluation/ground_truth_odom
+  ros_type_name: nav_msgs/msg/Odometry
+  gz_type_name: gz.msgs.Odometry
+  direction: GZ_TO_ROS
+
+- ros_topic_name: /evaluation/contacts
+  gz_topic_name: /evaluation/contacts
+  ros_type_name: ros_gz_interfaces/msg/Contacts
+  gz_type_name: gz.msgs.Contacts
+  direction: GZ_TO_ROS

@@ -1,0 +1,4 @@
+schema: sstg_system_sim_condition/v1
+condition: lidar_degraded
+lidar: {range_noise_stddev_m: TBD_FROM_PHYSICAL_PILOT, dropout_probability: TBD_FROM_PHYSICAL_PILOT}
+status: placeholder_not_runnable

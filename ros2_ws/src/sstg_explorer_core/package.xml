@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>sstg_explorer_core</name>
+  <version>0.1.0</version>
+  <description>Simulator-independent SSTG-Explorer policy core.</description>
+  <maintainer email="maintainer@example.invalid">SSTG Team</maintainer>
+  <license>LicenseRef-Proprietary-Until-Project-License-Is-Frozen</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
+  <exec_depend>python3-skimage</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -102,6 +102,23 @@ def test_failed_goal_still_counts_actual_execution_cost():
     assert len(summary["nodes"]) == 1
 
 
+def test_execution_path_in_odom_is_not_mixed_with_map_endpoints():
+    session = _session(start=(5.0, 5.0, 0.0))
+    decision = session.propose(_known_room())
+    record = session.record_execution(
+        decision.decision_id,
+        succeeded=True,
+        reached_pose=decision.target_pose,
+        executed_path=[(0.0, 0.0), (0.3, 0.4)],
+        executed_path_frame="odom",
+    )
+
+    assert record.path_frame == "odom"
+    assert record.path == [(0.0, 0.0), (0.3, 0.4)]
+    assert record.translation_m == pytest.approx(0.5)
+    assert session.summary()["total_distance_m"] == pytest.approx(0.5)
+
+
 def test_online_completion_does_not_claim_truth_coverage():
     belief = OccupancyGrid(
         np.array([[100, 100, 100], [100, 0, 100], [100, 100, 100]], dtype=np.int8),

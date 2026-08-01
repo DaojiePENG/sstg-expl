@@ -1,0 +1,14 @@
+schema: sstg_system_sim_preregistration/v1
+study_id: gazebo_dev_v0
+stage: bring_up
+evidence_status: engineering_development_only
+backend: gazebo_harmonic
+split: development
+worlds: [dev_office_01]
+methods: [sstg]
+conditions: [nominal]
+primary_goal: Verify a complete LiDAR-SLAM-Nav2-belief-policy execution loop.
+formal_result_eligible: false
+success_gate_reference: experiments/system_sim/EXPERIMENT_PLAN.md#stage-0-success-criteria
+truth_access_policy: experiments/system_sim/configs/topic_access.yaml
+freeze_status: open_development

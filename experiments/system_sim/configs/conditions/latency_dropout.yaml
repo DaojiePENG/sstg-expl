@@ -1,0 +1,4 @@
+schema: sstg_system_sim_condition/v1
+condition: latency_dropout
+middleware: {command_latency_ms: TBD_FROM_PILOT, sensor_dropout_probability: TBD_FROM_PILOT}
+status: placeholder_not_runnable

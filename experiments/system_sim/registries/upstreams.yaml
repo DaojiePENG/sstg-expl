@@ -1,0 +1,75 @@
+schema: sstg_system_sim_upstream_registry/v1
+audited_at: '2026-08-02'
+policy:
+  prefer_upstream_over_local_reimplementation: true
+  require_repository_and_license: true
+  require_immutable_commit_for_source_dependencies: true
+  require_runtime_gate_before_formal_use: true
+  preserve_unmodified_upstream_defaults_or_label_each_override: true
+components:
+  - component_id: nav2_minimal_tb3_sim_1_0_1
+    role: robot_model_dynamics_sensors_bridge_and_spawn
+    acquisition: ros_apt
+    package: nav2_minimal_tb3_sim
+    apt_version: 1.0.1-1noble.20260616.074421
+    repository: https://github.com/ros-navigation/nav2_minimal_turtlebot_simulation
+    release_tag: 1.0.1
+    release_commit: 6b64127fd26167aa784b6f8f7621994048402614
+    release_sdf_sha256: 133ebbe76997b98e43dbe03aea5a77dd6bd4117a3100343d5857b63cd3128a83
+    license: Apache-2.0
+    local_use: runtime_allowlisted_derivative
+    local_changes:
+      - contact_sensor_per_existing_collision
+      - evaluator_only_ground_truth_odometry
+      - missing_imu_joint_backport_from_b9d523ad7ea0e98174627fdefeb4b1ae9b515063
+    drive_geometry_and_primary_sensors_changed: false
+    verification_status: office_dynamics_lidar_imu_runtime_verified_depth_bridge_recheck_pending
+  - component_id: nav2_jazzy_1_3_12
+    role: navigation_and_controller_stack
+    acquisition: ros_apt
+    packages: [navigation2, nav2_bringup]
+    apt_versions:
+      navigation2: 1.3.12-1noble.20260615.181551
+      nav2_bringup: 1.3.12-1noble.20260616.082701
+    repository: https://github.com/ros-navigation/navigation2
+    license: Apache-2.0
+    local_use: upstream_launch_with_frozen_experiment_parameter_overrides
+    verification_status: office_goal_acceptance_and_motion_verified_goal_success_pending
+  - component_id: slam_toolbox_jazzy_2_8_5
+    role: online_slam
+    acquisition: ros_apt
+    package: slam_toolbox
+    apt_version: 2.8.5-1noble.20260615.161600
+    repository: https://github.com/SteveMacenski/slam_toolbox
+    license: BSD-3-Clause
+    local_use: upstream_async_launch_with_frozen_parameters
+    verification_status: office_growing_map_runtime_verified
+  - component_id: ros_gz_jazzy_1_0_22
+    role: gazebo_harmonic_ros_transport
+    acquisition: ros_apt
+    package: ros_gz
+    apt_version: 1.0.22-1noble.20260616.074726
+    repository: https://github.com/gazebosim/ros_gz
+    license: Apache-2.0
+    local_use: upstream_launch_bridge_and_image_bridge
+    verification_status: clock_scan_odom_runtime_verified_depth_image_bridge_recheck_pending
+  - component_id: frontier_mrtsp_dp_external_v1_6_1
+    role: candidate_public_exploration_baseline
+    acquisition: vcs_source
+    package: frontier_exploration_ros2
+    repository: https://github.com/mertgulerx/frontier_exploration_ros2
+    release_tag: v1.6.1
+    release_tag_kind: lightweight
+    commit: b0fad500e5c81ad3154f0469ca283b2702a3f90c
+    git_tree: ff9d2e040601aa4f8251f18db04ef34746ca4e37
+    license: Apache-2.0
+    license_sha256: 4458503dd48e88c4e0b945fb252a08b93c40ec757309b8ffa7c594dfa1e35104
+    upstream_params_sha256: 9dc2b2a77ddc16f90e598a664a667e90f976723b2c20f0d857c99b32e3cc1f7a
+    algorithm_identity: wfd_decision_map_mrtsp_bounded_horizon_dp_with_preemption
+    verification_status: local_build_and_unit_tests_verified_adapter_and_e2e_pending
+    formal_baseline_eligible: false
+    blockers:
+      - common_action_trace_and_budget_adapter_missing
+      - gazebo_nav2_slam_end_to_end_pending
+      - frozen_sensor_matched_parameters_pending
+    naming_constraint: Do not label this implementation classic nearest-frontier.

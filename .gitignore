@@ -84,4 +84,14 @@ outputs/
 *.mp4
 /models/checkpoints/
 
+# ROS 2 / embodied simulation workspaces and raw data
+/ros2_ws/build/
+/ros2_ws/install/
+/ros2_ws/log/
+/ros2_ws/src/third_party/
+/install/
+/log/
+/system_sim_outputs/**
+!/system_sim_outputs/README.md
+
 .claude/*

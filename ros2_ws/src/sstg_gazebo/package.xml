@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>sstg_gazebo</name>
+  <version>0.1.0</version>
+  <description>Gazebo Harmonic worlds and runtime TB3 instrumentation for SSTG.</description>
+  <maintainer email="maintainer@example.invalid">SSTG Team</maintainer>
+  <license>LicenseRef-Proprietary-Until-Project-License-Is-Frozen</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+  <exec_depend>python3</exec_depend>
+  <exec_depend>nav2_minimal_tb3_sim</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>ros_gz_image</exec_depend>
+  <exec_depend>ros_gz_interfaces</exec_depend>
+  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>xacro</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

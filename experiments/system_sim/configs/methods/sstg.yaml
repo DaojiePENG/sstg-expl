@@ -1,0 +1,14 @@
+schema: sstg_system_sim_method/v1
+method: sstg
+strategy: sstg
+comparison_role: proposed_method
+implementation_origin: repository_native_sstg
+independent_public_baseline: false
+formal_method_eligible: true
+coverage_objective: joint
+topological_radius_m: 2.0
+topological_merge_distance_m: 0.25
+information_gain_weight: 0.40
+topological_gain_weight: 0.60
+spacing_weight: 0.30
+status: frozen_from_procedural_benchmark_for_development

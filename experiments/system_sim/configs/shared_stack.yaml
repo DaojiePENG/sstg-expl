@@ -1,0 +1,55 @@
+schema: sstg_system_sim_shared_stack/v1
+backend: gazebo_harmonic
+backend_version: gz_sim_8.11.0
+ros_gz_sim_candidate: 1.0.22-1noble.20260615.173223
+ros_distribution: jazzy
+use_sim_time: true
+physics:
+  engine: gz_default
+  max_step_size_s: 0.004
+  target_real_time_factor: 1.0
+robot:
+  profile: nav2_minimal_turtlebot3_waffle
+  upstream_package: nav2_minimal_tb3_sim
+  upstream_version: 1.0.1-1noble.20260616.074421
+  upstream_repository: https://github.com/ros-navigation/nav2_minimal_turtlebot_simulation
+  upstream_release_tag: 1.0.1
+  upstream_release_commit: 6b64127fd26167aa784b6f8f7621994048402614
+  upstream_release_sdf_sha256: 133ebbe76997b98e43dbe03aea5a77dd6bd4117a3100343d5857b63cd3128a83
+  upstream_imu_fix_commit: b9d523ad7ea0e98174627fdefeb4b1ae9b515063
+  upstream_license: Apache-2.0
+  runtime_instrumentation:
+    mode: allowlisted_derivative_of_installed_xacro
+    added_contact_sensors: one_per_existing_collision
+    added_ground_truth_odometry: evaluator_only
+    imu_joint_backport: only_if_missing
+    alters_drive_or_geometry: false
+  collision_footprint:
+    shape: circle
+    radius_m: 0.22
+    padding_m: 0.02
+  policy_conservative_radius_m: 0.24
+  max_linear_velocity_mps: 0.46
+  max_angular_velocity_radps: 1.90
+  max_linear_acceleration_mps2: 1.00
+  max_angular_acceleration_radps2: 2.00
+mapping_sensor:
+  type: upstream_tb3_planar_gpu_lidar
+  horizontal_fov_deg: 360.0
+  max_range_m: 20.0
+  samples: 360
+  update_rate_hz: 5.0
+task_sensor:
+  type: upstream_tb3_realsense_r200_depth_camera
+  resolution: [320, 240]
+  horizontal_fov_deg: 59.9886811502
+  far_clip_m: 5.0
+  update_rate_hz: 5.0
+shared_autonomy:
+  mapping: slam_toolbox_async
+  navigation: nav2
+  local_controller: nav2_mppi_frozen_sstg_dev_v1
+  nav2_params: ros2_ws/src/sstg_nav_bringup/config/nav2_params.yaml
+  slam_params: ros2_ws/src/sstg_nav_bringup/config/slam_toolbox.yaml
+freeze_status: development
+confirmatory_warning: Calibrate and freeze this development profile before Stage 3.

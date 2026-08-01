@@ -1,0 +1,167 @@
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
+import os
+
+
+def generate_launch_description():
+    gazebo_share = get_package_share_directory("sstg_gazebo")
+    nav2_share = get_package_share_directory("nav2_bringup")
+    policy_share = get_package_share_directory("sstg_policy_ros")
+    evaluator_share = get_package_share_directory("sstg_system_eval")
+    slam_share = get_package_share_directory("slam_toolbox")
+    bringup_share = get_package_share_directory("sstg_nav_bringup")
+
+    world = LaunchConfiguration("world")
+    world_name = LaunchConfiguration("world_name")
+    headless = LaunchConfiguration("headless")
+    rviz = LaunchConfiguration("rviz")
+    start_x = LaunchConfiguration("start_x")
+    start_y = LaunchConfiguration("start_y")
+    start_z = LaunchConfiguration("start_z")
+    start_yaw = LaunchConfiguration("start_yaw")
+    output_dir = LaunchConfiguration("output_dir")
+    nav2_params = LaunchConfiguration("nav2_params")
+    slam_params = LaunchConfiguration("slam_params")
+    policy_params = LaunchConfiguration("policy_params")
+    strategy = LaunchConfiguration("strategy")
+    coverage_objective = LaunchConfiguration("coverage_objective")
+    policy_seed = LaunchConfiguration("policy_seed")
+    evaluator_enabled = LaunchConfiguration("evaluator")
+    truth_map_yaml = LaunchConfiguration("truth_map_yaml")
+    truth_registration_id = LaunchConfiguration("truth_registration_id")
+    truth_to_map_x_m = LaunchConfiguration("truth_to_map_x_m")
+    truth_to_map_y_m = LaunchConfiguration("truth_to_map_y_m")
+    truth_to_map_yaw_rad = LaunchConfiguration("truth_to_map_yaw_rad")
+
+    default_world = os.path.join(
+        gazebo_share,
+        "worlds", "development", "multi_room_office", "dev_office_01", "world.sdf",
+    )
+    default_slam = os.path.join(bringup_share, "config", "slam_toolbox.yaml")
+    default_nav2 = os.path.join(bringup_share, "config", "nav2_params.yaml")
+    default_policy = os.path.join(policy_share, "config", "policy.yaml")
+    default_truth = os.path.join(
+        gazebo_share,
+        "worlds", "development", "multi_room_office", "dev_office_01",
+        "evaluation", "truth_map.yaml",
+    )
+
+    simulation = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(gazebo_share, "launch", "sim.launch.py")
+        ),
+        launch_arguments={
+            "world": world,
+            "world_name": world_name,
+            "headless": headless,
+            "start_x": start_x,
+            "start_y": start_y,
+            "start_z": start_z,
+            "start_yaw": start_yaw,
+        }.items(),
+    )
+    slam = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(slam_share, "launch", "online_async_launch.py")
+        ),
+        launch_arguments={
+            "use_sim_time": "true",
+            "slam_params_file": slam_params,
+        }.items(),
+    )
+    navigation = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(nav2_share, "launch", "navigation_launch.py")
+        ),
+        launch_arguments={
+            "use_sim_time": "true",
+            "autostart": "true",
+            "params_file": nav2_params,
+            "use_composition": "False",
+        }.items(),
+    )
+    policy = Node(
+        package="sstg_policy_ros",
+        executable="policy_node",
+        name="sstg_policy",
+        output="screen",
+        parameters=[
+            policy_params,
+            {
+                "output_dir": ParameterValue(output_dir, value_type=str),
+                "strategy": ParameterValue(strategy, value_type=str),
+                "coverage_objective": ParameterValue(
+                    coverage_objective, value_type=str
+                ),
+                "policy_seed": ParameterValue(policy_seed, value_type=int),
+                "use_sim_time": True,
+            },
+        ],
+    )
+    evaluator = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(evaluator_share, "launch", "evaluator.launch.py")
+        ),
+        launch_arguments={
+            "truth_map_yaml": truth_map_yaml,
+            "truth_registration_id": truth_registration_id,
+            "truth_to_map_x_m": truth_to_map_x_m,
+            "truth_to_map_y_m": truth_to_map_y_m,
+            "truth_to_map_yaw_rad": truth_to_map_yaw_rad,
+            "output_dir": output_dir,
+        }.items(),
+        condition=IfCondition(evaluator_enabled),
+    )
+    rviz_node = Node(
+        package="rviz2",
+        executable="rviz2",
+        name="rviz2",
+        output="screen",
+        arguments=[
+            "-d", os.path.join(bringup_share, "rviz", "system_sim.rviz")
+        ],
+        parameters=[{"use_sim_time": True}],
+        condition=IfCondition(rviz),
+    )
+
+    return LaunchDescription([
+        DeclareLaunchArgument("world", default_value=default_world),
+        DeclareLaunchArgument("world_name", default_value="dev_office_01"),
+        DeclareLaunchArgument("headless", default_value="false"),
+        DeclareLaunchArgument("rviz", default_value="true"),
+        DeclareLaunchArgument("start_x", default_value="-6.5"),
+        DeclareLaunchArgument("start_y", default_value="-4.5"),
+        DeclareLaunchArgument("start_z", default_value="0.01"),
+        DeclareLaunchArgument("start_yaw", default_value="0.0"),
+        DeclareLaunchArgument(
+            "output_dir",
+            default_value="system_sim_outputs/runs/development/manual",
+        ),
+        DeclareLaunchArgument("nav2_params", default_value=default_nav2),
+        DeclareLaunchArgument("slam_params", default_value=default_slam),
+        DeclareLaunchArgument("policy_params", default_value=default_policy),
+        DeclareLaunchArgument("strategy", default_value="sstg"),
+        DeclareLaunchArgument("coverage_objective", default_value="joint"),
+        DeclareLaunchArgument("policy_seed", default_value="42"),
+        DeclareLaunchArgument("evaluator", default_value="true"),
+        DeclareLaunchArgument("truth_map_yaml", default_value=default_truth),
+        DeclareLaunchArgument(
+            "truth_registration_id",
+            default_value="dev_office_01:start_southwest:inverse_spawn_pose",
+        ),
+        DeclareLaunchArgument("truth_to_map_x_m", default_value="6.5"),
+        DeclareLaunchArgument("truth_to_map_y_m", default_value="4.5"),
+        DeclareLaunchArgument("truth_to_map_yaw_rad", default_value="0.0"),
+        simulation,
+        slam,
+        navigation,
+        evaluator,
+        policy,
+        rviz_node,
+    ])

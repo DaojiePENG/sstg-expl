@@ -1,0 +1,43 @@
+schema: sstg_system_sim_truth_map/v1
+world_id: dev_lab_01
+source_world: ../world.sdf
+slice_z_m: 0.15
+resolution_m: 0.05
+origin_m:
+- -8.0
+- -6.0
+shape:
+- 240
+- 320
+occupied_cells: 10092
+free_cells: 66708
+collision_models:
+- wall_north
+- wall_south
+- wall_west
+- wall_east
+- wall_lab_w_s
+- wall_lab_w_n
+- wall_lab_e_s
+- wall_lab_e_n
+- wall_lab_left_n_w
+- wall_lab_left_n_e
+- wall_lab_right_s_w
+- wall_lab_right_s_e
+- bench_01
+- bench_02
+- bench_03
+- bench_04
+- bench_05
+- bench_06
+- cabinet_01
+target_count: 4
+sha256:
+  world.sdf: 8fecea2f50a24c1e458ebefe405abfa0a665ab24469c18915bdb2d174a6471d6
+  metadata.yaml: 45dfd18a1cf8a8e29474b825efd1a90fc92eb7f58a56ca96b54c76ad73b6000f
+  starts.yaml: 4394a66bf292693e70244074edeccc6544a620b16bb418af684318a8c296ae92
+  targets.yaml: e4e7ad2c0e855b37633fa309e1ff011ce1af34377b5ef1bc184408b371394eae
+  truth_map.pgm: ef4d8ef0ef9e852b2c0fc06fbfc3b40b0e09a12548838c2f8ff369395db73a24
+  truth_map.yaml: d9da451897aad747bb8d1773e41f6d1464c49588ff0a777b12a49b1d54ce0a41
+  scene.yaml: 3d9373718babcfa59eeb1a5f62ed971e07586f390e90b1dd46f93a4ceb35a210
+generated_scene_spec: ../scene.yaml

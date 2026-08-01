@@ -1,0 +1,4 @@
+schema: sstg_system_sim_condition/v1
+condition: odometry_drift
+odometry: {translation_drift_per_m: TBD_FROM_PHYSICAL_PILOT, yaw_drift_deg_per_rad: TBD_FROM_PHYSICAL_PILOT}
+status: placeholder_not_runnable
