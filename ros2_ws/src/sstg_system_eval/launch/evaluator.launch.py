@@ -22,7 +22,10 @@ def generate_launch_description():
         "truth_map.yaml",
     )
     return LaunchDescription([
-        DeclareLaunchArgument("params_file", default_value=default_params),
+        DeclareLaunchArgument(
+            "evaluator_params_file", default_value=default_params
+        ),
+        DeclareLaunchArgument("use_sim_time", default_value="true"),
         DeclareLaunchArgument("truth_map_yaml", default_value=default_truth),
         DeclareLaunchArgument("targets_yaml", default_value=""),
         DeclareLaunchArgument(
@@ -43,8 +46,11 @@ def generate_launch_description():
             name="sstg_system_eval",
             output="screen",
             parameters=[
-                LaunchConfiguration("params_file"),
+                LaunchConfiguration("evaluator_params_file"),
                 {
+                    "use_sim_time": ParameterValue(
+                        LaunchConfiguration("use_sim_time"), value_type=bool
+                    ),
                     "truth_map_yaml": LaunchConfiguration("truth_map_yaml"),
                     "targets_yaml": LaunchConfiguration("targets_yaml"),
                     "truth_registration_id": LaunchConfiguration(

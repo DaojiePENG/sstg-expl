@@ -1530,7 +1530,8 @@ def _artifact_writer_program() -> str:
             "        'goal_timeout_s': 180.0}})",
             "write_json('evaluation_manifest.json', {",
             "    'schema': 'sstg_system_sim_evaluator_manifest/v2',",
-            "    'truth_access': 'evaluator_only'})",
+            "    'truth_access': 'evaluator_only',",
+            "    'parameters': {'use_sim_time': True}})",
             "terminal = {'event': 'session_finished', 'payload': {}}",
             "write_jsonl('evaluation_observed_policy_trace.jsonl', [terminal])",
             "write_jsonl('evaluation_metrics.jsonl', [",
@@ -1817,6 +1818,29 @@ def test_artifact_audit_rejects_runtime_budget_drift(tmp_path: Path) -> None:
     assert any(
         "runtime experiment budget disagrees" in error
         for error in audit["errors"]
+    )
+
+
+def test_artifact_audit_rejects_evaluator_without_simulation_clock(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    subprocess.run(
+        [sys.executable, "-c", _artifact_writer_program(), str(output), "exit"],
+        check=True,
+    )
+    manifest_path = output / "evaluation_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["parameters"]["use_sim_time"] = False
+    manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+    audit = validate_completed_artifacts(output)
+
+    assert audit["valid"] is False
+    assert (
+        "evaluation_manifest.json: use_sim_time must be true"
+        in audit["errors"]
     )
 
 

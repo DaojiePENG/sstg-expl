@@ -615,6 +615,16 @@ def validate_completed_artifacts(
         errors.append(
             "evaluation_manifest.json: truth_access must be evaluator_only"
         )
+    if evaluator_manifest is not None:
+        evaluator_parameters = evaluator_manifest.get("parameters")
+        if not isinstance(evaluator_parameters, Mapping):
+            errors.append(
+                "evaluation_manifest.json: parameters must be an object"
+            )
+        elif evaluator_parameters.get("use_sim_time") is not True:
+            errors.append(
+                "evaluation_manifest.json: use_sim_time must be true"
+            )
 
     core_bag = {"required": False, "complete": None}
     if expected_recording_contract is not None:

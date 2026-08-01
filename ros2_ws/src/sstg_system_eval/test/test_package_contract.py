@@ -19,6 +19,7 @@ def test_evaluator_config_keeps_truth_outputs_out_of_policy_namespace():
     )
 
     assert config["map_topic"] == "/map"
+    assert config["use_sim_time"] is True
     assert config["trace_topic"].startswith("/policy/")
     assert config["metrics_topic"].startswith("/evaluation/")
     assert config["status_topic"].startswith("/evaluation/")
@@ -92,13 +93,27 @@ def test_evaluator_launch_derives_targets_and_rejects_output_reuse_by_default():
         encoding="utf-8"
     )
 
+    assert '"evaluator_params_file", default_value=default_params' in source
+    assert 'LaunchConfiguration("evaluator_params_file")' in source
+    assert 'DeclareLaunchArgument("params_file"' not in source
     assert 'DeclareLaunchArgument("targets_yaml", default_value="")' in source
+    assert 'DeclareLaunchArgument("use_sim_time", default_value="true")' in source
+    assert '"use_sim_time": ParameterValue(' in source
     assert (
         'DeclareLaunchArgument("allow_existing_output", default_value="false")'
         in source
     )
     assert '"allow_existing_output": ParameterValue(' in source
     assert "default_targets" not in source
+
+
+def test_evaluator_fails_closed_without_simulation_time():
+    source = (PACKAGE / "sstg_system_eval/evaluator_node.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'self.get_parameter("use_sim_time").value' in source
+    assert "use_sim_time must be true for timestamp-paired simulation metrics" in source
 
 
 def test_frozen_camera_proxy_has_valid_frozen_geometry():

@@ -128,6 +128,11 @@ ros2 launch sstg_system_eval evaluator.launch.py \
   output_dir:=system_sim_outputs/runs/development/dev_office_01/run_001
 ```
 
+The launch uses the evaluator-specific `evaluator_params_file` argument and
+forces `use_sim_time:=true`. The node refuses to start without the simulation
+clock because ATE pairing compares ground-truth message stamps with TF stamps;
+mixing wall time and simulation time would invalidate the expiration logic.
+
 For formal runs, enforce the filesystem and ROS-domain allowlists specified in
 `experiments/system_sim/configs/topic_access.yaml`; this package-level boundary
 is an auditable development safeguard, not a security sandbox.

@@ -337,6 +337,11 @@ class SystemEvaluatorNode(Node):
             self.declare_parameter(name, value)
 
     def _validate_boundary(self) -> None:
+        use_sim_time = self.get_parameter("use_sim_time").value
+        if use_sim_time is not True:
+            raise ValueError(
+                "use_sim_time must be true for timestamp-paired simulation metrics"
+            )
         if not self.metrics_topic.startswith("/evaluation/"):
             raise ValueError("metrics_topic must remain under /evaluation/")
         if not self.status_topic.startswith("/evaluation/"):

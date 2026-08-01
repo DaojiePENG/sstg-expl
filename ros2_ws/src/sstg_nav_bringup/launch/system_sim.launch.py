@@ -58,6 +58,7 @@ def generate_launch_description():
     nav2_params = LaunchConfiguration("nav2_params")
     slam_params = LaunchConfiguration("slam_params")
     policy_params = LaunchConfiguration("policy_params")
+    evaluator_params = LaunchConfiguration("evaluator_params")
     strategy = LaunchConfiguration("strategy")
     coverage_objective = LaunchConfiguration("coverage_objective")
     policy_seed = LaunchConfiguration("policy_seed")
@@ -80,6 +81,7 @@ def generate_launch_description():
     default_slam = os.path.join(bringup_share, "config", "slam_toolbox.yaml")
     default_nav2 = os.path.join(bringup_share, "config", "nav2_params.yaml")
     default_policy = os.path.join(policy_share, "config", "policy.yaml")
+    default_evaluator = os.path.join(evaluator_share, "config", "evaluator.yaml")
     default_truth = os.path.join(
         gazebo_share,
         "worlds", "development", "multi_room_office", "dev_office_01",
@@ -156,6 +158,8 @@ def generate_launch_description():
             os.path.join(evaluator_share, "launch", "evaluator.launch.py")
         ),
         launch_arguments={
+            "evaluator_params_file": evaluator_params,
+            "use_sim_time": "true",
             "truth_map_yaml": truth_map_yaml,
             "truth_registration_id": truth_registration_id,
             "truth_to_map_x_m": truth_to_map_x_m,
@@ -216,6 +220,7 @@ def generate_launch_description():
         DeclareLaunchArgument("nav2_params", default_value=default_nav2),
         DeclareLaunchArgument("slam_params", default_value=default_slam),
         DeclareLaunchArgument("policy_params", default_value=default_policy),
+        DeclareLaunchArgument("evaluator_params", default_value=default_evaluator),
         DeclareLaunchArgument("strategy", default_value="sstg"),
         DeclareLaunchArgument("coverage_objective", default_value="joint"),
         DeclareLaunchArgument(

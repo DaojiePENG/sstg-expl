@@ -708,6 +708,16 @@ def test_system_sim_budget_matches_policy_and_is_required_by_launch():
         assert required_declaration in launch
 
 
+def test_system_launch_isolates_evaluator_parameters_and_simulation_clock():
+    launch = SYSTEM_LAUNCH_PATH.read_text(encoding="utf-8")
+
+    assert 'evaluator_params = LaunchConfiguration("evaluator_params")' in launch
+    assert '"evaluator_params_file": evaluator_params' in launch
+    assert '"use_sim_time": "true"' in launch
+    assert 'DeclareLaunchArgument("evaluator_params",' in launch
+    assert '"params_file": evaluator_params' not in launch
+
+
 def test_core_rosbag_profile_matches_shared_stack_and_is_enabled():
     shared = yaml.safe_load((
         ROOT / "experiments/system_sim/configs/shared_stack.yaml"

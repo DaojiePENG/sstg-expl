@@ -54,13 +54,16 @@ formal comparison table.
 
 ## Logged calibration findings
 
-- The final evaluator diagnostics report 0, 10, 4 and 55 expired ATE samples
+- All four evaluator manifests record `use_sim_time=false`. A launch-argument
+  collision made the evaluator consume Nav2's parameter file, so its TF retry
+  expiration compared wall time with simulation-stamped ground truth. The
+  final diagnostics consequently report 0, 10, 4 and 55 expired ATE samples
   for office, laboratory, warehouse and corridor respectively; office and
-  corridor also had two samples still pending at the final snapshot. The log
-  warning is rate-limited, so its one visible line per affected run is not the
-  drop count. Pairing fractions remained 99.959%, 99.829%, 99.927% and 99.065%
-  respectively, and no aggregate metric is missing, but the time-alignment path
-  should be calibrated before the formal schedule is frozen.
+  corridor also had two samples pending. Accepted exact-stamp pairs produced
+  the displayed ATE values, but those values are calibration diagnostics only
+  and must be replaced by a corrected-clock rerun. Coverage, navigation,
+  collision, clearance, target and travel metrics do not use this retry-age
+  calculation, but the complete pilot remains development evidence.
 - SLAM Toolbox requested 50 Ceres threads while the installed Ceres threading
   model supports at most 24. The warning occurred twice in the laboratory and
   56 times in the corridor. The pilot remains frozen as executed; the thread
