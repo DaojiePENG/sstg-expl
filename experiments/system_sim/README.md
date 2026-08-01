@@ -34,6 +34,13 @@ short videos, and a hash manifest.  Raw bags are retained so figures and video
 frames can be regenerated; development media is labeled separately from formal
 evidence.
 
+Scheduled runs also start the upstream `ros2 bag record` CLI automatically.
+The frozen `zstd_fast` MCAP profile is written to `bags/core`; its topic counts,
+duration, metadata, MCAP files and SHA-256 hashes are part of terminal artifact
+validation.  A missing `/map`, `/scan`, ground-truth path, policy trace, world
+clock/stats, or task-camera stream fails the run instead of producing a partial
+figure later.
+
 ## Host dependencies
 
 Use the ROS system Python, not the project's Python 3.10 Conda environment:
@@ -156,7 +163,8 @@ of reusing it, because the runtime JSONL writers append.  A zero ROS launch
 return code is not sufficient for completion.  `terminal_completed` is written
 only when both manifests, all policy/evaluator JSONL evidence, evaluator
 ingestion of `session_finished`, the final evaluator snapshot, and their
-SHA-256 hashes pass the runner audit.  The audit also rejects fatal runtime
+SHA-256 hashes pass the runner audit.  The finalized core MCAP and its required
+non-empty topics must pass the same audit.  The audit also rejects fatal runtime
 markers and any child-process crash in `launch.log`; an expected `-2` signal
 exit is accepted only inside the runner's ordered shutdown markers.  The same
 rule covers recorded SIGTERM/SIGKILL escalation, while required long-running

@@ -108,6 +108,16 @@ def _load_sim_launch_module():
         sys.path.remove(str(package_source))
 
 
+def _load_system_launch_module():
+    pytest.importorskip("launch")
+    spec = importlib.util.spec_from_file_location(
+        "sstg_system_sim_launch_test", SYSTEM_LAUNCH_PATH
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _xml_signature(element):
     return (
         element.tag,
@@ -692,6 +702,27 @@ def test_system_sim_budget_matches_policy_and_is_required_by_launch():
         )
         assert required_declaration in launch
 
+
+def test_core_rosbag_profile_matches_shared_stack_and_is_enabled():
+    shared = yaml.safe_load((
+        ROOT / "experiments/system_sim/configs/shared_stack.yaml"
+    ).read_text(encoding="utf-8"))
+    module = _load_system_launch_module()
+    launch = SYSTEM_LAUNCH_PATH.read_text(encoding="utf-8")
+    package = ElementTree.parse(
+        ROOT / "ros2_ws/src/sstg_nav_bringup/package.xml"
+    ).getroot()
+    dependencies = {node.text for node in package.findall("exec_depend")}
+    recording = shared["recording"]
+
+    assert recording["enabled"] is True
+    assert recording["storage_id"] == module.CORE_BAG_STORAGE_ID
+    assert recording["storage_preset_profile"] == module.CORE_BAG_STORAGE_PRESET
+    assert recording["topics"] == list(module.CORE_BAG_TOPICS)
+    assert 'DeclareLaunchArgument("record_bag", default_value="true")' in launch
+    assert 'name="sstg_core_bag_recorder"' in launch
+    assert 'PathJoinSubstitution([output_dir, "bags", "core"])' in launch
+    assert {"rosbag2", "rosbag2_storage_mcap"}.issubset(dependencies)
 
 def test_development_registry_has_four_distinct_generated_scene_families():
     registry = yaml.safe_load((

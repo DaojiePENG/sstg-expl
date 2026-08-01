@@ -1,12 +1,40 @@
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    IncludeLaunchDescription,
+)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 import os
+
+
+CORE_BAG_STORAGE_ID = "mcap"
+CORE_BAG_STORAGE_PRESET = "zstd_fast"
+CORE_BAG_TOPICS = (
+    "/clock",
+    "/tf",
+    "/tf_static",
+    "/scan",
+    "/imu",
+    "/joint_states",
+    "/odom",
+    "/map",
+    "/cmd_vel",
+    "/plan",
+    "/policy/decision_trace",
+    "/policy/status",
+    "/policy/candidates",
+    "/evaluation/ground_truth_odom",
+    "/evaluation/world_stats",
+    "/evaluation/metrics",
+    "/evaluation/status",
+    "/task_camera/image_raw",
+)
 
 
 def generate_launch_description():
@@ -26,6 +54,7 @@ def generate_launch_description():
     start_z = LaunchConfiguration("start_z")
     start_yaw = LaunchConfiguration("start_yaw")
     output_dir = LaunchConfiguration("output_dir")
+    record_bag = LaunchConfiguration("record_bag")
     nav2_params = LaunchConfiguration("nav2_params")
     slam_params = LaunchConfiguration("slam_params")
     policy_params = LaunchConfiguration("policy_params")
@@ -147,6 +176,28 @@ def generate_launch_description():
         parameters=[{"use_sim_time": True}],
         condition=IfCondition(rviz),
     )
+    core_bag_recorder = ExecuteProcess(
+        name="sstg_core_bag_recorder",
+        cmd=[
+            "ros2",
+            "bag",
+            "record",
+            "--storage",
+            CORE_BAG_STORAGE_ID,
+            "--storage-preset-profile",
+            CORE_BAG_STORAGE_PRESET,
+            "--output",
+            PathJoinSubstitution([output_dir, "bags", "core"]),
+            "--disable-keyboard-controls",
+            "--use-sim-time",
+            "--node-name",
+            "sstg_core_bag_recorder",
+            "--topics",
+            *CORE_BAG_TOPICS,
+        ],
+        output="screen",
+        condition=IfCondition(record_bag),
+    )
 
     return LaunchDescription([
         DeclareLaunchArgument("world", default_value=default_world),
@@ -161,6 +212,7 @@ def generate_launch_description():
             "output_dir",
             default_value="system_sim_outputs/runs/development/manual",
         ),
+        DeclareLaunchArgument("record_bag", default_value="true"),
         DeclareLaunchArgument("nav2_params", default_value=default_nav2),
         DeclareLaunchArgument("slam_params", default_value=default_slam),
         DeclareLaunchArgument("policy_params", default_value=default_policy),
@@ -200,6 +252,7 @@ def generate_launch_description():
         DeclareLaunchArgument("truth_to_map_y_m", default_value="4.5"),
         DeclareLaunchArgument("truth_to_map_yaw_rad", default_value="0.0"),
         simulation,
+        core_bag_recorder,
         slam,
         navigation,
         evaluator,

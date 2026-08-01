@@ -486,6 +486,36 @@ def test_completed_run_without_terminal_snapshot_fails_closed(tmp_path: Path) ->
         )
 
 
+def test_completed_run_verifies_extra_declared_bag_hashes(tmp_path: Path) -> None:
+    project = _fixture_project(tmp_path)
+    root = project["root"]
+    study = project["study"]
+    rows = project["rows"]
+    assert isinstance(root, Path) and isinstance(study, Path)
+    assert isinstance(rows, list)
+    row = next(
+        row for row in rows
+        if row["method"] == "sstg" and row["replicate_seed"] == "1"
+    )
+    run_dir = root / row["run_output_dir"]
+    bag = run_dir / "bags/core/core_0.mcap"
+    bag.parent.mkdir(parents=True)
+    bag.write_bytes(b"mcap evidence")
+    manifest_path = run_dir / "run_launch_manifest.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["execution"]["artifact_audit"]["files"][
+        "bags/core/core_0.mcap"
+    ] = {"sha256": "0" * 64, "size_bytes": bag.stat().st_size}
+    manifest_path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+
+    with pytest.raises(AnalysisError, match="hash_mismatch:bags/core/core_0.mcap"):
+        analyze_study(
+            root=root,
+            study_dir=study,
+            output_dir=root / "outputs/bad_bag_hash",
+        )
+
+
 def test_nonempty_analysis_output_is_refused_by_default(tmp_path: Path) -> None:
     project = _fixture_project(tmp_path)
     root = project["root"]

@@ -47,6 +47,39 @@ task_sensor:
   horizontal_fov_deg: 59.9886811502
   far_clip_m: 5.0
   update_rate_hz: 5.0
+recording:
+  enabled: true
+  backend: rosbag2
+  storage_id: mcap
+  storage_preset_profile: zstd_fast
+  output: bags/core
+  topics:
+    - /clock
+    - /tf
+    - /tf_static
+    - /scan
+    - /imu
+    - /joint_states
+    - /odom
+    - /map
+    - /cmd_vel
+    - /plan
+    - /policy/decision_trace
+    - /policy/status
+    - /policy/candidates
+    - /evaluation/ground_truth_odom
+    - /evaluation/world_stats
+    - /evaluation/metrics
+    - /evaluation/status
+    - /task_camera/image_raw
+  required_nonempty_topics:
+    - /clock
+    - /scan
+    - /map
+    - /policy/decision_trace
+    - /evaluation/ground_truth_odom
+    - /evaluation/world_stats
+    - /task_camera/image_raw
 shared_autonomy:
   mapping: slam_toolbox_async
   navigation: nav2

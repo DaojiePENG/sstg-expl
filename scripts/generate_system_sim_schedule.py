@@ -39,6 +39,35 @@ EXPERIMENT_BUDGET_FIELDS = (
 GAZEBO_SEED_MIN = 1
 GAZEBO_SEED_MAX = 0x7FFFFFFF
 SEED_LAUNCH_ARGUMENTS = ("policy_seed", "simulation_seed")
+CORE_BAG_TOPICS = (
+    "/clock",
+    "/tf",
+    "/tf_static",
+    "/scan",
+    "/imu",
+    "/joint_states",
+    "/odom",
+    "/map",
+    "/cmd_vel",
+    "/plan",
+    "/policy/decision_trace",
+    "/policy/status",
+    "/policy/candidates",
+    "/evaluation/ground_truth_odom",
+    "/evaluation/world_stats",
+    "/evaluation/metrics",
+    "/evaluation/status",
+    "/task_camera/image_raw",
+)
+CORE_BAG_REQUIRED_TOPICS = (
+    "/clock",
+    "/scan",
+    "/map",
+    "/policy/decision_trace",
+    "/evaluation/ground_truth_odom",
+    "/evaluation/world_stats",
+    "/task_camera/image_raw",
+)
 CSV_FIELDS = (
     "schema",
     "study_id",
@@ -114,6 +143,37 @@ def validate_seed_contract(
         "launch_argument_columns": {
             argument: "replicate_seed" for argument in SEED_LAUNCH_ARGUMENTS
         },
+    }
+
+
+def validate_recording_contract(
+    value: Any, *, label: str = "shared_stack.recording"
+) -> dict[str, Any]:
+    """Validate the fixed rosbag2/MCAP evidence profile."""
+    if not isinstance(value, Mapping):
+        raise ScheduleError(f"{label} must be a mapping")
+    expected_scalars = {
+        "enabled": True,
+        "backend": "rosbag2",
+        "storage_id": "mcap",
+        "storage_preset_profile": "zstd_fast",
+        "output": "bags/core",
+    }
+    for field, expected in expected_scalars.items():
+        if type(value.get(field)) is not type(expected) or value.get(field) != expected:
+            raise ScheduleError(f"{label}.{field} must be {expected!r}")
+    topics = value.get("topics")
+    if not isinstance(topics, list) or tuple(topics) != CORE_BAG_TOPICS:
+        raise ScheduleError(f"{label}.topics must match the frozen core topic list")
+    required = value.get("required_nonempty_topics")
+    if not isinstance(required, list) or tuple(required) != CORE_BAG_REQUIRED_TOPICS:
+        raise ScheduleError(
+            f"{label}.required_nonempty_topics must match the frozen required list"
+        )
+    return {
+        **expected_scalars,
+        "topics": list(CORE_BAG_TOPICS),
+        "required_nonempty_topics": list(CORE_BAG_REQUIRED_TOPICS),
     }
 
 
@@ -674,6 +734,9 @@ def freeze_schedule(
         shared_stack_path, "sstg_system_sim_shared_stack/v1"
     )
     seed_contract = validate_seed_contract(shared_stack.get("physics"))
+    recording_contract = validate_recording_contract(
+        shared_stack.get("recording")
+    )
     experiment_budget, applied_budget_overrides = _effective_experiment_budget(
         shared_stack, evidence_tier, budget_overrides
     )
@@ -919,6 +982,7 @@ def freeze_schedule(
         },
         "randomization": {"seed": randomization_seed},
         "seed_contract": seed_contract,
+        "recording_contract": recording_contract,
         "experiment_budget": experiment_budget,
         "budget_provenance": {
             "source": (
@@ -950,6 +1014,9 @@ def freeze_schedule(
                 "freeze_status": shared_stack.get("freeze_status"),
                 "seed_contract": validate_seed_contract(
                     shared_stack.get("physics")
+                ),
+                "recording_contract": validate_recording_contract(
+                    shared_stack.get("recording")
                 ),
                 "experiment_budget": validate_experiment_budget(
                     shared_stack.get("experiment_budget"),
@@ -989,6 +1056,7 @@ def freeze_schedule(
                 "headless": "true",
                 "rviz": "false",
                 "evaluator": "true",
+                "record_bag": "true",
             },
             "argument_columns": {
                 "world": "world_sdf",

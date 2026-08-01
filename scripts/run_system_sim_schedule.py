@@ -29,6 +29,8 @@ import yaml
 
 try:
     from scripts.generate_system_sim_schedule import (
+        CORE_BAG_REQUIRED_TOPICS,
+        CORE_BAG_TOPICS,
         EXPERIMENT_BUDGET_FIELDS,
         FREEZE_SCHEMA,
         GAZEBO_SEED_MAX,
@@ -39,11 +41,14 @@ try:
         sha256_file,
         sha256_tree,
         validate_experiment_budget,
+        validate_recording_contract,
     )
 except ModuleNotFoundError as error:
     if error.name != "scripts":
         raise
     from generate_system_sim_schedule import (  # type: ignore[no-redef]
+        CORE_BAG_REQUIRED_TOPICS,
+        CORE_BAG_TOPICS,
         EXPERIMENT_BUDGET_FIELDS,
         FREEZE_SCHEMA,
         GAZEBO_SEED_MAX,
@@ -54,6 +59,7 @@ except ModuleNotFoundError as error:
         sha256_file,
         sha256_tree,
         validate_experiment_budget,
+        validate_recording_contract,
     )
 
 
@@ -79,6 +85,7 @@ class RunPlan:
     launch_file: str
     launch_arguments: Mapping[str, str]
     experiment_budget: Mapping[str, float | int]
+    recording_contract: Mapping[str, Any] | None
     command: tuple[str, ...]
     schedule_row: Mapping[str, str]
 
@@ -145,6 +152,7 @@ REQUIRED_RUNTIME_PROCESS_PREFIXES = (
     "lifecycle_manager-",
     "system_eval_node-",
     "policy_node-",
+    "sstg_core_bag_recorder-",
 )
 
 
@@ -264,10 +272,138 @@ def jsonl_contains_event(path: Path, event: str) -> bool:
     return False
 
 
+def _core_bag_artifacts(
+    output_dir: Path,
+    contract: Mapping[str, Any],
+) -> tuple[dict[str, dict[str, Any]], list[str], dict[str, Any]]:
+    """Validate a finalized rosbag2 MCAP and return hashable evidence records."""
+    files: dict[str, dict[str, Any]] = {}
+    errors: list[str] = []
+    summary: dict[str, Any] = {
+        "required": True,
+        "storage_id": None,
+        "message_count": 0,
+        "duration_ns": 0,
+        "topic_message_counts": {},
+        "complete": False,
+    }
+    bag_dir = output_dir / str(contract.get("output", ""))
+    if bag_dir.is_symlink() or not bag_dir.is_dir():
+        return files, ["core bag directory is missing or is a symlink"], summary
+    try:
+        resolved_output_dir = output_dir.resolve(strict=True)
+        resolved_bag_dir = bag_dir.resolve(strict=True)
+        resolved_bag_dir.relative_to(resolved_output_dir)
+    except (OSError, ValueError):
+        return files, ["core bag directory escapes the run output"], summary
+    metadata_path = bag_dir / "metadata.yaml"
+    if metadata_path.is_symlink() or not metadata_path.is_file():
+        return files, ["core bag metadata.yaml is missing or is a symlink"], summary
+    try:
+        metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        return files, [f"core bag metadata is invalid: {error}"], summary
+    information = (
+        metadata.get("rosbag2_bagfile_information")
+        if isinstance(metadata, Mapping)
+        else None
+    )
+    if not isinstance(information, Mapping):
+        return files, ["core bag metadata lacks rosbag2_bagfile_information"], summary
+
+    storage_id = information.get("storage_identifier")
+    summary["storage_id"] = storage_id
+    if storage_id != contract.get("storage_id"):
+        errors.append("core bag storage identifier disagrees with recording contract")
+    message_count = information.get("message_count")
+    if type(message_count) is not int or message_count <= 0:
+        errors.append("core bag message_count must be a positive integer")
+    else:
+        summary["message_count"] = message_count
+    duration = information.get("duration")
+    duration_ns = duration.get("nanoseconds") if isinstance(duration, Mapping) else None
+    if type(duration_ns) is not int or duration_ns <= 0:
+        errors.append("core bag duration must be positive")
+    else:
+        summary["duration_ns"] = duration_ns
+
+    topic_counts: dict[str, int] = {}
+    topic_records = information.get("topics_with_message_count")
+    if not isinstance(topic_records, list):
+        errors.append("core bag metadata has no topic message counts")
+    else:
+        for record in topic_records:
+            if not isinstance(record, Mapping):
+                errors.append("core bag topic record is not a mapping")
+                continue
+            topic_metadata = record.get("topic_metadata")
+            name = (
+                topic_metadata.get("name")
+                if isinstance(topic_metadata, Mapping)
+                else None
+            )
+            count = record.get("message_count")
+            if not isinstance(name, str) or not name.startswith("/"):
+                errors.append("core bag topic record has an invalid name")
+                continue
+            if type(count) is not int or count < 0:
+                errors.append(f"core bag topic {name} has an invalid count")
+                continue
+            if name in topic_counts:
+                errors.append(f"core bag topic is duplicated in metadata: {name}")
+                continue
+            topic_counts[name] = count
+    summary["topic_message_counts"] = topic_counts
+    for topic in contract.get("required_nonempty_topics", CORE_BAG_REQUIRED_TOPICS):
+        if topic_counts.get(str(topic), 0) <= 0:
+            errors.append(f"core bag required topic is empty or absent: {topic}")
+
+    relative_paths = information.get("relative_file_paths")
+    if not isinstance(relative_paths, list) or not relative_paths:
+        errors.append("core bag metadata names no MCAP files")
+        relative_paths = []
+    metadata_key = metadata_path.relative_to(output_dir).as_posix()
+    try:
+        files[metadata_key] = {
+            "sha256": sha256_file(metadata_path),
+            "size_bytes": metadata_path.stat().st_size,
+        }
+    except OSError as error:
+        errors.append(f"cannot hash core bag metadata: {error}")
+    for relative in relative_paths:
+        if not isinstance(relative, str):
+            errors.append("core bag MCAP path is not a string")
+            continue
+        candidate = bag_dir / relative
+        try:
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(resolved_bag_dir)
+        except (OSError, ValueError):
+            errors.append(f"core bag MCAP path escapes or is missing: {relative}")
+            continue
+        if candidate.is_symlink() or not resolved.is_file() or resolved.suffix != ".mcap":
+            errors.append(f"core bag path is not a regular MCAP file: {relative}")
+            continue
+        key = resolved.relative_to(resolved_output_dir).as_posix()
+        try:
+            size_bytes = resolved.stat().st_size
+            if size_bytes <= 0:
+                errors.append(f"core bag MCAP file is empty: {relative}")
+            files[key] = {
+                "sha256": sha256_file(resolved),
+                "size_bytes": size_bytes,
+            }
+        except OSError as error:
+            errors.append(f"cannot hash core bag MCAP file {relative}: {error}")
+    summary["complete"] = not errors
+    return files, errors, summary
+
+
 def validate_completed_artifacts(
     output_dir: Path,
     *,
     expected_experiment_budget: Mapping[str, float | int] | None = None,
+    expected_recording_contract: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Audit the minimum policy/evaluator evidence required for completion."""
     errors: list[str] = []
@@ -344,6 +480,14 @@ def validate_completed_artifacts(
             "evaluation_manifest.json: truth_access must be evaluator_only"
         )
 
+    core_bag = {"required": False, "complete": None}
+    if expected_recording_contract is not None:
+        bag_files, bag_errors, core_bag = _core_bag_artifacts(
+            output_dir, expected_recording_contract
+        )
+        files.update(bag_files)
+        errors.extend(bag_errors)
+
     launch_runtime_errors: list[str] = []
     launch_log_path = output_dir / "launch.log"
     if launch_log_path.is_file():
@@ -418,7 +562,9 @@ def validate_completed_artifacts(
             "evaluator_ingested_session_finished": ingested_terminal,
             "evaluator_final_snapshot": final_snapshot,
             "launch_log_clean": not launch_runtime_errors,
+            "core_bag_complete": core_bag.get("complete"),
         },
+        "core_bag": core_bag,
     }
 
 
@@ -764,6 +910,49 @@ def _seed_contract(
     return replicate_seed
 
 
+def _normalized_recording_contract(value: Any, *, label: str) -> dict[str, Any]:
+    try:
+        return validate_recording_contract(value, label=label)
+    except ScheduleError as error:
+        raise RunnerError(str(error)) from error
+
+
+def _recording_contract(
+    *,
+    root: Path,
+    manifest: Mapping[str, Any],
+    fixed_args: Mapping[str, str],
+    column_args: Mapping[str, str],
+) -> dict[str, Any]:
+    """Cross-check the shared, frozen, and launch rosbag2 profile."""
+    inputs = manifest.get("inputs")
+    if not isinstance(inputs, Mapping):
+        raise RunnerError("freeze manifest has no inputs mapping")
+    shared_record = inputs.get("shared_stack")
+    if not isinstance(shared_record, Mapping):
+        raise RunnerError("freeze manifest has no shared stack record")
+    shared_path = _resolve_inside(
+        root, str(shared_record.get("path", "")), "shared stack"
+    )
+    shared_stack = _load_yaml_mapping(shared_path, "shared stack")
+    declared = _normalized_recording_contract(
+        shared_stack.get("recording"), label="shared_stack.recording"
+    )
+    recorded = _normalized_recording_contract(
+        shared_record.get("recording_contract"),
+        label="freeze manifest shared_stack.recording_contract",
+    )
+    frozen = _normalized_recording_contract(
+        manifest.get("recording_contract"),
+        label="freeze manifest recording_contract",
+    )
+    if recorded != declared or frozen != declared:
+        raise RunnerError("freeze manifest recording contract disagrees with its input")
+    if fixed_args.get("record_bag") != "true" or "record_bag" in column_args:
+        raise RunnerError("launch contract must fix record_bag=true")
+    return frozen
+
+
 def load_run_plan(
     *, root: Path, schedule_dir: Path, schedule_id: str
 ) -> RunPlan:
@@ -833,6 +1022,12 @@ def load_run_plan(
         fixed_args=fixed_args,
         column_args=column_args,
     )
+    recording_contract = _recording_contract(
+        root=root,
+        manifest=manifest,
+        fixed_args=fixed_args,
+        column_args=column_args,
+    )
     launch_arguments = dict(fixed_args)
     for argument, column in column_args.items():
         value = row.get(column)
@@ -881,6 +1076,7 @@ def load_run_plan(
         launch_file=launch_file,
         launch_arguments=launch_arguments,
         experiment_budget=experiment_budget,
+        recording_contract=recording_contract,
         command=command,
         schedule_row=row,
     )
@@ -899,6 +1095,11 @@ def _manifest_value(plan: RunPlan, *, status: str, **updates: Any) -> dict[str, 
         "schedule_dir": plan.schedule_dir.relative_to(plan.root).as_posix(),
         "output_dir": plan.output_dir.relative_to(plan.root).as_posix(),
         "experiment_budget": dict(plan.experiment_budget),
+        "recording_contract": (
+            dict(plan.recording_contract)
+            if plan.recording_contract is not None
+            else None
+        ),
         "launch": {
             "package": plan.launch_package,
             "file": plan.launch_file,
@@ -1220,6 +1421,7 @@ def execute_run(
         artifact_audit = validate_completed_artifacts(
             plan.output_dir,
             expected_experiment_budget=plan.experiment_budget,
+            expected_recording_contract=plan.recording_contract,
         )
         wall_elapsed_s = max(0.0, time.monotonic() - supervisor_started)
         _write_manifest(
@@ -1267,6 +1469,7 @@ def execute_run(
         artifact_audit = validate_completed_artifacts(
             plan.output_dir,
             expected_experiment_budget=plan.experiment_budget,
+            expected_recording_contract=plan.recording_contract,
         )
         _write_manifest(
             manifest_path,
@@ -1286,6 +1489,7 @@ def execute_run(
     artifact_audit = validate_completed_artifacts(
         plan.output_dir,
         expected_experiment_budget=plan.experiment_budget,
+        expected_recording_contract=plan.recording_contract,
     )
     status = outcome.status
     if status == "terminal_observed":
@@ -1409,6 +1613,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "output_dir": str(plan.output_dir),
                 "command": list(plan.command),
                 "experiment_budget": dict(plan.experiment_budget),
+                "recording_contract": (
+                    dict(plan.recording_contract)
+                    if plan.recording_contract is not None
+                    else None
+                ),
                 "supervision": {
                     "wall_timeout_s": args.wall_timeout_s,
                     "evaluator_flush_s": args.evaluator_flush_s,

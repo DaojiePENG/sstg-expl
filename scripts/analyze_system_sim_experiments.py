@@ -343,16 +343,29 @@ def _verify_declared_artifacts(
     files = audit.get("files")
     if not isinstance(files, Mapping):
         raise AnalysisError(f"artifact audit files is not a mapping: {run_dir}")
-    required = REQUIRED_COMPLETION_FILES if completed else tuple(files)
+    required = (
+        tuple(sorted(set(REQUIRED_COMPLETION_FILES) | set(files)))
+        if completed
+        else tuple(files)
+    )
     errors: list[str] = []
     for name in required:
         record = files.get(name)
         if not isinstance(record, Mapping):
             errors.append(f"missing_hash:{name}")
             continue
-        path = run_dir / name
+        relative = Path(str(name))
+        if relative.is_absolute() or ".." in relative.parts:
+            errors.append(f"unsafe_path:{name}")
+            continue
+        path = run_dir / relative
+        try:
+            path.resolve(strict=False).relative_to(run_dir.resolve())
+        except ValueError:
+            errors.append(f"unsafe_path:{name}")
+            continue
         expected = str(record.get("sha256", ""))
-        if not path.is_file():
+        if path.is_symlink() or not path.is_file():
             errors.append(f"missing_file:{name}")
         elif len(expected) != 64 or sha256_file(path) != expected:
             errors.append(f"hash_mismatch:{name}")

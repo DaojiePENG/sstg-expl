@@ -15,6 +15,8 @@ import yaml
 
 import scripts.run_system_sim_schedule as system_sim_runner
 from scripts.generate_system_sim_schedule import (
+    CORE_BAG_REQUIRED_TOPICS,
+    CORE_BAG_TOPICS,
     ScheduleError,
     freeze_schedule,
     inverse_spawn_transform,
@@ -39,6 +41,15 @@ EXPERIMENT_BUDGET = {
     "max_distance_m": 150.0,
     "max_decisions": 100,
     "goal_timeout_s": 180.0,
+}
+RECORDING_CONTRACT = {
+    "enabled": True,
+    "backend": "rosbag2",
+    "storage_id": "mcap",
+    "storage_preset_profile": "zstd_fast",
+    "output": "bags/core",
+    "topics": list(CORE_BAG_TOPICS),
+    "required_nonempty_topics": list(CORE_BAG_REQUIRED_TOPICS),
 }
 
 
@@ -125,6 +136,7 @@ def _fixture_project(tmp_path: Path) -> dict[str, object]:
                 "seed_source": "replicate_seed",
                 "seed_valid_range_inclusive": [1, 0x7FFFFFFF],
             },
+            "recording": RECORDING_CONTRACT,
             "experiment_budget": EXPERIMENT_BUDGET,
             "freeze_status": "development",
         },
@@ -273,6 +285,11 @@ def test_schedule_is_matched_block_deterministic_and_hashed(tmp_path: Path) -> N
     assert manifest_a["inputs"]["shared_stack"]["seed_contract"] == (
         manifest_a["seed_contract"]
     )
+    assert manifest_a["recording_contract"] == RECORDING_CONTRACT
+    assert manifest_a["inputs"]["shared_stack"]["recording_contract"] == (
+        manifest_a["recording_contract"]
+    )
+    assert manifest_a["launch"]["fixed_arguments"]["record_bag"] == "true"
     assert manifest_a["experiment_budget"] == EXPERIMENT_BUDGET
     assert manifest_a["budget_provenance"] == {
         "source": "shared_stack",
@@ -456,6 +473,33 @@ def test_shared_stack_seed_contract_is_required_and_fail_closed(
         _freeze(project, "invalid_seed_contract")
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("enabled", False, "enabled must be True"),
+        ("storage_id", "sqlite3", "storage_id must be 'mcap'"),
+        ("topics", ["/map"], "topics must match"),
+        (
+            "required_nonempty_topics",
+            ["/map"],
+            "required_nonempty_topics must match",
+        ),
+    ],
+)
+def test_shared_stack_recording_contract_is_required_and_fail_closed(
+    tmp_path: Path, field: str, value: object, message: str
+) -> None:
+    project = _fixture_project(tmp_path)
+    shared_path = project["shared"]
+    assert isinstance(shared_path, Path)
+    shared = yaml.safe_load(shared_path.read_text(encoding="utf-8"))
+    shared["recording"][field] = value
+    _write_yaml(shared_path, shared)
+
+    with pytest.raises(ScheduleError, match=message):
+        _freeze(project, "invalid_recording_contract")
+
+
 def test_development_budget_override_is_explicit_and_formal_override_is_refused(
     tmp_path: Path,
 ) -> None:
@@ -611,6 +655,7 @@ def test_run_plan_carries_frozen_world_pose_truth_and_output_args(
     )
 
     assert plan.launch_arguments["world_name"] == "office"
+    assert plan.launch_arguments["record_bag"] == "true"
     assert plan.launch_arguments["simulation_seed"] == row["replicate_seed"]
     assert float(plan.launch_arguments["start_yaw"]) == pytest.approx(math.pi / 2.0)
     assert float(plan.launch_arguments["truth_to_map_x_m"]) == pytest.approx(-2.0)
@@ -619,6 +664,8 @@ def test_run_plan_carries_frozen_world_pose_truth_and_output_args(
         -math.pi / 2.0
     )
     assert plan.experiment_budget == EXPERIMENT_BUDGET
+    assert plan.recording_contract is not None
+    assert plan.recording_contract["topics"] == list(CORE_BAG_TOPICS)
     for field, value in EXPERIMENT_BUDGET.items():
         assert float(plan.launch_arguments[field]) == pytest.approx(float(value))
         assert f"{field}:={plan.launch_arguments[field]}" in plan.command
@@ -647,6 +694,7 @@ def test_run_reservation_records_manifest_and_cannot_be_reused(
     assert run_manifest["identity"]["world_name"] == "office"
     assert run_manifest["launch"]["arguments"]["world_name"] == "office"
     assert run_manifest["experiment_budget"] == EXPERIMENT_BUDGET
+    assert run_manifest["recording_contract"] == plan.recording_contract
 
     with pytest.raises(RunnerError, match="existing run output"):
         reserve_run_output(plan)
@@ -768,6 +816,37 @@ def test_runner_rejects_noncanonical_or_out_of_range_row_seed(
         )
 
 
+def test_runner_rejects_recording_manifest_or_launch_contract_drift(
+    tmp_path: Path,
+) -> None:
+    project = _fixture_project(tmp_path)
+    _, schedule_dir = _freeze(project, "runner_recording_drift")
+    row = _rows(schedule_dir / "run_schedule.csv")[0]
+    manifest_path = schedule_dir / "schedule_freeze_manifest.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    root = project["root"]
+    assert isinstance(root, Path)
+
+    manifest["launch"]["fixed_arguments"]["record_bag"] = "false"
+    _write_yaml(manifest_path, manifest)
+    with pytest.raises(RunnerError, match="must fix record_bag=true"):
+        load_run_plan(
+            root=root,
+            schedule_dir=schedule_dir,
+            schedule_id=row["schedule_id"],
+        )
+
+    manifest["launch"]["fixed_arguments"]["record_bag"] = "true"
+    manifest["recording_contract"]["storage_id"] = "sqlite3"
+    _write_yaml(manifest_path, manifest)
+    with pytest.raises(RunnerError, match="storage_id must be 'mcap'"):
+        load_run_plan(
+            root=root,
+            schedule_dir=schedule_dir,
+            schedule_id=row["schedule_id"],
+        )
+
+
 def _dummy_run_plan(tmp_path: Path, command: tuple[str, ...]) -> RunPlan:
     root = tmp_path.resolve()
     return RunPlan(
@@ -781,6 +860,7 @@ def _dummy_run_plan(tmp_path: Path, command: tuple[str, ...]) -> RunPlan:
         launch_file="dummy.launch.py",
         launch_arguments={"world_name": "dummy_world"},
         experiment_budget=EXPERIMENT_BUDGET,
+        recording_contract=None,
         command=command,
         schedule_row={
             "world_id": "dummy_world_id",
@@ -832,6 +912,41 @@ def _artifact_writer_program() -> str:
             "while True:",
             "    time.sleep(1)",
         )
+    )
+
+
+def _write_core_bag(output: Path, *, empty_topic: str | None = None) -> None:
+    bag = output / "bags" / "core"
+    bag.mkdir(parents=True)
+    mcap_name = "core_0.mcap"
+    (bag / mcap_name).write_bytes(b"valid-test-mcap")
+    topics = []
+    total = 0
+    for topic in CORE_BAG_TOPICS:
+        count = 0 if topic == empty_topic else 2
+        total += count
+        topics.append(
+            {
+                "topic_metadata": {
+                    "name": topic,
+                    "type": "std_msgs/msg/String",
+                    "serialization_format": "cdr",
+                },
+                "message_count": count,
+            }
+        )
+    _write_yaml(
+        bag / "metadata.yaml",
+        {
+            "rosbag2_bagfile_information": {
+                "version": 9,
+                "storage_identifier": "mcap",
+                "duration": {"nanoseconds": 2_000_000_000},
+                "message_count": total,
+                "topics_with_message_count": topics,
+                "relative_file_paths": [mcap_name],
+            }
+        },
     )
 
 
@@ -1054,6 +1169,68 @@ def test_artifact_audit_rejects_runtime_budget_drift(tmp_path: Path) -> None:
         "runtime experiment budget disagrees" in error
         for error in audit["errors"]
     )
+
+
+def test_artifact_audit_hashes_core_mcap_and_requires_key_topics(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    with (output / "launch.log").open("w", encoding="utf-8") as launch_log:
+        subprocess.run(
+            [sys.executable, "-c", _artifact_writer_program(), str(output), "exit"],
+            check=True,
+            stdout=launch_log,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    _write_core_bag(output)
+
+    audit = validate_completed_artifacts(
+        output, expected_recording_contract=RECORDING_CONTRACT
+    )
+
+    assert audit["valid"] is True
+    assert audit["completion_checks"]["core_bag_complete"] is True
+    assert audit["core_bag"]["message_count"] > 0
+    assert "bags/core/metadata.yaml" in audit["files"]
+    assert "bags/core/core_0.mcap" in audit["files"]
+
+    metadata = output / "bags/core/metadata.yaml"
+    value = yaml.safe_load(metadata.read_text(encoding="utf-8"))
+    records = value["rosbag2_bagfile_information"]["topics_with_message_count"]
+    next(
+        record
+        for record in records
+        if record["topic_metadata"]["name"] == "/scan"
+    )["message_count"] = 0
+    _write_yaml(metadata, value)
+    missing = validate_completed_artifacts(
+        output, expected_recording_contract=RECORDING_CONTRACT
+    )
+    assert missing["valid"] is False
+    assert any(
+        "required topic is empty or absent: /scan" in error
+        for error in missing["errors"]
+    )
+
+
+def test_artifact_audit_rejects_core_bag_outside_run_output(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (output / "bags").symlink_to(outside, target_is_directory=True)
+    _write_core_bag(output)
+
+    audit = validate_completed_artifacts(
+        output, expected_recording_contract=RECORDING_CONTRACT
+    )
+
+    assert audit["valid"] is False
+    assert "core bag directory escapes the run output" in audit["errors"]
 
 
 def test_artifact_audit_rejects_child_crash_but_allows_coordinated_sigint(
