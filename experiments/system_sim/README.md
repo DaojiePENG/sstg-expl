@@ -213,10 +213,19 @@ simulation evidence:
   system_sim_outputs/runs/<study_id>/<schedule_id> \
   --sensor-sanity
 
+/usr/bin/python3 scripts/render_system_sim_depth_video.py \
+  system_sim_outputs/runs/<study_id>/<schedule_id>
+
 /usr/bin/python3 scripts/register_system_sim_media.py \
   system_sim_outputs/runs/<study_id>/<schedule_id> \
   --evidence-tier development
 ```
+
+The depth-video renderer consumes the upstream TurtleBot3 `32FC1` task camera
+stream and writes `media/raw/task_camera_depth.mp4`.  It uses a fixed
+0.05--5.0 m color scale, preserves simulation-time playback at 5 Hz, labels
+the output as development simulation, and verifies H.264 dimensions, duration,
+frame count and SHA-256 before atomically publishing the file.
 
 The registrar hashes the captures and requires Gazebo, RViz, sensor-sanity,
 final-state and key-interval-video roles before marking the media bundle
