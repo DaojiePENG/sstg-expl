@@ -201,6 +201,21 @@ Missing clearance, ATE, contact, target-proxy, or other evaluator fields remain
 NA and are counted in the analysis manifest; they are never replaced with
 zeros or inferred from another metric.
 
+For a descriptive same-seed development audit, compare two terminal-completed
+runs directly:
+
+```bash
+/usr/bin/python3 scripts/analyze_system_sim_repeatability.py \
+  system_sim_outputs/runs/<study_a>/<schedule_a> \
+  system_sim_outputs/runs/<study_b>/<schedule_b> \
+  --output-dir system_sim_outputs/reports/<repeatability_report_id>
+```
+
+The repeatability analyzer verifies source/config fingerprints, declared
+artifact hashes and both Gazebo/policy seed attestations before producing run
+and delta CSVs, JSON and a PNG comparison.  It is descriptive and deliberately
+does not derive a pass/fail tolerance from the observed pair.
+
 ## Regenerate and register visual evidence
 
 The offline renderer reads the final `/map`, evaluator-only ground-truth path,
