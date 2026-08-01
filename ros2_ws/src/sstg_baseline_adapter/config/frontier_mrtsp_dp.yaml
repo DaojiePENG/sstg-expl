@@ -28,5 +28,8 @@ frontier_baseline_adapter:
     completion_topic: /baseline/frontier_mrtsp_dp/exploration_complete
     monitor_period_s: 0.1
     start_delay_s: 0.5
+    # Adapter transport fail-safe in ROS simulation time; not an algorithm
+    # hyperparameter. A forced terminal is always emitted to the trace.
+    cancel_grace_s: 5.0
     topological_merge_distance_m: 0.25
     allow_existing_output: false

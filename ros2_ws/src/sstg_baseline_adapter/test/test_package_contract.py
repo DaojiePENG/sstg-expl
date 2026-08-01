@@ -47,6 +47,7 @@ def test_proxy_and_upstream_action_names_are_distinct_and_cross_wired():
     assert upstream["navigate_to_pose_action_name"] == adapter["proxy_action_name"]
     assert adapter["proxy_action_name"] != adapter["nav2_action_name"]
     assert upstream["completion_event_topic"] == adapter["completion_topic"]
+    assert adapter["cancel_grace_s"] == 5.0
 
 
 def test_package_declares_pinned_upstream_runtime_dependency():

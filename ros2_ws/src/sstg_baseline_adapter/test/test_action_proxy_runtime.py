@@ -77,9 +77,15 @@ class FakeSharedStack(Node):
         self.release_first = threading.Event()
         self.delayed_accept_entered = threading.Event()
         self.delayed_accept_release = threading.Event()
+        self.late_accept_entered = threading.Event()
+        self.late_accept_release = threading.Event()
         self.delayed_execute_started = threading.Event()
         self.downstream_cancel_seen = threading.Event()
+        self.hung_execute_started = threading.Event()
+        self.hung_release = threading.Event()
+        self.hung_terminal = threading.Event()
         self.terminal_order: list[int] = []
+        self.cancel_targets: list[int] = []
         self.control_actions: list[int] = []
         self._clock_ns = 1_000_000_000
 
@@ -122,7 +128,7 @@ class FakeSharedStack(Node):
             cancel_callback=self._cancel,
             callback_group=callback_group,
         )
-        self.create_timer(0.01, self._publish_world)
+        self.world_timer = self.create_timer(0.01, self._publish_world)
 
     def _publish_world(self) -> None:
         self._clock_ns += 20_000_000
@@ -177,12 +183,18 @@ class FakeSharedStack(Node):
         if target == 3:
             self.delayed_accept_entered.set()
             self.delayed_accept_release.wait(timeout=5.0)
+        if target == 6:
+            self.late_accept_entered.set()
+            self.late_accept_release.wait(timeout=5.0)
         if target == 4:
             return GoalResponse.REJECT
         return GoalResponse.ACCEPT
 
     def _cancel(self, goal_handle):
-        del goal_handle
+        target = round(goal_handle.request.pose.pose.position.x)
+        self.cancel_targets.append(target)
+        if target == 5:
+            return CancelResponse.REJECT
         self.downstream_cancel_seen.set()
         return CancelResponse.ACCEPT
 
@@ -209,6 +221,20 @@ class FakeSharedStack(Node):
             goal_handle.succeed()
             self.terminal_order.append(2)
             return result
+        if target in (7, 8):
+            result.error_code = 0
+            goal_handle.succeed()
+            self.terminal_order.append(target)
+            return result
+        if target == 5:
+            self.hung_execute_started.set()
+            self.hung_release.wait(timeout=5.0)
+            result.error_code = 92
+            result.error_msg = "released rejected-cancel goal"
+            goal_handle.abort()
+            self.terminal_order.append(target)
+            self.hung_terminal.set()
+            return result
 
         self.delayed_execute_started.set()
         deadline = time.monotonic() + 5.0
@@ -228,6 +254,8 @@ class FakeSharedStack(Node):
     def unblock(self) -> None:
         self.release_first.set()
         self.delayed_accept_release.set()
+        self.late_accept_release.set()
+        self.hung_release.set()
 
     def destroy_node(self):
         self.action_server.destroy()
@@ -235,7 +263,7 @@ class FakeSharedStack(Node):
 
 
 class RuntimeHarness:
-    def __init__(self, output_dir: Path) -> None:
+    def __init__(self, output_dir: Path, *, max_decisions: int = 10) -> None:
         self.context = Context()
         self.token = "proxy_" + uuid.uuid4().hex[:10]
         domain_id = 100 + int(self.token[-4:], 16) % 100
@@ -259,8 +287,9 @@ class RuntimeHarness:
             "start_delay_s": 0.01,
             "max_duration_s": 120.0,
             "max_distance_m": 100.0,
-            "max_decisions": 10,
+            "max_decisions": max_decisions,
             "goal_timeout_s": 30.0,
+            "cancel_grace_s": 0.2,
         }
         self.adapter = FrontierActionAdapter(
             context=self.context,
@@ -341,6 +370,37 @@ class RuntimeHarness:
 
     def close(self) -> None:
         self.fake.unblock()
+        if self.fake.hung_execute_started.is_set():
+            _wait_until(
+                self.fake.hung_terminal.is_set,
+                description="hung fake action cleanup",
+            )
+        if self.adapter._stop_request_sent:
+            _wait_until(
+                lambda: self.adapter._stop_response_received,
+                description="adapter STOP response callback",
+            )
+        for context in list(self.adapter._goals.values()):
+            if context.cancel_sent:
+                _wait_until(
+                    lambda item=context: item.cancel_response_received,
+                    description="downstream cancel response callback",
+                )
+            if context.downstream_goal is not None:
+                _wait_until(
+                    lambda item=context: (
+                        item.downstream_result_response_received
+                    ),
+                    description="downstream result response callback",
+                )
+        # Stop sources of new work, then put executor barriers behind callbacks
+        # already queued by action/service futures before destroying entities.
+        self.adapter.timer.cancel()
+        self.fake.world_timer.cancel()
+        time.sleep(0.05)
+        barriers = [self.executor.create_task(lambda: None) for _ in range(8)]
+        for barrier in barriers:
+            _future_result(barrier, description="executor teardown barrier")
         self.executor.shutdown(timeout_sec=5.0)
         self.spin_thread.join(timeout=5.0)
         self.client.destroy()
@@ -499,3 +559,155 @@ def test_downstream_rejection_is_explicitly_traced_and_aborts_upstream(
     assert execution["succeeded"] is False
 
     harness.finish_from_upstream()
+
+
+def test_rejected_downstream_cancel_forces_audited_local_terminal(
+    runtime_harness,
+):
+    harness = runtime_harness
+    goal = harness.send_goal(5.0)
+    _wait_until(
+        harness.fake.hung_execute_started.is_set,
+        description="non-terminating downstream execution",
+    )
+    cancel_response = _future_result(
+        goal.cancel_goal_async(), description="upstream cancel response"
+    )
+    assert len(cancel_response.goals_canceling) == 1
+
+    wrapped = _future_result(
+        goal.get_result_async(), description="cancel grace local terminal"
+    )
+    assert wrapped.status == GoalStatus.STATUS_CANCELED
+    assert harness.fake.cancel_targets == [5]
+    records = harness.trace_records()
+    cancel_response_record = next(
+        record["payload"] for record in records
+        if record["event"] == "downstream_cancel_response"
+    )
+    assert cancel_response_record["return_code"] == 0
+    assert cancel_response_record["accepted"] is False
+    assert cancel_response_record["return_code_semantics"] == (
+        "rejected_empty_goal_list"
+    )
+    assert cancel_response_record["goals_canceling"] == 0
+    forced = next(
+        record["payload"] for record in records
+        if record["event"] == "cancel_grace_expired"
+    )
+    assert forced["cancel_origin"] == "upstream_cancel_request"
+    assert forced["cancel_response"] == {
+        "return_code": 0,
+        "goals_canceling": 0,
+    }
+    execution = next(
+        record["payload"] for record in records
+        if record["event"] == "execution"
+    )
+    assert execution["reason"] == (
+        "cancel_grace_expired:upstream_cancel_request"
+    )
+    harness.finish_from_upstream()
+
+
+def test_late_downstream_acceptance_honors_already_forced_cancel(
+    runtime_harness,
+):
+    harness = runtime_harness
+    goal = harness.send_goal(6.0)
+    _wait_until(
+        harness.fake.late_accept_entered.is_set,
+        description="blocked late downstream acceptance",
+    )
+    cancel_response = _future_result(
+        goal.cancel_goal_async(), description="late-accept upstream cancel"
+    )
+    assert len(cancel_response.goals_canceling) == 1
+    wrapped = _future_result(
+        goal.get_result_async(), description="pre-accept local terminal"
+    )
+    assert wrapped.status == GoalStatus.STATUS_CANCELED
+    forced = next(
+        record["payload"] for record in harness.trace_records()
+        if record["event"] == "cancel_grace_expired"
+    )
+    assert forced["cancel_response"] is None
+
+    harness.fake.late_accept_release.set()
+    _wait_until(
+        harness.fake.downstream_cancel_seen.is_set,
+        description="late accepted downstream cancel forwarding",
+    )
+    _wait_until(
+        lambda: 6 in harness.fake.terminal_order,
+        description="late accepted downstream terminal",
+    )
+    harness.finish_from_upstream()
+
+
+def test_pending_acceptance_reserves_budget_and_delays_session_finalization(
+    tmp_path,
+):
+    harness = RuntimeHarness(tmp_path / "budget_policy", max_decisions=1)
+    lock_held = False
+    try:
+        harness.adapter._acceptance_lock.acquire()
+        lock_held = True
+
+        first_goal = NavigateToPose.Goal()
+        first_goal.pose.header.frame_id = harness.fake.map_frame
+        first_goal.pose.pose.position.x = 7.0
+        first_goal.pose.pose.orientation.w = 1.0
+        first_future = harness.client.send_goal_async(first_goal)
+        _wait_until(
+            lambda: harness.adapter._pending_goal_acceptances == 1,
+            description="reserved decision slot",
+        )
+
+        second_goal = NavigateToPose.Goal()
+        second_goal.pose.header.frame_id = harness.fake.map_frame
+        second_goal.pose.pose.position.x = 8.0
+        second_goal.pose.pose.orientation.w = 1.0
+        second_handle = _future_result(
+            harness.client.send_goal_async(second_goal),
+            description="over-budget goal rejection",
+        )
+        assert second_handle.accepted is False
+        assert not any(
+            record["event"] == "session_finished"
+            for record in harness.trace_records()
+        )
+
+        harness.adapter._acceptance_lock.release()
+        lock_held = False
+        first_handle = _future_result(
+            first_future, description="reserved goal acceptance"
+        )
+        assert first_handle.accepted is True
+        _future_result(
+            first_handle.get_result_async(),
+            description="reserved goal terminal result",
+        )
+        _wait_until(
+            lambda: any(
+                record["event"] == "session_finished"
+                for record in harness.trace_records()
+            ),
+            description="post-registration session finalization",
+        )
+        decisions = [
+            record for record in harness.trace_records()
+            if record["event"] == "decision"
+        ]
+        assert len(decisions) == 1
+        assert decisions[0]["payload"]["decision_id"] == 1
+        finished = next(
+            record["payload"] for record in harness.trace_records()
+            if record["event"] == "session_finished"
+        )
+        assert finished["decision_count"] == 1
+        assert finished["termination_reason"] == "action_budget"
+    finally:
+        if lock_held:
+            harness.adapter._acceptance_lock.release()
+        harness.close()

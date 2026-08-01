@@ -15,6 +15,7 @@ import threading
 from typing import Any, Optional
 
 from action_msgs.msg import GoalStatus
+from action_msgs.srv import CancelGoal
 from frontier_exploration_ros2.srv import ControlExploration
 from geometry_msgs.msg import PoseStamped
 from lifecycle_msgs.srv import GetState
@@ -93,6 +94,12 @@ class ForwardedGoal:
     transport_error: str = ""
     cancel_sent: bool = False
     cancel_origin: Optional[str] = None
+    cancel_requested_ros_time_ns: Optional[int] = None
+    cancel_response_code: Optional[int] = None
+    cancel_response_goal_count: Optional[int] = None
+    cancel_response_received: bool = False
+    downstream_result_response_received: bool = False
+    local_terminal_forced: bool = False
     timeout_requested: bool = False
     superseded_by_decision_id: Optional[int] = None
     distance_accounted: bool = False
@@ -131,6 +138,9 @@ class FrontierActionAdapter(Node):
         self.max_distance_m = float(budget["max_distance_m"])
         self.max_decisions = int(budget["max_decisions"])
         self.goal_timeout_s = float(budget["goal_timeout_s"])
+        self.cancel_grace_s = float(
+            self.get_parameter("cancel_grace_s").value
+        )
         self.map_topic = str(self.get_parameter("map_topic").value)
         self.map_frame = str(self.get_parameter("map_frame").value)
         self.base_frame = str(self.get_parameter("base_frame").value)
@@ -155,10 +165,12 @@ class FrontierActionAdapter(Node):
         self.method_id = str(self.get_parameter("method_id").value)
 
         self._state_lock = threading.RLock()
+        self._acceptance_lock = threading.Lock()
         self._trace_lock = threading.Lock()
         self._goals: dict[bytes, ForwardedGoal] = {}
         self._current_goal_key: Optional[bytes] = None
         self._decision_count = 0
+        self._pending_goal_acceptances = 0
         self._execution_count = 0
         self._success_count = 0
         self._completed_distance_m = 0.0
@@ -176,6 +188,7 @@ class FrontierActionAdapter(Node):
         self._pending_initial_pose: Optional[list[float]] = None
         self._termination_reason: Optional[str] = None
         self._stop_request_sent = False
+        self._stop_response_received = False
         self._finished = False
 
         self._prepare_output()
@@ -287,6 +300,7 @@ class FrontierActionAdapter(Node):
             "monitor_period_s": 0.1,
             "start_delay_s": 0.5,
             "goal_timeout_s": 180.0,
+            "cancel_grace_s": 5.0,
             "max_duration_s": 900.0,
             "max_distance_m": 150.0,
             "max_decisions": 100,
@@ -323,7 +337,7 @@ class FrontierActionAdapter(Node):
             "nav2_action_name"
         ).value:
             raise ValueError("proxy_action_name must differ from nav2_action_name")
-        for name in ("monitor_period_s", "start_delay_s"):
+        for name in ("monitor_period_s", "start_delay_s", "cancel_grace_s"):
             value = float(self.get_parameter(name).value)
             if not math.isfinite(value) or value <= 0.0:
                 raise ValueError(f"{name} must be finite and positive")
@@ -556,9 +570,14 @@ class FrontierActionAdapter(Node):
                 and self._termination_reason is None
                 and not self._finished
             )
-            if accept and self._decision_count >= self.max_decisions:
+            reserved_decisions = (
+                self._decision_count + self._pending_goal_acceptances
+            )
+            if accept and reserved_decisions >= self.max_decisions:
                 accept = False
                 budget_reached = True
+            elif accept:
+                self._pending_goal_acceptances += 1
         if budget_reached:
             self._request_termination("action_budget")
         if not valid:
@@ -568,11 +587,24 @@ class FrontierActionAdapter(Node):
         return GoalResponse.ACCEPT if accept else GoalResponse.REJECT
 
     def _handle_accepted_callback(self, goal_handle) -> None:
+        # ActionServer may invoke accepted callbacks concurrently.  Serialize
+        # registration through execute() so decision IDs, supersession links,
+        # and downstream dispatch order cannot be inverted by TF lookup time.
+        with self._acceptance_lock:
+            self._register_accepted_goal(goal_handle)
+
+    def _register_accepted_goal(self, goal_handle) -> None:
         key = bytes(goal_handle.goal_id.uuid)
         execution_pose = self._lookup_pose(self.execution_frame)
         map_pose = self._lookup_pose(self.map_frame)
         target = _pose_message_values(goal_handle.request.pose)
         with self._state_lock:
+            if self._pending_goal_acceptances <= 0:
+                self.get_logger().error(
+                    "Accepted goal had no reserved experiment decision slot"
+                )
+            else:
+                self._pending_goal_acceptances -= 1
             self._decision_count += 1
             decision_id = self._decision_count
             if self._current_goal_key in self._goals:
@@ -683,6 +715,48 @@ class FrontierActionAdapter(Node):
             elif terminate:
                 self._cancel_downstream(context, "adapter_session_termination")
 
+            cancel_started_ns = context.cancel_requested_ros_time_ns
+            now_ns = self.get_clock().now().nanoseconds
+            if (
+                cancel_started_ns is not None
+                and now_ns >= cancel_started_ns
+                and now_ns - cancel_started_ns
+                >= int(self.cancel_grace_s * 1e9)
+            ):
+                with self._state_lock:
+                    if not context.local_terminal_forced:
+                        context.local_terminal_forced = True
+                        context.transport_error = (
+                            "cancel_grace_expired:"
+                            f"{context.cancel_origin}"
+                        )
+                        cancel_response_code = context.cancel_response_code
+                        cancel_response_goal_count = (
+                            context.cancel_response_goal_count
+                        )
+                        force_now = True
+                    else:
+                        cancel_response_code = None
+                        cancel_response_goal_count = None
+                        force_now = False
+                if cancel_response_code is not None or (
+                    cancel_response_goal_count is not None
+                ):
+                    response_evidence = {
+                        "return_code": cancel_response_code,
+                        "goals_canceling": cancel_response_goal_count,
+                    }
+                else:
+                    response_evidence = None
+                if force_now:
+                    self._append_trace("cancel_grace_expired", {
+                        "decision_id": context.decision_id,
+                        "cancel_origin": context.cancel_origin,
+                        "cancel_grace_s": self.cancel_grace_s,
+                        "cancel_response": response_evidence,
+                    })
+                    context.result_event.set()
+
         result = context.downstream_result or NavigateToPose.Result()
         status = context.downstream_status
         succeeded = status == GoalStatus.STATUS_SUCCEEDED
@@ -725,18 +799,25 @@ class FrontierActionAdapter(Node):
         context.downstream_goal = downstream_goal
         with self._state_lock:
             terminate = self._termination_reason is not None
-        if context.server_goal.is_cancel_requested:
+            latched_cancel_origin = context.cancel_origin
+        if latched_cancel_origin is not None:
+            self._cancel_downstream(context, latched_cancel_origin)
+        elif context.server_goal.is_cancel_requested:
             self._cancel_downstream(context, "upstream_cancel_request")
         elif context.timeout_requested:
             self._cancel_downstream(context, "adapter_goal_timeout")
         elif terminate:
             self._cancel_downstream(context, "adapter_session_termination")
-        result_future = downstream_goal.get_result_async()
-        result_future.add_done_callback(
-            lambda result, goal_key=key: self._downstream_result(
-                goal_key, result
+        try:
+            result_future = downstream_goal.get_result_async()
+            result_future.add_done_callback(
+                lambda result, goal_key=key: self._downstream_result(
+                    goal_key, result
+                )
             )
-        )
+        except Exception as error:
+            context.transport_error = f"get_result_request:{error}"
+            context.result_event.set()
 
     def _downstream_result(self, key: bytes, future) -> None:
         with self._state_lock:
@@ -745,11 +826,15 @@ class FrontierActionAdapter(Node):
             return
         try:
             wrapped = future.result()
-            context.downstream_status = int(wrapped.status)
-            context.downstream_result = wrapped.result
+            with self._state_lock:
+                context.downstream_status = int(wrapped.status)
+                context.downstream_result = wrapped.result
         except Exception as error:
-            context.transport_error = f"get_result:{error}"
+            with self._state_lock:
+                context.transport_error = f"get_result:{error}"
         finally:
+            with self._state_lock:
+                context.downstream_result_response_received = True
             context.result_event.set()
 
     def _forward_feedback(self, key: bytes, feedback) -> None:
@@ -768,6 +853,9 @@ class FrontierActionAdapter(Node):
         with self._state_lock:
             if context.cancel_origin is None:
                 context.cancel_origin = origin
+                context.cancel_requested_ros_time_ns = (
+                    self.get_clock().now().nanoseconds
+                )
             if context.cancel_sent or context.downstream_goal is None:
                 return
             context.cancel_sent = True
@@ -784,17 +872,59 @@ class FrontierActionAdapter(Node):
             context.result_event.set()
 
     def _downstream_cancel_response(self, key: bytes, future) -> None:
-        """Consume the cancel response so shutdown cannot orphan its error."""
+        """Record whether Nav2 actually transitioned the goal to canceling."""
         try:
-            future.result()
+            response = future.result()
         except Exception as error:
             with self._state_lock:
                 context = self._goals.get(key)
+                if context is not None:
+                    context.cancel_response_received = True
                 completed = context is None or context.completed
             if not completed:
                 self.get_logger().warn(
                     f"Downstream cancellation response failed: {error}"
                 )
+            return
+        return_code = int(response.return_code)
+        goal_count = len(response.goals_canceling)
+        with self._state_lock:
+            context = self._goals.get(key)
+            if context is None:
+                return
+            context.cancel_response_code = return_code
+            context.cancel_response_goal_count = goal_count
+            context.cancel_response_received = True
+            decision_id = context.decision_id
+            cancel_origin = context.cancel_origin
+            completed = context.completed
+        if completed:
+            return
+        accepted = (
+            return_code == CancelGoal.Response.ERROR_NONE
+            and goal_count > 0
+        )
+        if accepted:
+            semantics = "accepted"
+        elif return_code == CancelGoal.Response.ERROR_NONE:
+            # rclpy can preserve ERROR_NONE after its user callback removes
+            # every rejected goal from goals_canceling.  The empty list is the
+            # operative evidence that no goal entered CANCELING.
+            semantics = "rejected_empty_goal_list"
+        else:
+            semantics = {
+                CancelGoal.Response.ERROR_REJECTED: "rejected",
+                CancelGoal.Response.ERROR_UNKNOWN_GOAL_ID: "unknown_goal_id",
+                CancelGoal.Response.ERROR_GOAL_TERMINATED: "goal_terminated",
+            }.get(return_code, "unknown")
+        self._append_trace("downstream_cancel_response", {
+            "decision_id": decision_id,
+            "cancel_origin": cancel_origin,
+            "return_code": return_code,
+            "accepted": accepted,
+            "return_code_semantics": semantics,
+            "goals_canceling": goal_count,
+        })
 
     def _record_execution(self, context: ForwardedGoal, succeeded: bool) -> None:
         execution_pose = self._lookup_pose(self.execution_frame)
@@ -948,15 +1078,21 @@ class FrontierActionAdapter(Node):
             response = future.result()
         except Exception as error:
             self.get_logger().error(f"Upstream stop service failed: {error}")
-            return
-        if response is not None and not response.accepted:
-            self.get_logger().warn(f"Upstream stop rejected: {response.message}")
+        else:
+            if response is not None and not response.accepted:
+                self.get_logger().warn(
+                    f"Upstream stop rejected: {response.message}"
+                )
+        finally:
+            with self._state_lock:
+                self._stop_response_received = True
 
     def _finish_session_if_quiescent(self) -> None:
         with self._state_lock:
             if (
                 self._finished
                 or self._termination_reason is None
+                or self._pending_goal_acceptances > 0
                 or any(not context.completed for context in self._goals.values())
             ):
                 return
