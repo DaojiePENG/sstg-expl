@@ -54,9 +54,12 @@ formal comparison table.
 
 ## Logged calibration findings
 
-- The laboratory, warehouse and corridor logs each dropped one expired ATE
-  sample after a 36 ms future-TF lookup. Thousands of other ATE samples remain
-  in each final estimate, and no metric is missing, but the time-alignment path
+- The final evaluator diagnostics report 0, 10, 4 and 55 expired ATE samples
+  for office, laboratory, warehouse and corridor respectively; office and
+  corridor also had two samples still pending at the final snapshot. The log
+  warning is rate-limited, so its one visible line per affected run is not the
+  drop count. Pairing fractions remained 99.959%, 99.829%, 99.927% and 99.065%
+  respectively, and no aggregate metric is missing, but the time-alignment path
   should be calibrated before the formal schedule is frozen.
 - SLAM Toolbox requested 50 Ceres threads while the installed Ceres threading
   model supports at most 24. The warning occurred twice in the laboratory and
