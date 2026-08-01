@@ -632,6 +632,27 @@ def test_frozen_nav2_parameters_stay_inside_upstream_tb3_limits():
     ] == conservative_radius
 
 
+def test_system_sim_budget_matches_policy_and_is_required_by_launch():
+    shared = yaml.safe_load((
+        ROOT / "experiments/system_sim/configs/shared_stack.yaml"
+    ).read_text(encoding="utf-8"))
+    policy = yaml.safe_load((
+        ROOT / "ros2_ws/src/sstg_policy_ros/config/policy.yaml"
+    ).read_text(encoding="utf-8"))["sstg_policy"]["ros__parameters"]
+    launch = SYSTEM_LAUNCH_PATH.read_text(encoding="utf-8")
+
+    for field, value in shared["experiment_budget"].items():
+        assert policy[field] == value
+        assert f'{field} = LaunchConfiguration("{field}")' in launch
+        assert f'"{field}": ParameterValue(' in launch
+        required_declaration = (
+            'DeclareLaunchArgument(\n'
+            f'            "{field}",\n'
+            '            description="required frozen'
+        )
+        assert required_declaration in launch
+
+
 def test_development_registry_has_four_distinct_generated_scene_families():
     registry = yaml.safe_load((
         ROOT / "experiments/system_sim/registries/worlds.yaml"

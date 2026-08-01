@@ -29,6 +29,12 @@ from scripts.run_system_sim_schedule import (
 
 
 METHODS = ("sstg", "frontier", "nbv", "rrt_adapted")
+EXPERIMENT_BUDGET = {
+    "max_duration_s": 900.0,
+    "max_distance_m": 150.0,
+    "max_decisions": 100,
+    "goal_timeout_s": 180.0,
+}
 
 
 def _write_yaml(path: Path, value: dict) -> None:
@@ -110,6 +116,7 @@ def _fixture_project(tmp_path: Path) -> dict[str, object]:
             "schema": "sstg_system_sim_shared_stack/v1",
             "backend": "gazebo_harmonic",
             "ros_distribution": "jazzy",
+            "experiment_budget": EXPERIMENT_BUDGET,
             "freeze_status": "development",
         },
     )
@@ -158,6 +165,7 @@ def _freeze(
     method_paths: list[Path] | None = None,
     force: bool = False,
     evidence_tier: str = "development",
+    budget_overrides: dict[str, float | int] | None = None,
 ) -> tuple[dict, Path]:
     root = project["root"]
     assert isinstance(root, Path)
@@ -175,6 +183,7 @@ def _freeze(
         randomization_seed=randomization_seed,
         evidence_tier=evidence_tier,
         start_policy="all",
+        budget_overrides=budget_overrides,
         source_paths=project["source_paths"],
         force=force,
     )
@@ -241,6 +250,17 @@ def test_schedule_is_matched_block_deterministic_and_hashed(tmp_path: Path) -> N
     }
     assert manifest_a["inputs"]["worlds"][0]["world_name"] == "office"
     assert manifest_a["launch"]["argument_columns"]["world_name"] == "world_name"
+    assert manifest_a["experiment_budget"] == EXPERIMENT_BUDGET
+    assert manifest_a["budget_provenance"] == {
+        "source": "shared_stack",
+        "development_overrides": {},
+    }
+    assert manifest_a["inputs"]["shared_stack"][
+        "experiment_budget"
+    ] == EXPERIMENT_BUDGET
+    for field, value in EXPERIMENT_BUDGET.items():
+        assert manifest_a["launch"]["argument_columns"][field] == field
+        assert all(float(row[field]) == pytest.approx(float(value)) for row in rows)
     assert manifest_a["design"]["run_output_root"] == (
         "system_sim_outputs/runs/gazebo_dev_test"
     )
@@ -351,6 +371,63 @@ def test_development_is_explicit_and_formal_freeze_is_refused(tmp_path: Path) ->
         project["root"]
         / "experiments/system_sim/studies/formal/run_schedule.csv"
     ).exists()
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("max_duration_s", None, "is missing"),
+        ("max_distance_m", 0.0, "must be positive"),
+        ("max_decisions", True, "positive integer"),
+        ("goal_timeout_s", 901.0, "must not exceed"),
+    ],
+)
+def test_shared_stack_budget_is_required_and_fail_closed(
+    tmp_path: Path, field: str, value: object, message: str
+) -> None:
+    project = _fixture_project(tmp_path)
+    shared_path = project["shared"]
+    assert isinstance(shared_path, Path)
+    shared = yaml.safe_load(shared_path.read_text(encoding="utf-8"))
+    if value is None:
+        del shared["experiment_budget"][field]
+    else:
+        shared["experiment_budget"][field] = value
+    _write_yaml(shared_path, shared)
+
+    with pytest.raises(ScheduleError, match=message):
+        _freeze(project, "invalid_budget")
+
+
+def test_development_budget_override_is_explicit_and_formal_override_is_refused(
+    tmp_path: Path,
+) -> None:
+    project = _fixture_project(tmp_path)
+    overrides = {
+        "max_duration_s": 30.0,
+        "max_distance_m": 5.0,
+        "max_decisions": 1,
+        "goal_timeout_s": 10.0,
+    }
+    manifest, output = _freeze(
+        project, "development_smoke", budget_overrides=overrides
+    )
+    assert manifest["experiment_budget"] == overrides
+    assert manifest["budget_provenance"] == {
+        "source": "development_override",
+        "development_overrides": overrides,
+    }
+    rows = _rows(output / "run_schedule.csv")
+    for field, value in overrides.items():
+        assert all(float(row[field]) == pytest.approx(float(value)) for row in rows)
+
+    with pytest.raises(ScheduleError, match="formal schedules cannot override"):
+        _freeze(
+            project,
+            "formal_override",
+            evidence_tier="formal",
+            budget_overrides={"max_decisions": 1},
+        )
 
 
 def test_clean_frozen_test_inputs_can_create_a_formal_schedule(tmp_path: Path) -> None:
@@ -483,6 +560,10 @@ def test_run_plan_carries_frozen_world_pose_truth_and_output_args(
     assert float(plan.launch_arguments["truth_to_map_yaw_rad"]) == pytest.approx(
         -math.pi / 2.0
     )
+    assert plan.experiment_budget == EXPERIMENT_BUDGET
+    for field, value in EXPERIMENT_BUDGET.items():
+        assert float(plan.launch_arguments[field]) == pytest.approx(float(value))
+        assert f"{field}:={plan.launch_arguments[field]}" in plan.command
     assert plan.output_dir == (root / row["run_output_dir"]).resolve()
     assert f"world_name:=office" in plan.command
     assert not plan.output_dir.exists()
@@ -507,6 +588,7 @@ def test_run_reservation_records_manifest_and_cannot_be_reused(
     assert run_manifest["execution"]["status"] == "reserved"
     assert run_manifest["identity"]["world_name"] == "office"
     assert run_manifest["launch"]["arguments"]["world_name"] == "office"
+    assert run_manifest["experiment_budget"] == EXPERIMENT_BUDGET
 
     with pytest.raises(RunnerError, match="existing run output"):
         reserve_run_output(plan)
@@ -537,6 +619,37 @@ def test_runner_rejects_schedule_modified_after_freeze(tmp_path: Path) -> None:
         )
 
 
+def test_runner_rejects_budget_manifest_or_launch_contract_drift(
+    tmp_path: Path,
+) -> None:
+    project = _fixture_project(tmp_path)
+    _, schedule_dir = _freeze(project, "runner_budget_drift")
+    row = _rows(schedule_dir / "run_schedule.csv")[0]
+    manifest_path = schedule_dir / "schedule_freeze_manifest.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    root = project["root"]
+    assert isinstance(root, Path)
+
+    manifest["experiment_budget"]["max_decisions"] = 99
+    _write_yaml(manifest_path, manifest)
+    with pytest.raises(RunnerError, match="budget provenance disagrees"):
+        load_run_plan(
+            root=root,
+            schedule_dir=schedule_dir,
+            schedule_id=row["schedule_id"],
+        )
+
+    manifest["experiment_budget"]["max_decisions"] = 100
+    del manifest["launch"]["argument_columns"]["goal_timeout_s"]
+    _write_yaml(manifest_path, manifest)
+    with pytest.raises(RunnerError, match="must pass goal_timeout_s"):
+        load_run_plan(
+            root=root,
+            schedule_dir=schedule_dir,
+            schedule_id=row["schedule_id"],
+        )
+
+
 def _dummy_run_plan(tmp_path: Path, command: tuple[str, ...]) -> RunPlan:
     root = tmp_path.resolve()
     return RunPlan(
@@ -549,6 +662,7 @@ def _dummy_run_plan(tmp_path: Path, command: tuple[str, ...]) -> RunPlan:
         launch_package="dummy_package",
         launch_file="dummy.launch.py",
         launch_arguments={"world_name": "dummy_world"},
+        experiment_budget=EXPERIMENT_BUDGET,
         command=command,
         schedule_row={
             "world_id": "dummy_world_id",
@@ -573,7 +687,12 @@ def _artifact_writer_program() -> str:
             "    (output / name).write_text(text)",
             "write_json('policy_manifest.json', {",
             "    'schema': 'sstg_system_sim_policy_manifest/v1',",
-            "    'truth_access': False})",
+            "    'truth_access': False,",
+            "    'parameters': {",
+            "        'max_duration_s': 900.0,",
+            "        'max_distance_m': 150.0,",
+            "        'max_decisions': 100,",
+            "        'goal_timeout_s': 180.0}})",
             "write_json('evaluation_manifest.json', {",
             "    'schema': 'sstg_system_sim_evaluator_manifest/v2',",
             "    'truth_access': 'evaluator_only'})",
@@ -741,3 +860,26 @@ def test_artifact_audit_rejects_missing_evaluator_final_snapshot(
 
     assert audit["valid"] is False
     assert any("final policy_session_finished snapshot" in error for error in audit["errors"])
+
+
+def test_artifact_audit_rejects_runtime_budget_drift(tmp_path: Path) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    subprocess.run(
+        [sys.executable, "-c", _artifact_writer_program(), str(output), "exit"],
+        check=True,
+    )
+    manifest_path = output / "policy_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["parameters"]["max_decisions"] = 99
+    manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+    audit = validate_completed_artifacts(
+        output, expected_experiment_budget=EXPERIMENT_BUDGET
+    )
+
+    assert audit["valid"] is False
+    assert any(
+        "runtime experiment budget disagrees" in error
+        for error in audit["errors"]
+    )

@@ -36,6 +36,37 @@ from .conversions import (
 from .readiness import LifecycleActiveGate, ReadinessResult
 
 
+def _validated_policy_budget(
+    values: dict[str, Any],
+) -> dict[str, float | int]:
+    """Reject disabled or malformed runtime limits before creating artifacts."""
+    normalized: dict[str, float | int] = {}
+    for field in ("max_duration_s", "max_distance_m", "goal_timeout_s"):
+        value = values[field]
+        if isinstance(value, bool):
+            raise ValueError(f"{field} must be a finite positive number")
+        try:
+            number = float(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"{field} must be a finite positive number"
+            ) from error
+        if not math.isfinite(number) or number <= 0.0:
+            raise ValueError(f"{field} must be a finite positive number")
+        normalized[field] = number
+    max_decisions = values["max_decisions"]
+    if (
+        isinstance(max_decisions, bool)
+        or not isinstance(max_decisions, int)
+        or max_decisions <= 0
+    ):
+        raise ValueError("max_decisions must be a positive integer")
+    normalized["max_decisions"] = max_decisions
+    if normalized["goal_timeout_s"] > normalized["max_duration_s"]:
+        raise ValueError("goal_timeout_s must not exceed max_duration_s")
+    return normalized
+
+
 def _jsonable(value: Any) -> Any:
     """Convert trace content to strict JSON without hiding non-finite values."""
     if isinstance(value, dict):
@@ -72,9 +103,19 @@ class SSTGPolicyNode(Node):
             f"{navigate_lifecycle_node}/get_state"
         )
         self.map_settle_s = float(self.get_parameter("map_settle_s").value)
-        self.goal_timeout_s = float(self.get_parameter("goal_timeout_s").value)
-        self.max_distance_m = float(self.get_parameter("max_distance_m").value)
-        self.max_duration_s = float(self.get_parameter("max_duration_s").value)
+        experiment_budget = _validated_policy_budget({
+            name: self.get_parameter(name).value
+            for name in (
+                "max_duration_s",
+                "max_distance_m",
+                "max_decisions",
+                "goal_timeout_s",
+            )
+        })
+        self.goal_timeout_s = float(experiment_budget["goal_timeout_s"])
+        self.max_distance_m = float(experiment_budget["max_distance_m"])
+        self.max_duration_s = float(experiment_budget["max_duration_s"])
+        self.max_decisions = int(experiment_budget["max_decisions"])
         self.output_dir = Path(str(self.get_parameter("output_dir").value))
 
         map_qos = QoSProfile(depth=1)
@@ -248,7 +289,7 @@ class SSTGPolicyNode(Node):
                 self.get_parameter("require_known_footprint").value
             ),
             seed=int(self.get_parameter("policy_seed").value),
-            max_decisions=int(self.get_parameter("max_decisions").value),
+            max_decisions=self.max_decisions,
             verbose=False,
         )
 
@@ -482,9 +523,7 @@ class SSTGPolicyNode(Node):
     def _budget_reason(self, include_active_path: bool = False):
         if self.session is None:
             return None
-        if len(self.session.execution_records) >= int(
-            self.get_parameter("max_decisions").value
-        ):
+        if len(self.session.execution_records) >= self.max_decisions:
             return "action_budget"
         distance = self.session.total_distance_m
         if include_active_path:

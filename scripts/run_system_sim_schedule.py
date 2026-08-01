@@ -27,21 +27,25 @@ import yaml
 
 try:
     from scripts.generate_system_sim_schedule import (
+        EXPERIMENT_BUDGET_FIELDS,
         FREEZE_SCHEMA,
         SCHEDULE_SCHEMA,
         ScheduleError,
         sha256_file,
         sha256_tree,
+        validate_experiment_budget,
     )
 except ModuleNotFoundError as error:
     if error.name != "scripts":
         raise
     from generate_system_sim_schedule import (  # type: ignore[no-redef]
+        EXPERIMENT_BUDGET_FIELDS,
         FREEZE_SCHEMA,
         SCHEDULE_SCHEMA,
         ScheduleError,
         sha256_file,
         sha256_tree,
+        validate_experiment_budget,
     )
 
 
@@ -64,6 +68,7 @@ class RunPlan:
     launch_package: str
     launch_file: str
     launch_arguments: Mapping[str, str]
+    experiment_budget: Mapping[str, float | int]
     command: tuple[str, ...]
     schedule_row: Mapping[str, str]
 
@@ -143,7 +148,11 @@ def jsonl_contains_event(path: Path, event: str) -> bool:
     return False
 
 
-def validate_completed_artifacts(output_dir: Path) -> dict[str, Any]:
+def validate_completed_artifacts(
+    output_dir: Path,
+    *,
+    expected_experiment_budget: Mapping[str, float | int] | None = None,
+) -> dict[str, Any]:
     """Audit the minimum policy/evaluator evidence required for completion."""
     errors: list[str] = []
     files: dict[str, dict[str, Any]] = {}
@@ -186,6 +195,30 @@ def validate_completed_artifacts(output_dir: Path) -> dict[str, Any]:
     policy_manifest = manifests.get("policy_manifest.json")
     if policy_manifest is not None and policy_manifest.get("truth_access") is not False:
         errors.append("policy_manifest.json: truth_access must be false")
+    if policy_manifest is not None and expected_experiment_budget is not None:
+        parameters = policy_manifest.get("parameters")
+        observed_values = (
+            {
+                field: parameters[field]
+                for field in EXPERIMENT_BUDGET_FIELDS
+                if field in parameters
+            }
+            if isinstance(parameters, Mapping)
+            else parameters
+        )
+        try:
+            observed_budget = _normalized_experiment_budget(
+                observed_values,
+                label="policy_manifest.json parameters",
+            )
+        except RunnerError as error:
+            errors.append(str(error))
+        else:
+            if observed_budget != dict(expected_experiment_budget):
+                errors.append(
+                    "policy_manifest.json: runtime experiment budget disagrees "
+                    "with the frozen launch budget"
+                )
     evaluator_manifest = manifests.get("evaluation_manifest.json")
     if (
         evaluator_manifest is not None
@@ -398,6 +431,137 @@ def _verify_frozen_inputs(
         raise RunnerError("frozen world bundle changed after schedule freeze")
 
 
+def _normalized_experiment_budget(
+    value: Any, *, label: str
+) -> dict[str, float | int]:
+    try:
+        return validate_experiment_budget(value, label=label)
+    except ScheduleError as error:
+        raise RunnerError(str(error)) from error
+
+
+def _schedule_row_experiment_budget(
+    row: Mapping[str, str],
+) -> dict[str, float | int]:
+    parsed: dict[str, float | int] = {}
+    for field in EXPERIMENT_BUDGET_FIELDS:
+        raw = row.get(field)
+        if raw is None or raw == "":
+            raise RunnerError(f"schedule row lacks experiment budget field: {field}")
+        if field == "max_decisions":
+            if not raw.isdigit():
+                raise RunnerError(
+                    "schedule row max_decisions must be a positive integer"
+                )
+            parsed[field] = int(raw)
+        else:
+            try:
+                parsed[field] = float(raw)
+            except ValueError as error:
+                raise RunnerError(
+                    f"schedule row {field} must be a finite positive number"
+                ) from error
+    return _normalized_experiment_budget(
+        parsed, label="schedule row experiment_budget"
+    )
+
+
+def _experiment_budget_contract(
+    *,
+    root: Path,
+    manifest: Mapping[str, Any],
+    row: Mapping[str, str],
+    fixed_args: Mapping[str, str],
+    column_args: Mapping[str, str],
+) -> dict[str, float | int]:
+    """Cross-check budget provenance and require row-to-launch passthrough."""
+    inputs = manifest.get("inputs")
+    if not isinstance(inputs, Mapping):
+        raise RunnerError("freeze manifest has no inputs mapping")
+    shared_record = inputs.get("shared_stack")
+    if not isinstance(shared_record, Mapping):
+        raise RunnerError("freeze manifest has no shared stack record")
+    shared_path = _resolve_inside(
+        root, str(shared_record.get("path", "")), "shared stack"
+    )
+    shared_stack = _load_yaml_mapping(shared_path, "shared stack")
+    declared = _normalized_experiment_budget(
+        shared_stack.get("experiment_budget"),
+        label="shared_stack.experiment_budget",
+    )
+    recorded_declared = _normalized_experiment_budget(
+        shared_record.get("experiment_budget"),
+        label="freeze manifest shared_stack.experiment_budget",
+    )
+    if recorded_declared != declared:
+        raise RunnerError(
+            "freeze manifest shared-stack experiment budget disagrees with its input"
+        )
+
+    effective = _normalized_experiment_budget(
+        manifest.get("experiment_budget"),
+        label="freeze manifest experiment_budget",
+    )
+    provenance = manifest.get("budget_provenance")
+    if not isinstance(provenance, Mapping):
+        raise RunnerError("freeze manifest has no budget provenance")
+    source = provenance.get("source")
+    overrides = provenance.get("development_overrides")
+    if not isinstance(overrides, Mapping):
+        raise RunnerError(
+            "budget provenance development_overrides must be a mapping"
+        )
+    unknown = sorted(
+        str(field) for field in overrides if field not in EXPERIMENT_BUDGET_FIELDS
+    )
+    if unknown:
+        raise RunnerError(
+            "budget provenance has unknown overrides: " + ", ".join(unknown)
+        )
+
+    eligibility = manifest.get("eligibility")
+    if not isinstance(eligibility, Mapping):
+        raise RunnerError("freeze manifest has no eligibility mapping")
+    evidence_tier = eligibility.get("evidence_tier")
+    if evidence_tier not in {"development", "formal"}:
+        raise RunnerError("freeze manifest has invalid evidence tier")
+    if source == "shared_stack":
+        if overrides or effective != declared:
+            raise RunnerError(
+                "shared-stack budget provenance disagrees with the effective budget"
+            )
+    elif source == "development_override":
+        if evidence_tier != "development" or not overrides:
+            raise RunnerError(
+                "experiment budget overrides are allowed only for development schedules"
+            )
+        candidate = dict(declared)
+        candidate.update(overrides)
+        normalized_candidate = _normalized_experiment_budget(
+            candidate, label="budget provenance effective experiment_budget"
+        )
+        if normalized_candidate != effective:
+            raise RunnerError(
+                "development budget overrides disagree with the effective budget"
+            )
+    else:
+        raise RunnerError(f"unsupported experiment budget source: {source!r}")
+    if evidence_tier == "formal" and effective != declared:
+        raise RunnerError("formal schedule experiment budget is not frozen")
+
+    row_budget = _schedule_row_experiment_budget(row)
+    if row_budget != effective:
+        raise RunnerError(
+            "schedule row experiment budget disagrees with the freeze manifest"
+        )
+    for field in EXPERIMENT_BUDGET_FIELDS:
+        if field in fixed_args or column_args.get(field) != field:
+            raise RunnerError(
+                f"launch contract must pass {field} from its schedule column"
+            )
+    return effective
+
+
 def load_run_plan(
     *, root: Path, schedule_dir: Path, schedule_id: str
 ) -> RunPlan:
@@ -453,6 +617,13 @@ def load_run_plan(
     _verify_frozen_inputs(root, manifest, source, row)
 
     package, launch_file, fixed_args, column_args = _launch_contract(manifest)
+    experiment_budget = _experiment_budget_contract(
+        root=root,
+        manifest=manifest,
+        row=row,
+        fixed_args=fixed_args,
+        column_args=column_args,
+    )
     launch_arguments = dict(fixed_args)
     for argument, column in column_args.items():
         value = row.get(column)
@@ -500,6 +671,7 @@ def load_run_plan(
         launch_package=package,
         launch_file=launch_file,
         launch_arguments=launch_arguments,
+        experiment_budget=experiment_budget,
         command=command,
         schedule_row=row,
     )
@@ -517,6 +689,7 @@ def _manifest_value(plan: RunPlan, *, status: str, **updates: Any) -> dict[str, 
         "schedule_sha256": plan.schedule_sha256,
         "schedule_dir": plan.schedule_dir.relative_to(plan.root).as_posix(),
         "output_dir": plan.output_dir.relative_to(plan.root).as_posix(),
+        "experiment_budget": dict(plan.experiment_budget),
         "launch": {
             "package": plan.launch_package,
             "file": plan.launch_file,
@@ -803,7 +976,10 @@ def execute_run(
             if process is not None
             else ()
         )
-        artifact_audit = validate_completed_artifacts(plan.output_dir)
+        artifact_audit = validate_completed_artifacts(
+            plan.output_dir,
+            expected_experiment_budget=plan.experiment_budget,
+        )
         wall_elapsed_s = max(0.0, time.monotonic() - supervisor_started)
         _write_manifest(
             manifest_path,
@@ -836,7 +1012,10 @@ def execute_run(
                 sigint_grace_s=sigint_grace_s,
                 term_grace_s=term_grace_s,
             )
-        artifact_audit = validate_completed_artifacts(plan.output_dir)
+        artifact_audit = validate_completed_artifacts(
+            plan.output_dir,
+            expected_experiment_budget=plan.experiment_budget,
+        )
         _write_manifest(
             manifest_path,
             _manifest_value(
@@ -850,7 +1029,10 @@ def execute_run(
         )
         raise RunnerError(f"could not invoke ros2 launch: {error}") from error
 
-    artifact_audit = validate_completed_artifacts(plan.output_dir)
+    artifact_audit = validate_completed_artifacts(
+        plan.output_dir,
+        expected_experiment_budget=plan.experiment_budget,
+    )
     status = outcome.status
     if status == "terminal_observed":
         if outcome.process_returncode is None:
@@ -956,6 +1138,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "schedule_id": plan.schedule_id,
                 "output_dir": str(plan.output_dir),
                 "command": list(plan.command),
+                "experiment_budget": dict(plan.experiment_budget),
                 "supervision": {
                     "wall_timeout_s": args.wall_timeout_s,
                     "evaluator_flush_s": args.evaluator_flush_s,

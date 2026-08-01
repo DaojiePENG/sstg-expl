@@ -53,11 +53,11 @@ drive, bridge and spawn launch are reused from Nav2's released
 `nav2_minimal_tb3_sim` TurtleBot3 Waffle package; this repository owns only
 the SSTG adapter, experiment worlds, allowlisted evaluator instrumentation and
 protocol.  A five-minute office development smoke has verified Gazebo dynamics,
-LiDAR and odometry bridging, a growing SLAM map, Nav2 goal acceptance, and
-policy-driven robot motion.  It ended at the development runner's wall timeout,
-so a completed Nav2 goal is not yet claimed.  The corrected scoped depth-camera
-bridge and clean evaluator shutdown path are implemented but still require a
-post-commit runtime repeat.
+LiDAR and odometry bridging, a growing SLAM map, policy-driven robot motion and
+13 completed Nav2 goals.  It ended at the development runner's wall timeout,
+so the run itself is not task-complete.  A standalone post-fix probe verified
+the scoped 320x240 depth-camera bridge at 5 Hz.  The clean evaluator shutdown
+path and frozen-budget terminal event still require a scheduled runtime repeat.
 
 ## Stage-0 success criteria
 

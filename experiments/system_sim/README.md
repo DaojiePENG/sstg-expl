@@ -75,7 +75,9 @@ cd ros2_ws
 source install/setup.bash
 cd ..
 /usr/bin/python3 scripts/preflight_system_sim.py --require-runtime
-ros2 launch sstg_nav_bringup system_sim.launch.py
+ros2 launch sstg_nav_bringup system_sim.launch.py \
+  max_duration_s:=300 max_distance_m:=60 \
+  max_decisions:=30 goal_timeout_s:=90
 ```
 
 Headless smoke run:
@@ -83,6 +85,8 @@ Headless smoke run:
 ```bash
 ros2 launch sstg_nav_bringup system_sim.launch.py \
   headless:=true rviz:=false \
+  max_duration_s:=300 max_distance_m:=60 \
+  max_decisions:=30 goal_timeout_s:=90 \
   output_dir:=system_sim_outputs/runs/gazebo_dev_v0/manual_smoke
 ```
 
@@ -98,7 +102,7 @@ and assigns every row a distinct directory below
 `system_sim_outputs/runs/<study_id>/`.
 
 ```bash
-python scripts/generate_system_sim_schedule.py \
+/usr/bin/python3 scripts/generate_system_sim_schedule.py \
   --study-id gazebo_dev_v0 \
   --method sstg \
   --condition nominal \
@@ -107,10 +111,18 @@ python scripts/generate_system_sim_schedule.py \
   --start-policy all
 ```
 
+The four positive policy limits in `configs/shared_stack.yaml` are part of the
+matched-stack independent-variable contract.  They are copied into the CSV,
+freeze manifest, launch command, run manifest and policy manifest, with hashes
+checked at every boundary.  Development schedules may explicitly override
+them with `--max-duration-s`, `--max-distance-m`, `--max-decisions` and
+`--goal-timeout-s`; formal schedules reject every such override and always use
+the frozen shared-stack values.
+
 Inspect one row's exact launch plan without starting ROS or writing files:
 
 ```bash
-python scripts/run_system_sim_schedule.py \
+/usr/bin/python3 scripts/run_system_sim_schedule.py \
   --schedule-dir experiments/system_sim/studies/gazebo_dev_v0 \
   --schedule-id '<schedule_id from run_schedule.csv>'
 ```
@@ -136,7 +148,7 @@ survives the full signal escalation.
 ## Analyze a frozen study
 
 ```bash
-python scripts/analyze_system_sim_experiments.py \
+/usr/bin/python3 scripts/analyze_system_sim_experiments.py \
   experiments/system_sim/studies/gazebo_dev_v0
 ```
 
@@ -158,3 +170,24 @@ dual-threshold success, and collision-free status are separate outcomes.
 Missing clearance, ATE, contact, target-proxy, or other evaluator fields remain
 NA and are counted in the analysis manifest; they are never replaced with
 zeros or inferred from another metric.
+
+## Regenerate and register visual evidence
+
+The offline renderer reads the final `/map`, evaluator-only ground-truth path,
+and optionally `/scan` directly from a run's core MCAP.  It refuses path
+escape, symlinks and overwrite, and visibly labels every output as development
+simulation evidence:
+
+```bash
+/usr/bin/python3 scripts/render_system_sim_bag_media.py \
+  system_sim_outputs/runs/<study_id>/<schedule_id> \
+  --sensor-sanity
+
+/usr/bin/python3 scripts/register_system_sim_media.py \
+  system_sim_outputs/runs/<study_id>/<schedule_id> \
+  --evidence-tier development
+```
+
+The registrar hashes the captures and requires Gazebo, RViz, sensor-sanity,
+final-state and key-interval-video roles before marking the media bundle
+complete.  Raw MCAP remains the source of truth for derived figures.

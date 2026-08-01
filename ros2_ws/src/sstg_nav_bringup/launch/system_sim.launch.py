@@ -32,6 +32,10 @@ def generate_launch_description():
     strategy = LaunchConfiguration("strategy")
     coverage_objective = LaunchConfiguration("coverage_objective")
     policy_seed = LaunchConfiguration("policy_seed")
+    max_duration_s = LaunchConfiguration("max_duration_s")
+    max_distance_m = LaunchConfiguration("max_distance_m")
+    max_decisions = LaunchConfiguration("max_decisions")
+    goal_timeout_s = LaunchConfiguration("goal_timeout_s")
     evaluator_enabled = LaunchConfiguration("evaluator")
     truth_map_yaml = LaunchConfiguration("truth_map_yaml")
     truth_registration_id = LaunchConfiguration("truth_registration_id")
@@ -100,6 +104,18 @@ def generate_launch_description():
                     coverage_objective, value_type=str
                 ),
                 "policy_seed": ParameterValue(policy_seed, value_type=int),
+                "max_duration_s": ParameterValue(
+                    max_duration_s, value_type=float
+                ),
+                "max_distance_m": ParameterValue(
+                    max_distance_m, value_type=float
+                ),
+                "max_decisions": ParameterValue(
+                    max_decisions, value_type=int
+                ),
+                "goal_timeout_s": ParameterValue(
+                    goal_timeout_s, value_type=float
+                ),
                 "use_sim_time": True,
             },
         ],
@@ -149,6 +165,22 @@ def generate_launch_description():
         DeclareLaunchArgument("strategy", default_value="sstg"),
         DeclareLaunchArgument("coverage_objective", default_value="joint"),
         DeclareLaunchArgument("policy_seed", default_value="42"),
+        DeclareLaunchArgument(
+            "max_duration_s",
+            description="required frozen policy duration budget",
+        ),
+        DeclareLaunchArgument(
+            "max_distance_m",
+            description="required frozen policy travel budget",
+        ),
+        DeclareLaunchArgument(
+            "max_decisions",
+            description="required frozen policy action budget",
+        ),
+        DeclareLaunchArgument(
+            "goal_timeout_s",
+            description="required frozen per-goal timeout",
+        ),
         DeclareLaunchArgument("evaluator", default_value="true"),
         DeclareLaunchArgument("truth_map_yaml", default_value=default_truth),
         DeclareLaunchArgument(

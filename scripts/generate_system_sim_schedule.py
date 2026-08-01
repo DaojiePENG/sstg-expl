@@ -30,6 +30,12 @@ EXPERIMENT_ROOT = Path("experiments/system_sim")
 SCHEDULE_SCHEMA = "sstg_system_sim_run_schedule/v2"
 FREEZE_SCHEMA = "sstg_system_sim_schedule_freeze/v2"
 ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+EXPERIMENT_BUDGET_FIELDS = (
+    "max_duration_s",
+    "max_distance_m",
+    "max_decisions",
+    "goal_timeout_s",
+)
 CSV_FIELDS = (
     "schema",
     "study_id",
@@ -59,6 +65,7 @@ CSV_FIELDS = (
     "condition",
     "replicate_seed",
     "randomization_seed",
+    *EXPERIMENT_BUDGET_FIELDS,
     "run_output_dir",
     "evidence_tier",
     "formal_result_eligible",
@@ -76,6 +83,77 @@ CSV_FIELDS = (
 
 class ScheduleError(ValueError):
     """Raised when a schedule cannot be frozen from the declared inputs."""
+
+
+def validate_experiment_budget(
+    value: Any, *, label: str = "experiment_budget"
+) -> dict[str, float | int]:
+    """Normalize the required policy limits, rejecting disabled or mistyped values."""
+    if not isinstance(value, Mapping):
+        raise ScheduleError(f"{label} must be a mapping")
+    missing = [field for field in EXPERIMENT_BUDGET_FIELDS if field not in value]
+    extra = sorted(
+        str(field) for field in value if field not in EXPERIMENT_BUDGET_FIELDS
+    )
+    if missing:
+        raise ScheduleError(f"{label} is missing: {', '.join(missing)}")
+    if extra:
+        raise ScheduleError(f"{label} has unknown fields: {', '.join(extra)}")
+
+    max_decisions = value["max_decisions"]
+    if isinstance(max_decisions, bool) or not isinstance(max_decisions, int):
+        raise ScheduleError(f"{label}.max_decisions must be a positive integer")
+    if max_decisions <= 0:
+        raise ScheduleError(f"{label}.max_decisions must be a positive integer")
+
+    normalized: dict[str, float | int] = {"max_decisions": max_decisions}
+    for field in ("max_duration_s", "max_distance_m", "goal_timeout_s"):
+        number = _finite_number(value[field], f"{label}.{field}")
+        if number <= 0.0:
+            raise ScheduleError(f"{label}.{field} must be positive")
+        normalized[field] = number
+    if normalized["goal_timeout_s"] > normalized["max_duration_s"]:
+        raise ScheduleError(
+            f"{label}.goal_timeout_s must not exceed max_duration_s"
+        )
+    return {
+        field: normalized[field]
+        for field in EXPERIMENT_BUDGET_FIELDS
+    }
+
+
+def _effective_experiment_budget(
+    shared_stack: Mapping[str, Any],
+    evidence_tier: str,
+    overrides: Mapping[str, Any] | None,
+) -> tuple[dict[str, float | int], dict[str, float | int]]:
+    declared = validate_experiment_budget(
+        shared_stack.get("experiment_budget"),
+        label="shared_stack.experiment_budget",
+    )
+    explicit = dict(overrides or {})
+    unknown = sorted(
+        str(field) for field in explicit if field not in EXPERIMENT_BUDGET_FIELDS
+    )
+    if unknown:
+        raise ScheduleError(
+            "unknown experiment budget overrides: " + ", ".join(unknown)
+        )
+    if evidence_tier == "formal" and explicit:
+        raise ScheduleError(
+            "formal schedules cannot override the frozen shared-stack "
+            "experiment budget"
+        )
+    effective = dict(declared)
+    effective.update(explicit)
+    normalized = validate_experiment_budget(
+        effective, label="effective experiment_budget"
+    )
+    return normalized, {
+        field: normalized[field]
+        for field in EXPERIMENT_BUDGET_FIELDS
+        if field in explicit
+    }
 
 
 def inverse_spawn_transform(
@@ -519,6 +597,7 @@ def freeze_schedule(
     randomization_seed: int,
     evidence_tier: str = "development",
     start_policy: str = "first",
+    budget_overrides: Mapping[str, Any] | None = None,
     source_paths: Sequence[Path] | None = None,
     run_output_root: Path | None = None,
     force: bool = False,
@@ -550,6 +629,9 @@ def freeze_schedule(
     )
     shared_stack = _load_mapping(
         shared_stack_path, "sstg_system_sim_shared_stack/v1"
+    )
+    experiment_budget, applied_budget_overrides = _effective_experiment_budget(
+        shared_stack, evidence_tier, budget_overrides
     )
     condition = _load_mapping(condition_path, "sstg_system_sim_condition/v1")
     if _contains_tbd(condition) or "not_runnable" in str(condition.get("status", "")):
@@ -655,6 +737,7 @@ def freeze_schedule(
             "methods": method_records,
             "run_output_root": _display_path(root, run_output_root),
             "runner_tool_sha256": runner_tool_sha,
+            "experiment_budget": experiment_budget,
         }
     )
     method_hashes = {item["method"]: item["sha256"] for item in method_records}
@@ -688,6 +771,7 @@ def freeze_schedule(
                             "world": world["sha256"]["bundle"],
                             "start": start,
                             "replicate_seed": replicate_seed,
+                            "experiment_budget": experiment_budget,
                             "output_dir": _display_path(root, run_output_dir),
                             "runner_tool_sha256": runner_tool_sha,
                         }
@@ -732,6 +816,16 @@ def freeze_schedule(
                             "condition": condition_id,
                             "replicate_seed": replicate_seed,
                             "randomization_seed": randomization_seed,
+                            "max_duration_s": _format_float(
+                                float(experiment_budget["max_duration_s"])
+                            ),
+                            "max_distance_m": _format_float(
+                                float(experiment_budget["max_distance_m"])
+                            ),
+                            "max_decisions": experiment_budget["max_decisions"],
+                            "goal_timeout_s": _format_float(
+                                float(experiment_budget["goal_timeout_s"])
+                            ),
                             "run_output_dir": _display_path(root, run_output_dir),
                             "evidence_tier": evidence_tier,
                             "formal_result_eligible": str(formal_eligible).lower(),
@@ -780,6 +874,15 @@ def freeze_schedule(
             "scheduled_run_count": len(rows),
         },
         "randomization": {"seed": randomization_seed},
+        "experiment_budget": experiment_budget,
+        "budget_provenance": {
+            "source": (
+                "development_override"
+                if applied_budget_overrides
+                else "shared_stack"
+            ),
+            "development_overrides": applied_budget_overrides,
+        },
         "source": {
             **git,
             "source_tree_sha256": source_tree_sha256,
@@ -800,6 +903,10 @@ def freeze_schedule(
                 "path": _display_path(root, shared_stack_path),
                 "sha256": shared_sha,
                 "freeze_status": shared_stack.get("freeze_status"),
+                "experiment_budget": validate_experiment_budget(
+                    shared_stack.get("experiment_budget"),
+                    label="shared_stack.experiment_budget",
+                ),
             },
             "condition": {
                 "condition": condition_id,
@@ -845,6 +952,10 @@ def freeze_schedule(
                 "strategy": "strategy",
                 "coverage_objective": "coverage_objective",
                 "policy_seed": "replicate_seed",
+                "max_duration_s": "max_duration_s",
+                "max_distance_m": "max_distance_m",
+                "max_decisions": "max_decisions",
+                "goal_timeout_s": "goal_timeout_s",
                 "truth_map_yaml": "truth_map_yaml",
                 "truth_registration_id": "truth_registration_id",
                 "truth_to_map_x_m": "truth_to_map_x_m",
@@ -922,6 +1033,26 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--start-policy", choices=("first", "all"), default="first"
     )
     parser.add_argument(
+        "--max-duration-s",
+        type=float,
+        help="development-only override of the shared-stack policy duration",
+    )
+    parser.add_argument(
+        "--max-distance-m",
+        type=float,
+        help="development-only override of the shared-stack travel budget",
+    )
+    parser.add_argument(
+        "--max-decisions",
+        type=int,
+        help="development-only override of the shared-stack action budget",
+    )
+    parser.add_argument(
+        "--goal-timeout-s",
+        type=float,
+        help="development-only override of the shared-stack per-goal timeout",
+    )
+    parser.add_argument(
         "--source-path",
         type=Path,
         action="append",
@@ -959,6 +1090,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             randomization_seed=args.randomization_seed,
             evidence_tier=args.evidence_tier,
             start_policy=args.start_policy,
+            budget_overrides={
+                field: getattr(args, field)
+                for field in EXPERIMENT_BUDGET_FIELDS
+                if getattr(args, field) is not None
+            },
             source_paths=args.source_path,
             run_output_root=args.run_output_root,
             force=args.force,
@@ -974,6 +1110,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "formal_result_eligible": manifest["eligibility"][
                     "formal_result_eligible"
                 ],
+                "experiment_budget": manifest["experiment_budget"],
                 "schedule_sha256": manifest["outputs"]["run_schedule_sha256"],
                 "simulator_invoked": False,
             },

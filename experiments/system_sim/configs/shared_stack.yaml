@@ -51,5 +51,10 @@ shared_autonomy:
   local_controller: nav2_mppi_frozen_sstg_dev_v1
   nav2_params: ros2_ws/src/sstg_nav_bringup/config/nav2_params.yaml
   slam_params: ros2_ws/src/sstg_nav_bringup/config/slam_toolbox.yaml
+experiment_budget:
+  max_duration_s: 900.0
+  max_distance_m: 150.0
+  max_decisions: 100
+  goal_timeout_s: 180.0
 freeze_status: development
 confirmatory_warning: Calibrate and freeze this development profile before Stage 3.

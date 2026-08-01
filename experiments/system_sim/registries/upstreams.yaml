@@ -23,7 +23,7 @@ components:
       - evaluator_only_ground_truth_odometry
       - missing_imu_joint_backport_from_b9d523ad7ea0e98174627fdefeb4b1ae9b515063
     drive_geometry_and_primary_sensors_changed: false
-    verification_status: office_dynamics_lidar_imu_runtime_verified_depth_bridge_recheck_pending
+    verification_status: office_dynamics_lidar_imu_depth_camera_runtime_verified
   - component_id: nav2_jazzy_1_3_12
     role: navigation_and_controller_stack
     acquisition: ros_apt
@@ -34,7 +34,7 @@ components:
     repository: https://github.com/ros-navigation/navigation2
     license: Apache-2.0
     local_use: upstream_launch_with_frozen_experiment_parameter_overrides
-    verification_status: office_goal_acceptance_and_motion_verified_goal_success_pending
+    verification_status: office_goal_acceptance_motion_and_success_verified
   - component_id: slam_toolbox_jazzy_2_8_5
     role: online_slam
     acquisition: ros_apt
@@ -52,7 +52,7 @@ components:
     repository: https://github.com/gazebosim/ros_gz
     license: Apache-2.0
     local_use: upstream_launch_bridge_and_image_bridge
-    verification_status: clock_scan_odom_runtime_verified_depth_image_bridge_recheck_pending
+    verification_status: clock_scan_odom_depth_image_runtime_verified
   - component_id: frontier_mrtsp_dp_external_v1_6_1
     role: candidate_public_exploration_baseline
     acquisition: vcs_source
