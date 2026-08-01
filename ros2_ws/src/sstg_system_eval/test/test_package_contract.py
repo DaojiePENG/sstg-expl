@@ -114,6 +114,7 @@ def test_evaluator_fails_closed_without_simulation_time():
 
     assert 'self.get_parameter("use_sim_time").value' in source
     assert "use_sim_time must be true for timestamp-paired simulation metrics" in source
+    assert 'self._emit_snapshot("policy_session_settled")' in source
 
 
 def test_frozen_camera_proxy_has_valid_frozen_geometry():

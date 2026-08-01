@@ -23,6 +23,7 @@ SCHEDULE_SCHEMA = "sstg_system_sim_run_schedule/v2"
 FREEZE_SCHEMA = "sstg_system_sim_schedule_freeze/v2"
 RUN_MANIFEST_SCHEMA = "sstg_system_sim_run_launch/v1"
 ANALYSIS_SCHEMA = "sstg_system_sim_analysis/v1"
+FINAL_EVALUATOR_SNAPSHOT_REASON = "policy_session_settled"
 ALLOWED_EXECUTION_STATUS = {
     "reserved",
     "starting",
@@ -617,10 +618,11 @@ def _run_row(
     if not audit_errors:
         snapshot = _last_snapshot(
             run_dir / "evaluation_metrics.jsonl",
-            reason="policy_session_finished" if completed else None,
+            reason=FINAL_EVALUATOR_SNAPSHOT_REASON if completed else None,
         )
     if completed and (
-        snapshot is None or snapshot.get("reason") != "policy_session_finished"
+        snapshot is None
+        or snapshot.get("reason") != FINAL_EVALUATOR_SNAPSHOT_REASON
     ):
         raise AnalysisError(f"completed run lacks final evaluator snapshot: {run_dir}")
     row.update(_extract_snapshot(snapshot))
@@ -907,7 +909,7 @@ def analyze_study(
         "definitions": {
             "task_completed": (
                 "runner status terminal_completed with artifact-valid final "
-                "policy_session_finished evaluator snapshot"
+                "policy_session_settled evaluator snapshot"
             ),
             "dual_threshold_success": (
                 "evaluator C_I and C_T both meet frozen thresholds"

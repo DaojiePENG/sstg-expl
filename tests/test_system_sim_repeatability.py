@@ -95,7 +95,7 @@ def _make_run(
     snapshot = {
         "event": "metrics_snapshot",
         "payload": {
-            "reason": "policy_session_finished",
+            "reason": "policy_session_settled",
             "coverage_endpoints": {
                 "c_i_information": information,
                 "c_t_topological": topological,

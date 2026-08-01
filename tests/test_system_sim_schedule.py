@@ -1538,7 +1538,15 @@ def _artifact_writer_program() -> str:
             "    {'event': 'policy_trace_ingested',",
             "     'payload': {'event': 'session_finished'}},",
             "    {'event': 'metrics_snapshot',",
-            "     'payload': {'reason': 'policy_session_finished'}}])",
+            "     'payload': {'reason': 'policy_session_finished'}},",
+            "    {'event': 'metrics_snapshot',",
+            "     'payload': {",
+            "         'reason': 'policy_session_settled',",
+            "         'diagnostics': {",
+            "             'ate_pending_sample_count': 0,",
+            "             'ate_settlement_pending': False},",
+            "         'ground_truth_motion': {",
+            "             'ate_pending_sample_count': 0}}}])",
             "write_jsonl('policy_trace.jsonl', [",
             "    {'event': 'session_started', 'payload': {}}, terminal])",
             "print('terminal artifacts written', flush=True)",
@@ -1779,7 +1787,64 @@ def test_manual_interrupt_has_distinct_supervisor_status(tmp_path: Path) -> None
     assert outcome.shutdown_signals == ("SIGINT",)
 
 
-def test_artifact_audit_rejects_missing_evaluator_final_snapshot(
+def test_supervisor_waits_for_settled_evaluator_snapshot(tmp_path: Path) -> None:
+    trace_path = tmp_path / "policy_trace.jsonl"
+    metrics_path = tmp_path / "evaluation_metrics.jsonl"
+    trace_path.write_text(
+        json.dumps({"event": "session_finished"}) + "\n", encoding="utf-8"
+    )
+    metrics_path.write_text(
+        json.dumps(
+            {
+                "event": "metrics_snapshot",
+                "payload": {"reason": "policy_session_finished"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class FakeProcess:
+        @staticmethod
+        def poll():
+            return None
+
+    elapsed = [0.0]
+
+    def clock() -> float:
+        return elapsed[0]
+
+    def sleeper(seconds: float) -> None:
+        elapsed[0] += seconds
+        if elapsed[0] >= 0.2:
+            with metrics_path.open("a", encoding="utf-8") as stream:
+                stream.write(
+                    json.dumps(
+                        {
+                            "event": "metrics_snapshot",
+                            "payload": {"reason": "policy_session_settled"},
+                        }
+                    )
+                    + "\n"
+                )
+
+    outcome = supervise_process(
+        FakeProcess(),
+        trace_path=trace_path,
+        metrics_path=metrics_path,
+        wall_timeout_s=5.0,
+        evaluator_flush_s=1.0,
+        poll_interval_s=0.1,
+        clock=clock,
+        sleeper=sleeper,
+        shutdown=lambda *_args, **_kwargs: ("SIGINT",),
+    )
+
+    assert outcome.status == "terminal_observed"
+    assert 0.2 <= outcome.wall_elapsed_s < 1.0
+
+
+def test_artifact_audit_rejects_missing_evaluator_settled_snapshot(
     tmp_path: Path,
 ) -> None:
     output = tmp_path / "artifacts"
@@ -1795,7 +1860,38 @@ def test_artifact_audit_rejects_missing_evaluator_final_snapshot(
     audit = validate_completed_artifacts(output)
 
     assert audit["valid"] is False
-    assert any("final policy_session_finished snapshot" in error for error in audit["errors"])
+    assert any("policy_session_settled snapshot" in error for error in audit["errors"])
+
+
+def test_artifact_audit_rejects_nonempty_settled_ate_queue(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    subprocess.run(
+        [sys.executable, "-c", _artifact_writer_program(), str(output), "exit"],
+        check=True,
+    )
+    metrics_path = output / "evaluation_metrics.jsonl"
+    metrics = [json.loads(line) for line in metrics_path.read_text().splitlines()]
+    settled = metrics[-1]["payload"]
+    settled["diagnostics"]["ate_pending_sample_count"] = 1
+    settled["diagnostics"]["ate_settlement_pending"] = True
+    settled["ground_truth_motion"]["ate_pending_sample_count"] = 1
+    metrics_path.write_text(
+        "".join(json.dumps(record) + "\n" for record in metrics),
+        encoding="utf-8",
+    )
+
+    audit = validate_completed_artifacts(output)
+
+    assert audit["valid"] is False
+    assert "evaluation_metrics.jsonl: settled ATE queue is not empty" in audit[
+        "errors"
+    ]
+    assert "evaluation_metrics.jsonl: ATE settlement remains pending" in audit[
+        "errors"
+    ]
 
 
 def test_artifact_audit_rejects_runtime_budget_drift(tmp_path: Path) -> None:

@@ -75,6 +75,8 @@ ROOT = Path(__file__).resolve().parents[1]
 RUN_MANIFEST_SCHEMA = "sstg_system_sim_run_launch/v1"
 DEFAULT_SIGINT_GRACE_S = 15.0
 DEFAULT_TERM_GRACE_S = 3.0
+DEFAULT_EVALUATOR_SETTLEMENT_S = 5.0
+FINAL_EVALUATOR_SNAPSHOT_REASON = "policy_session_settled"
 MCAP_MAGIC = b"\x89MCAP0\r\n"
 
 
@@ -272,13 +274,40 @@ def jsonl_contains_event(path: Path, event: str) -> bool:
         content = path.read_text(encoding="utf-8")
     except (FileNotFoundError, OSError, UnicodeError):
         return False
-    complete_content = content if content.endswith("\n") else content.rpartition("\n")[0]
+    complete_content = (
+        content if content.endswith("\n") else content.rpartition("\n")[0]
+    )
     for line in complete_content.splitlines():
         try:
             value = json.loads(line)
         except json.JSONDecodeError:
             continue
         if isinstance(value, dict) and value.get("event") == event:
+            return True
+    return False
+
+
+def jsonl_contains_snapshot_reason(path: Path, reason: str) -> bool:
+    """Read complete evaluator JSONL records until a snapshot reason appears."""
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError, UnicodeError):
+        return False
+    complete_content = (
+        content if content.endswith("\n") else content.rpartition("\n")[0]
+    )
+    for line in complete_content.splitlines():
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        payload = value.get("payload") if isinstance(value, dict) else None
+        if (
+            isinstance(value, dict)
+            and value.get("event") == "metrics_snapshot"
+            and isinstance(payload, dict)
+            and payload.get("reason") == reason
+        ):
             return True
     return False
 
@@ -677,20 +706,57 @@ def validate_completed_artifacts(
         and record["payload"].get("event") == "session_finished"
         for record in metric_records
     )
-    final_snapshot = any(
+    terminal_snapshot = any(
         record.get("event") == "metrics_snapshot"
         and isinstance(record.get("payload"), dict)
         and record["payload"].get("reason") == "policy_session_finished"
         for record in metric_records
     )
+    settled_snapshots = [
+        record["payload"]
+        for record in metric_records
+        if record.get("event") == "metrics_snapshot"
+        and isinstance(record.get("payload"), dict)
+        and record["payload"].get("reason")
+        == FINAL_EVALUATOR_SNAPSHOT_REASON
+    ]
+    settled_snapshot = settled_snapshots[-1] if settled_snapshots else None
     if metric_records and not ingested_terminal:
         errors.append(
             "evaluation_metrics.jsonl: evaluator did not ingest session_finished"
         )
-    if metric_records and not final_snapshot:
+    if metric_records and not terminal_snapshot:
         errors.append(
-            "evaluation_metrics.jsonl: final policy_session_finished snapshot is absent"
+            "evaluation_metrics.jsonl: policy_session_finished snapshot is absent"
         )
+    if metric_records and settled_snapshot is None:
+        errors.append(
+            "evaluation_metrics.jsonl: final policy_session_settled snapshot is absent"
+        )
+    if settled_snapshot is not None:
+        diagnostics = settled_snapshot.get("diagnostics")
+        ground_truth = settled_snapshot.get("ground_truth_motion")
+        if not isinstance(diagnostics, Mapping):
+            errors.append(
+                "evaluation_metrics.jsonl: settled diagnostics are absent"
+            )
+        else:
+            if diagnostics.get("ate_pending_sample_count") != 0:
+                errors.append(
+                    "evaluation_metrics.jsonl: settled ATE queue is not empty"
+                )
+            if diagnostics.get("ate_settlement_pending") is not False:
+                errors.append(
+                    "evaluation_metrics.jsonl: ATE settlement remains pending"
+                )
+        if not isinstance(ground_truth, Mapping):
+            errors.append(
+                "evaluation_metrics.jsonl: settled ground-truth metrics are absent"
+            )
+        elif ground_truth.get("ate_pending_sample_count") != 0:
+            errors.append(
+                "evaluation_metrics.jsonl: settled ground-truth ATE queue is not empty"
+            )
 
     return {
         "valid": not errors,
@@ -706,7 +772,8 @@ def validate_completed_artifacts(
                 for record in observed_records
             ),
             "evaluator_ingested_session_finished": ingested_terminal,
-            "evaluator_final_snapshot": final_snapshot,
+            "evaluator_terminal_snapshot": terminal_snapshot,
+            "evaluator_settled_snapshot": settled_snapshot is not None,
             "launch_log_clean": not launch_runtime_errors,
             "core_bag_complete": core_bag.get("complete"),
         },
@@ -1918,7 +1985,8 @@ def supervise_process(
     *,
     trace_path: Path,
     wall_timeout_s: float,
-    evaluator_flush_s: float = 2.0,
+    metrics_path: Path | None = None,
+    evaluator_flush_s: float = DEFAULT_EVALUATOR_SETTLEMENT_S,
     poll_interval_s: float = 0.2,
     sigint_grace_s: float = DEFAULT_SIGINT_GRACE_S,
     term_grace_s: float = DEFAULT_TERM_GRACE_S,
@@ -1926,7 +1994,7 @@ def supervise_process(
     sleeper: Any = time.sleep,
     shutdown: Any = shutdown_process_group,
 ) -> ProcessOutcome:
-    """Wait for the policy terminal record rather than for ros2 launch to exit."""
+    """Wait for policy completion and the evaluator's settled ATE snapshot."""
     _validate_supervision_parameters(
         wall_timeout_s=wall_timeout_s,
         evaluator_flush_s=evaluator_flush_s,
@@ -1937,6 +2005,8 @@ def supervise_process(
 
     started = clock()
     wall_deadline = started + wall_timeout_s
+    if metrics_path is None:
+        metrics_path = trace_path.with_name("evaluation_metrics.jsonl")
     terminal_observed = False
     shutdown_signals: tuple[str, ...] = ()
     status = "early_exit"
@@ -1946,6 +2016,10 @@ def supervise_process(
                 terminal_observed = True
                 flush_deadline = min(clock() + evaluator_flush_s, wall_deadline)
                 while clock() < flush_deadline and process.poll() is None:
+                    if jsonl_contains_snapshot_reason(
+                        metrics_path, FINAL_EVALUATOR_SNAPSHOT_REASON
+                    ):
+                        break
                     sleeper(min(poll_interval_s, flush_deadline - clock()))
                 shutdown_signals = shutdown(
                     process,
@@ -1999,7 +2073,7 @@ def execute_run(
     plan: RunPlan,
     *,
     wall_timeout_s: float = 1200.0,
-    evaluator_flush_s: float = 2.0,
+    evaluator_flush_s: float = DEFAULT_EVALUATOR_SETTLEMENT_S,
     poll_interval_s: float = 0.2,
     sigint_grace_s: float = DEFAULT_SIGINT_GRACE_S,
     term_grace_s: float = DEFAULT_TERM_GRACE_S,
@@ -2080,6 +2154,7 @@ def execute_run(
             outcome = supervise_process(
                 process,
                 trace_path=plan.output_dir / "policy_trace.jsonl",
+                metrics_path=plan.output_dir / "evaluation_metrics.jsonl",
                 wall_timeout_s=wall_timeout_s,
                 evaluator_flush_s=evaluator_flush_s,
                 poll_interval_s=poll_interval_s,
@@ -2244,8 +2319,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--evaluator-flush-s",
         type=float,
-        default=2.0,
-        help="grace after policy session_finished before group shutdown (default: 2)",
+        default=DEFAULT_EVALUATOR_SETTLEMENT_S,
+        help=(
+            "maximum wait for policy_session_settled after session_finished "
+            "before group shutdown (default: 5)"
+        ),
     )
     parser.add_argument(
         "--sigint-grace-s",
@@ -2320,6 +2398,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "sigint_grace_s": args.sigint_grace_s,
                     "term_grace_s": args.term_grace_s,
                     "completion_event": "policy_trace.jsonl:session_finished",
+                    "evaluator_settlement_event": (
+                        "evaluation_metrics.jsonl:policy_session_settled"
+                    ),
                 },
                 "filesystem_mutated": False,
             },

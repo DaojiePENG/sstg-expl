@@ -246,9 +246,10 @@ Inspect one row's exact launch plan without starting ROS or writing files:
 Add `--execute` only after checking the printed command.  Execution atomically
 reserves the row's output directory and writes `run_launch_manifest.yaml`
 before invoking ROS.  The runner captures all launch output in `launch.log`,
-waits for `session_finished` in `policy_trace.jsonl`, gives the evaluator two
-seconds to flush its terminal snapshot, then sends `SIGINT` only to the
-`ros2 launch` leader so it can stop each child once.  Residual group members
+waits for `session_finished` in `policy_trace.jsonl`, then waits up to five
+seconds for the evaluator's `policy_session_settled` snapshot with an empty
+ATE pairing queue.  It then sends `SIGINT` only to the `ros2 launch` leader so
+it can stop each child once.  Residual group members
 receive `SIGTERM` and then `SIGKILL` only if necessary.  Set the hard process
 limit with `--wall-timeout-s` (default 1200 seconds).  The default lifecycle
 grace is 15 seconds and can be audited or changed with `--sigint-grace-s` and

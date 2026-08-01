@@ -46,7 +46,7 @@ def _snapshot(
     duplicates: int,
     collisions: int,
     collision_free: bool | None,
-    reason: str = "policy_session_finished",
+    reason: str = "policy_session_settled",
     clearance: bool = True,
     ate: bool = True,
 ) -> dict:
@@ -449,7 +449,7 @@ def test_failed_run_with_untrusted_partial_snapshot_keeps_na_metrics(
     assert "hash_mismatch:evaluation_metrics.jsonl" in run["evidence_error"]
 
 
-def test_completed_run_without_terminal_snapshot_fails_closed(tmp_path: Path) -> None:
+def test_completed_run_without_settled_snapshot_fails_closed(tmp_path: Path) -> None:
     project = _fixture_project(tmp_path)
     root = project["root"]
     study = project["study"]
@@ -467,7 +467,7 @@ def test_completed_run_without_terminal_snapshot_fails_closed(tmp_path: Path) ->
         if (
             record.get("event") == "metrics_snapshot"
             and record.get("payload", {}).get("reason")
-            == "policy_session_finished"
+            == "policy_session_settled"
         ):
             record["payload"]["reason"] = "periodic"
     _write_jsonl(metrics, records)

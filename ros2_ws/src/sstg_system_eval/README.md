@@ -45,7 +45,10 @@ truth sample with the same explicit `T_map_truth` used for coverage, then pairs
 it by stamp with an exact-time `map -> base_footprint` TF lookup after a short
 buffering delay. The snapshot exposes accepted, waiting, expired-pair and
 pairing-fraction fields; a run with no ATE pairs is not a localization-accuracy
-result.
+result. After `session_finished`, the evaluator keeps accepting delayed truth
+messages stamped within the session and waits through the frozen TF-expiration
+window. It then emits `policy_session_settled` only when the exact-time pairing
+queue is empty; this settled snapshot is the source for completed-run tables.
 
 Static truth clearance is sampled at the same in-session ground-truth poses.
 `raw_static_obstacle_distance_{min,p05,mean}_m` is robot-center distance to the
@@ -129,9 +132,10 @@ ros2 launch sstg_system_eval evaluator.launch.py \
 ```
 
 The launch uses the evaluator-specific `evaluator_params_file` argument and
-forces `use_sim_time:=true`. The node refuses to start without the simulation
-clock because ATE pairing compares ground-truth message stamps with TF stamps;
-mixing wall time and simulation time would invalidate the expiration logic.
+forces `use_sim_time:=true`. The node refuses to start unless simulation time
+is configured and rejects attempts to disable it while running, because ATE
+pairing compares ground-truth message stamps with TF stamps; mixing wall time
+and simulation time would invalidate the expiration logic.
 
 For formal runs, enforce the filesystem and ROS-domain allowlists specified in
 `experiments/system_sim/configs/topic_access.yaml`; this package-level boundary

@@ -1,4 +1,8 @@
+from collections import deque
+from types import SimpleNamespace
+
 import pytest
+import rclpy
 from rclpy.executors import ExternalShutdownException
 
 from sstg_system_eval import evaluator_node
@@ -69,3 +73,64 @@ def test_main_does_not_hide_runtime_error_while_context_is_live(monkeypatch):
 
     with pytest.raises(RuntimeError, match="live failure"):
         evaluator_node.main()
+
+
+def test_ate_settlement_waits_for_deadline_and_empty_queue():
+    emitted = []
+    now_ns = [199]
+    fake = SimpleNamespace(
+        _ate_session_finalizing=True,
+        _ate_settlement_deadline_ns=200,
+        _pending_ate=deque([(100, 1.0, 2.0)]),
+        _now_ns=lambda: now_ns[0],
+        _emit_snapshot=emitted.append,
+    )
+
+    assert (
+        evaluator_node.SystemEvaluatorNode._maybe_emit_ate_settlement(fake)
+        is False
+    )
+    fake._pending_ate.clear()
+    assert (
+        evaluator_node.SystemEvaluatorNode._maybe_emit_ate_settlement(fake)
+        is False
+    )
+    now_ns[0] = 200
+
+    assert (
+        evaluator_node.SystemEvaluatorNode._maybe_emit_ate_settlement(fake)
+        is True
+    )
+    assert fake._ate_session_finalizing is False
+    assert emitted == ["policy_session_settled"]
+
+
+def test_runtime_simulation_clock_cannot_be_disabled():
+    rejected = evaluator_node.SystemEvaluatorNode._guard_simulation_clock(
+        [SimpleNamespace(name="use_sim_time", value=False)]
+    )
+    accepted = evaluator_node.SystemEvaluatorNode._guard_simulation_clock(
+        [SimpleNamespace(name="known_free_threshold", value=37)]
+    )
+
+    assert rejected.successful is False
+    assert "cannot be disabled" in rejected.reason
+    assert accepted.successful is True
+
+
+def test_node_rejects_wall_time_before_creating_artifacts(tmp_path):
+    output = tmp_path / "must_not_exist"
+    rclpy.init(args=[
+        "--ros-args",
+        "-p",
+        "use_sim_time:=false",
+        "-p",
+        f"output_dir:={output}",
+    ])
+    try:
+        with pytest.raises(ValueError, match="use_sim_time must be true"):
+            evaluator_node.SystemEvaluatorNode()
+    finally:
+        rclpy.try_shutdown()
+
+    assert not output.exists()

@@ -11,6 +11,7 @@ from typing import Any, Optional
 import numpy as np
 import rclpy
 from nav_msgs.msg import OccupancyGrid, Odometry
+from rcl_interfaces.msg import SetParametersResult
 from rclpy.clock import ClockType
 from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException
@@ -97,6 +98,7 @@ class SystemEvaluatorNode(Node):
             float(self.get_parameter("metrics_publish_period_s").value) * 1e9
         )
         self._validate_boundary()
+        self.add_on_set_parameters_callback(self._guard_simulation_clock)
 
         truth_path = str(self.get_parameter("truth_map_yaml").value).strip()
         if not truth_path:
@@ -220,6 +222,9 @@ class SystemEvaluatorNode(Node):
         self._last_ground_truth_stamp_ns: Optional[int] = None
         self._pending_ate = deque()
         self.target_session_active = False
+        self._ate_session_finalizing = False
+        self._session_end_ros_time_ns: Optional[int] = None
+        self._ate_settlement_deadline_ns: Optional[int] = None
         self.ate_pairing_delay_ns = int(
             float(self.get_parameter("ate_pairing_delay_s").value) * 1e9
         )
@@ -415,6 +420,19 @@ class SystemEvaluatorNode(Node):
         if not math.isfinite(radius) or radius <= 0.0:
             raise ValueError("topological_radius_m must be positive and finite")
 
+    @staticmethod
+    def _guard_simulation_clock(parameters) -> SetParametersResult:
+        for parameter in parameters:
+            if parameter.name == "use_sim_time" and parameter.value is not True:
+                return SetParametersResult(
+                    successful=False,
+                    reason=(
+                        "use_sim_time cannot be disabled while timestamp-paired "
+                        "simulation metrics are active"
+                    ),
+                )
+        return SetParametersResult(successful=True)
+
     def _prepare_output(self) -> None:
         owned_artifact_names = (
             "evaluation_metrics.jsonl",
@@ -478,6 +496,11 @@ class SystemEvaluatorNode(Node):
                 "estimate_source": f"tf:{self.map_frame}->{self.base_frame}",
                 "pairing": (
                     "ground-truth stamp with delayed exact-time TF lookup"
+                ),
+                "terminal_snapshot_reason": "policy_session_settled",
+                "terminal_settlement": (
+                    "wait through ate_tf_expiration_s after session_finished "
+                    "and resolve every queued exact-time pair"
                 ),
             },
             "coverage_endpoints": {
@@ -604,6 +627,9 @@ class SystemEvaluatorNode(Node):
         topological["node_audit"] = self.topological_nodes.snapshot()
         target_metrics = self.target_recall.snapshot()
         target_metrics["policy_session_active"] = self.target_session_active
+        target_metrics["policy_session_finalizing"] = (
+            self._ate_session_finalizing
+        )
         if target_metrics["time_origin_ros_time_ns"] is None:
             target_metrics["status"] = "waiting_for_policy_session"
         ground_truth_metrics = self.ground_truth_motion.snapshot()
@@ -661,6 +687,8 @@ class SystemEvaluatorNode(Node):
                 "ate_tf_wait_count": self.ate_tf_wait_count,
                 "ate_tf_drop_count": self.ate_tf_drop_count,
                 "ate_pending_sample_count": len(self._pending_ate),
+                "ate_settlement_pending": self._ate_session_finalizing,
+                "session_end_ros_time_ns": self._session_end_ros_time_ns,
             },
             "targets": target_metrics,
             "safety": self.collisions.snapshot(),
@@ -780,10 +808,26 @@ class SystemEvaluatorNode(Node):
             self._last_ground_truth_stamp_ns = None
             self.ate_tf_wait_count = 0
             self.ate_tf_drop_count = 0
+            self._ate_session_finalizing = False
+            self._session_end_ros_time_ns = None
+            self._ate_settlement_deadline_ns = None
             self.target_recall.begin_session(session_time_ns)
             self.target_session_active = True
         elif event == "session_finished":
             self.target_session_active = False
+            try:
+                session_end_ns = int(
+                    self.actions.latest_record.get("ros_time_ns")
+                )
+                if session_end_ns < 0:
+                    raise ValueError("negative session timestamp")
+            except (TypeError, ValueError):
+                session_end_ns = self._now_ns()
+            self._session_end_ros_time_ns = session_end_ns
+            self._ate_settlement_deadline_ns = (
+                session_end_ns + self.ate_tf_expiration_ns
+            )
+            self._ate_session_finalizing = True
         try:
             self.topological_nodes.ingest_record(self.actions.latest_record)
         except (TypeError, ValueError) as error:
@@ -848,7 +892,12 @@ class SystemEvaluatorNode(Node):
             self._publish_status("GROUND_TRUTH_REJECTED", str(error))
             return
 
-        if not self.target_session_active:
+        accepts_late_terminal_sample = (
+            self._ate_session_finalizing
+            and self._session_end_ros_time_ns is not None
+            and stamp_ns <= self._session_end_ros_time_ns
+        )
+        if not self.target_session_active and not accepts_late_terminal_sample:
             return
 
         if (
@@ -866,12 +915,8 @@ class SystemEvaluatorNode(Node):
             (truth_x, truth_y), self.truth_to_map[:2], self.truth_to_map[2]
         )
         self._pending_ate.append((stamp_ns, truth_in_map[0], truth_in_map[1]))
-        newly_detected = (
-            self.target_recall.ingest(
-                stamp_ns, (truth_x, truth_y, truth_yaw)
-            )
-            if self.target_session_active
-            else ()
+        newly_detected = self.target_recall.ingest(
+            stamp_ns, (truth_x, truth_y, truth_yaw)
         )
         if newly_detected:
             self._append_event("targets_first_seen", {
@@ -925,6 +970,18 @@ class SystemEvaluatorNode(Node):
             ):
                 accepted += 1
         return accepted
+
+    def _maybe_emit_ate_settlement(self) -> bool:
+        if (
+            not self._ate_session_finalizing
+            or self._ate_settlement_deadline_ns is None
+            or self._pending_ate
+            or self._now_ns() < self._ate_settlement_deadline_ns
+        ):
+            return False
+        self._ate_session_finalizing = False
+        self._emit_snapshot("policy_session_settled")
+        return True
 
     def _contacts_callback(self, message: Contacts) -> None:
         try:
@@ -1002,6 +1059,7 @@ class SystemEvaluatorNode(Node):
 
     def _sample_tf(self) -> None:
         ate_pairs = self._resolve_pending_ate()
+        self._maybe_emit_ate_settlement()
         try:
             transform = self.tf_buffer.lookup_transform(
                 self.path_frame,

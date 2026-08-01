@@ -296,10 +296,12 @@ def load_run_evidence(root: Path, run_dir: Path | str, *, label: str) -> RunEvid
         for item in metrics
         if item.get("event") == "metrics_snapshot"
         and isinstance(item.get("payload"), Mapping)
-        and item["payload"].get("reason") == "policy_session_finished"
+        and item["payload"].get("reason") == "policy_session_settled"
     ]
     if len(snapshots) != 1:
-        raise RepeatabilityError(f"run {label} lacks one terminal evaluator snapshot")
+        raise RepeatabilityError(
+            f"run {label} lacks one settled evaluator snapshot"
+        )
     snapshot = snapshots[0]
     source = freeze.get("source")
     if not isinstance(source, Mapping):
