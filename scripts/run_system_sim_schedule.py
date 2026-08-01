@@ -971,22 +971,27 @@ def shutdown_process_group(
     clock: Any = time.monotonic,
     sleeper: Any = time.sleep,
 ) -> tuple[str, ...]:
-    """Stop the entire launch process group using INT, TERM, then KILL."""
+    """Ask launch to stop cleanly, then terminate any remaining process group."""
     process_group_id = process.pid
     stages = (
-        (signal.SIGINT, sigint_grace_s),
-        (signal.SIGTERM, term_grace_s),
-        (signal.SIGKILL, kill_grace_s),
+        (signal.SIGINT, sigint_grace_s, False),
+        (signal.SIGTERM, term_grace_s, True),
+        (signal.SIGKILL, kill_grace_s, True),
     )
     sent: list[str] = []
-    for signal_value, grace_s in stages:
+    for signal_value, grace_s, signal_group in stages:
         process.poll()
         if not _process_group_exists(process_group_id):
             break
         try:
-            os.killpg(process_group_id, signal_value)
+            if signal_group:
+                os.killpg(process_group_id, signal_value)
+            elif process.returncode is None:
+                os.kill(process.pid, signal_value)
+            else:
+                continue
         except ProcessLookupError:
-            break
+            continue
         sent.append(signal.Signals(signal_value).name)
         deadline = clock() + max(0.0, grace_s)
         while clock() < deadline:

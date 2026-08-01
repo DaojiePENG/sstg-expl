@@ -6,12 +6,14 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import signal
 import subprocess
 import sys
 
 import pytest
 import yaml
 
+import scripts.run_system_sim_schedule as system_sim_runner
 from scripts.generate_system_sim_schedule import (
     ScheduleError,
     freeze_schedule,
@@ -25,6 +27,7 @@ from scripts.run_system_sim_schedule import (
     execute_run,
     load_run_plan,
     reserve_run_output,
+    shutdown_process_group,
     supervise_process,
     validate_completed_artifacts,
 )
@@ -935,6 +938,51 @@ def test_process_group_shutdown_escalates_to_kill_when_signals_are_ignored(
 
     assert result.status == "timeout"
     assert result.shutdown_signals == ("SIGINT", "SIGTERM", "SIGKILL")
+
+
+def test_orderly_shutdown_sends_sigint_only_to_launch_leader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeProcess:
+        pid = 12345
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        @staticmethod
+        def wait(timeout: float):
+            del timeout
+            return 0
+
+    group_states = iter((True, False))
+    leader_signals: list[tuple[int, int]] = []
+    group_signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        system_sim_runner,
+        "_process_group_exists",
+        lambda _process_group_id: next(group_states),
+    )
+    monkeypatch.setattr(
+        system_sim_runner.os,
+        "kill",
+        lambda process_id, sent_signal: leader_signals.append(
+            (process_id, sent_signal)
+        ),
+    )
+    monkeypatch.setattr(
+        system_sim_runner.os,
+        "killpg",
+        lambda process_group_id, sent_signal: group_signals.append(
+            (process_group_id, sent_signal)
+        ),
+    )
+
+    sent = shutdown_process_group(FakeProcess(), sigint_grace_s=0.0)
+
+    assert sent == ("SIGINT",)
+    assert leader_signals == [(12345, signal.SIGINT)]
+    assert group_signals == []
 
 
 def test_manual_interrupt_has_distinct_supervisor_status(tmp_path: Path) -> None:
