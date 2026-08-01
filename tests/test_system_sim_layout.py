@@ -181,9 +181,13 @@ def test_system_sim_yaml_and_xml_are_parseable():
     bases = [ROOT / "experiments/system_sim", ROOT / "ros2_ws/src"]
     for base in bases:
         for path in base.rglob("*.yaml"):
+            if "third_party" in path.relative_to(base).parts:
+                continue
             yaml.safe_load(path.read_text(encoding="utf-8"))
         for pattern in ("*.xml", "*.sdf"):
             for path in base.rglob(pattern):
+                if "third_party" in path.relative_to(base).parts:
+                    continue
                 ElementTree.parse(path)
 
 

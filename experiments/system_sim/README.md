@@ -71,13 +71,36 @@ sudo apt install \
 The repository owner must run this once because unattended `sudo` is not
 available to the development agent.
 
+The apt repository currently provides `ros_gz_bridge` 1.0.22.  Simulation
+runs require the upstream 1.0.23 Jazzy source overlay because it contains the
+official sensor-message bounds fix.  Import the exact commits before building:
+
+```bash
+cd /home/daojie/SSTG_Explorer/sstg-expl
+mkdir -p ros2_ws/src/third_party
+vcs import ros2_ws/src/third_party < ros2_ws/third_party.repos
+```
+
 ## Build and development launch
 
 ```bash
 cd /home/daojie/SSTG_Explorer/sstg-expl
 source /opt/ros/jazzy/setup.bash
 cd ros2_ws
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/ros/jazzy/bin
+/usr/bin/colcon build --symlink-install \
+  --packages-select ros_gz_bridge \
+  --allow-overriding ros_gz_bridge \
+  --cmake-clean-cache \
+  --cmake-args \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DPython3_EXECUTABLE=/usr/bin/python3 \
+  -DPYTHON_EXECUTABLE=/usr/bin/python3 \
+  -DProtobuf_PROTOC_EXECUTABLE=/usr/bin/protoc
 /usr/bin/colcon build --symlink-install --cmake-clean-cache \
+  --packages-select \
+  sstg_explorer_core sstg_gazebo sstg_nav_bringup \
+  sstg_policy_ros sstg_system_eval \
   --cmake-args \
   -DPython3_EXECUTABLE=/usr/bin/python3 \
   -DPYTHON_EXECUTABLE=/usr/bin/python3
@@ -89,6 +112,27 @@ ros2 launch sstg_nav_bringup system_sim.launch.py \
   max_duration_s:=300 max_distance_m:=60 \
   max_decisions:=30 goal_timeout_s:=90
 ```
+
+Keep the system `protoc` ahead of Conda while compiling this overlay.  A Conda
+protobuf compiler paired with ROS's system protobuf libraries is an unsupported
+mixed toolchain and fails during linking.
+
+Run the upstream bridge tests from the workspace directory:
+
+```bash
+cd /home/daojie/SSTG_Explorer/sstg-expl/ros2_ws
+source /opt/ros/jazzy/setup.bash
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/ros/jazzy/bin
+source install/setup.bash
+/usr/bin/colcon test --packages-select ros_gz_bridge \
+  --event-handlers console_direct+
+/usr/bin/colcon test-result --test-result-base build/ros_gz_bridge --verbose
+```
+
+The pinned checkout's first local run passed all six sensor bounds regressions
+and 17 of 18 upstream test groups.  The unrelated GID filtering timing test
+failed under the study's CycloneDDS configuration and passed in an isolated
+Fast DDS diagnostic; the registry keeps that residual visible.
 
 Headless smoke run:
 

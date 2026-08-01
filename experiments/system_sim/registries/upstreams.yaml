@@ -14,7 +14,7 @@ components:
     apt_version: 1.0.1-1noble.20260616.074421
     repository: https://github.com/ros-navigation/nav2_minimal_turtlebot_simulation
     release_tag: 1.0.1
-    release_commit: 6b64127fd26167aa784b6f8f7621994048402614
+    release_commit: 6b64127f0e0d677ecdaa458bce57b89119cb08ee
     release_sdf_sha256: 133ebbe76997b98e43dbe03aea5a77dd6bd4117a3100343d5857b63cd3128a83
     license: Apache-2.0
     local_use: runtime_allowlisted_derivative
@@ -44,15 +44,33 @@ components:
     license: BSD-3-Clause
     local_use: upstream_async_launch_with_frozen_parameters
     verification_status: office_growing_map_runtime_verified
+  - component_id: ros_gz_bridge_jazzy_1_0_23
+    role: gazebo_harmonic_ros_message_bridge
+    acquisition: vcs_source_overlay
+    package: ros_gz_bridge
+    repository: https://github.com/gazebosim/ros_gz
+    release_tag: 1.0.23
+    commit: ec3a555b540ac492882d587a09752eb2eeeee3cd
+    required_fix_commit: 4c6cb80bb30fc0871bbd5ec95761272ce49a150d
+    system_apt_version_rejected: 1.0.22-1noble.20260615.142443
+    license: Apache-2.0
+    local_use: unmodified_official_jazzy_source_overlay
+    verification_status: source_build_and_sensor_bounds_regression_verified
+    verification:
+      source_build: passed
+      sensor_bounds_regression: 6_passed
+      full_upstream_suite: 17_passed_1_failed
+      remaining_failure: ros_gz_bridge_gid_filtering_under_rmw_cyclonedds_cpp
+      diagnostic: isolated_gid_filtering_passed_under_rmw_fastrtps_cpp
   - component_id: ros_gz_jazzy_1_0_22
-    role: gazebo_harmonic_ros_transport
+    role: gazebo_sim_launch_image_bridge_and_interfaces
     acquisition: ros_apt
     package: ros_gz
     apt_version: 1.0.22-1noble.20260616.074726
     repository: https://github.com/gazebosim/ros_gz
     license: Apache-2.0
-    local_use: upstream_launch_bridge_and_image_bridge
-    verification_status: clock_scan_odom_depth_image_runtime_verified
+    local_use: upstream_gazebo_launch_image_bridge_and_interfaces
+    verification_status: clock_world_stats_and_depth_image_runtime_verified
   - component_id: frontier_mrtsp_dp_external_v1_6_1
     role: candidate_public_exploration_baseline
     acquisition: vcs_source

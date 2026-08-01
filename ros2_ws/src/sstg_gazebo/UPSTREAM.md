@@ -7,7 +7,7 @@ simulation.  SSTG does not vendor or reimplement the robot description.
 - Apt version: `1.0.1-1noble.20260616.074421`
 - Repository: `https://github.com/ros-navigation/nav2_minimal_turtlebot_simulation`
 - Release tag / commit: `1.0.1` /
-  `6b64127fd26167aa784b6f8f7621994048402614`
+  `6b64127f0e0d677ecdaa458bce57b89119cb08ee`
 - Released SDF xacro SHA-256:
   `133ebbe76997b98e43dbe03aea5a77dd6bd4117a3100343d5857b63cd3128a83`
 - Audited upstream IMU-fix commit:

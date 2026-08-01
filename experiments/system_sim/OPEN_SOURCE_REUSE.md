@@ -22,6 +22,15 @@ adds evaluator-only instrumentation and an exact upstream IMU-joint fix; it
 does not replace or alter the released drive, inertials, collision geometry,
 LiDAR, depth camera, meshes, primary bridge, or spawn launch.
 
+ROS--Gazebo message conversion uses the unmodified official Jazzy
+`ros_gz_bridge` 1.0.23 source overlay pinned in `third_party.repos`.  The system
+apt candidate remains 1.0.22 and is intentionally ineligible: the 1.0.23 tag
+contains the official Jazzy sensor-message bounds fix at commit
+`4c6cb80bb30fc0871bbd5ec95761272ce49a150d`, covering CameraInfo, LaserScan,
+and JointState converters involved in observed heap failures.  Gazebo launch,
+image bridging, interfaces, robot bridge configuration, and spawn composition
+remain upstream code; no local converter patch is carried.
+
 The existing `frontier`, `nbv`, and `rrt_adapted` strategy switches in the SSTG
 codebase are internal algorithmic ablations.  They are useful for development
 diagnosis but are not independent public baselines and are barred from formal
