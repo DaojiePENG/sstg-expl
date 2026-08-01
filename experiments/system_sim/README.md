@@ -37,9 +37,11 @@ evidence.
 Scheduled runs also start the upstream `ros2 bag record` CLI automatically.
 The frozen `zstd_fast` MCAP profile is written to `bags/core`; its topic counts,
 duration, metadata, MCAP files and SHA-256 hashes are part of terminal artifact
-validation.  A missing `/map`, `/scan`, ground-truth path, policy trace, world
-clock/stats, or task-camera stream fails the run instead of producing a partial
-figure later.
+validation.  The audit opens the bag with upstream `rosbag2_py`, reads every
+record to EOF, and cross-checks message counts, per-file counts, framing and
+frozen ROS topic types.  A missing `/map`, `/scan`, ground-truth path, policy
+trace, world clock/stats, or task-camera stream fails the run instead of
+producing a partial figure later.
 
 ## Host dependencies
 

@@ -9,6 +9,7 @@ directories, are never reused because policy and evaluator JSONL files append.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import csv
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -30,6 +31,7 @@ import yaml
 try:
     from scripts.generate_system_sim_schedule import (
         CORE_BAG_REQUIRED_TOPICS,
+        CORE_BAG_TOPIC_TYPES,
         CORE_BAG_TOPICS,
         EXPERIMENT_BUDGET_FIELDS,
         FREEZE_SCHEMA,
@@ -48,6 +50,7 @@ except ModuleNotFoundError as error:
         raise
     from generate_system_sim_schedule import (  # type: ignore[no-redef]
         CORE_BAG_REQUIRED_TOPICS,
+        CORE_BAG_TOPIC_TYPES,
         CORE_BAG_TOPICS,
         EXPERIMENT_BUDGET_FIELDS,
         FREEZE_SCHEMA,
@@ -67,6 +70,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RUN_MANIFEST_SCHEMA = "sstg_system_sim_run_launch/v1"
 DEFAULT_SIGINT_GRACE_S = 15.0
 DEFAULT_TERM_GRACE_S = 3.0
+MCAP_MAGIC = b"\x89MCAP0\r\n"
 
 
 class RunnerError(ValueError):
@@ -272,6 +276,45 @@ def jsonl_contains_event(path: Path, event: str) -> bool:
     return False
 
 
+def _read_core_bag_to_eof(
+    bag_dir: Path,
+    storage_id: str,
+) -> tuple[dict[str, int], dict[str, str], list[str]]:
+    """Open the bag through upstream rosbag2 and consume every record."""
+    try:
+        import rosbag2_py
+    except ImportError as error:
+        return {}, {}, [f"rosbag2_py is unavailable: {error}"]
+
+    try:
+        reader = rosbag2_py.SequentialReader()
+        reader.open(
+            rosbag2_py.StorageOptions(
+                uri=str(bag_dir),
+                storage_id=storage_id,
+            ),
+            rosbag2_py.ConverterOptions(
+                input_serialization_format="",
+                output_serialization_format="",
+            ),
+        )
+        topic_types: dict[str, str] = {}
+        errors: list[str] = []
+        for metadata in reader.get_all_topics_and_types():
+            name = str(metadata.name)
+            if name in topic_types:
+                errors.append(f"rosbag2 reader returned duplicate topic: {name}")
+                continue
+            topic_types[name] = str(metadata.type)
+        counts: Counter[str] = Counter()
+        while reader.has_next():
+            topic, _serialized_message, _timestamp = reader.read_next()
+            counts[str(topic)] += 1
+        return dict(counts), topic_types, errors
+    except Exception as error:  # rosbag2 storage plugins raise native exceptions.
+        return {}, {}, [f"rosbag2 reader could not consume core bag: {error}"]
+
+
 def _core_bag_artifacts(
     output_dir: Path,
     contract: Mapping[str, Any],
@@ -285,6 +328,9 @@ def _core_bag_artifacts(
         "message_count": 0,
         "duration_ns": 0,
         "topic_message_counts": {},
+        "topic_types": {},
+        "reader_message_count": 0,
+        "reader_verified": False,
         "complete": False,
     }
     bag_dir = output_dir / str(contract.get("output", ""))
@@ -328,6 +374,8 @@ def _core_bag_artifacts(
         summary["duration_ns"] = duration_ns
 
     topic_counts: dict[str, int] = {}
+    topic_types: dict[str, str] = {}
+    expected_topic_types = contract.get("topic_types", CORE_BAG_TOPIC_TYPES)
     topic_records = information.get("topics_with_message_count")
     if not isinstance(topic_records, list):
         errors.append("core bag metadata has no topic message counts")
@@ -342,6 +390,16 @@ def _core_bag_artifacts(
                 if isinstance(topic_metadata, Mapping)
                 else None
             )
+            topic_type = (
+                topic_metadata.get("type")
+                if isinstance(topic_metadata, Mapping)
+                else None
+            )
+            serialization = (
+                topic_metadata.get("serialization_format")
+                if isinstance(topic_metadata, Mapping)
+                else None
+            )
             count = record.get("message_count")
             if not isinstance(name, str) or not name.startswith("/"):
                 errors.append("core bag topic record has an invalid name")
@@ -352,8 +410,23 @@ def _core_bag_artifacts(
             if name in topic_counts:
                 errors.append(f"core bag topic is duplicated in metadata: {name}")
                 continue
+            expected_type = (
+                expected_topic_types.get(name)
+                if isinstance(expected_topic_types, Mapping)
+                else None
+            )
+            if not isinstance(topic_type, str) or topic_type != expected_type:
+                errors.append(
+                    f"core bag topic type disagrees with recording contract: {name}"
+                )
+            if serialization != "cdr":
+                errors.append(f"core bag topic is not CDR serialized: {name}")
             topic_counts[name] = count
+            topic_types[name] = str(topic_type)
     summary["topic_message_counts"] = topic_counts
+    summary["topic_types"] = topic_types
+    if type(message_count) is int and sum(topic_counts.values()) != message_count:
+        errors.append("core bag topic counts do not sum to message_count")
     for topic in contract.get("required_nonempty_topics", CORE_BAG_REQUIRED_TOPICS):
         if topic_counts.get(str(topic), 0) <= 0:
             errors.append(f"core bag required topic is empty or absent: {topic}")
@@ -362,6 +435,32 @@ def _core_bag_artifacts(
     if not isinstance(relative_paths, list) or not relative_paths:
         errors.append("core bag metadata names no MCAP files")
         relative_paths = []
+    elif len(relative_paths) != len(set(relative_paths)):
+        errors.append("core bag metadata contains duplicate MCAP paths")
+    file_records = information.get("files")
+    recorded_file_paths: list[str] = []
+    recorded_file_count = 0
+    if not isinstance(file_records, list) or not file_records:
+        errors.append("core bag metadata has no per-file records")
+    else:
+        for record in file_records:
+            if not isinstance(record, Mapping):
+                errors.append("core bag file record is not a mapping")
+                continue
+            path = record.get("path")
+            count = record.get("message_count")
+            if not isinstance(path, str):
+                errors.append("core bag file record has an invalid path")
+                continue
+            if type(count) is not int or count < 0:
+                errors.append(f"core bag file {path} has an invalid count")
+                continue
+            recorded_file_paths.append(path)
+            recorded_file_count += count
+    if recorded_file_paths != relative_paths:
+        errors.append("core bag per-file paths disagree with relative_file_paths")
+    if type(message_count) is int and recorded_file_count != message_count:
+        errors.append("core bag per-file counts do not sum to message_count")
     metadata_key = metadata_path.relative_to(output_dir).as_posix()
     try:
         files[metadata_key] = {
@@ -370,6 +469,7 @@ def _core_bag_artifacts(
         }
     except OSError as error:
         errors.append(f"cannot hash core bag metadata: {error}")
+    verified_mcap_paths = 0
     for relative in relative_paths:
         if not isinstance(relative, str):
             errors.append("core bag MCAP path is not a string")
@@ -387,14 +487,43 @@ def _core_bag_artifacts(
         key = resolved.relative_to(resolved_output_dir).as_posix()
         try:
             size_bytes = resolved.stat().st_size
-            if size_bytes <= 0:
-                errors.append(f"core bag MCAP file is empty: {relative}")
+            if size_bytes < 2 * len(MCAP_MAGIC):
+                errors.append(f"core bag MCAP file is too short: {relative}")
+            else:
+                with resolved.open("rb") as stream:
+                    leading_magic = stream.read(len(MCAP_MAGIC))
+                    stream.seek(-len(MCAP_MAGIC), os.SEEK_END)
+                    trailing_magic = stream.read(len(MCAP_MAGIC))
+                if leading_magic != MCAP_MAGIC or trailing_magic != MCAP_MAGIC:
+                    errors.append(f"core bag MCAP framing is invalid: {relative}")
+                else:
+                    verified_mcap_paths += 1
             files[key] = {
                 "sha256": sha256_file(resolved),
                 "size_bytes": size_bytes,
             }
         except OSError as error:
             errors.append(f"cannot hash core bag MCAP file {relative}: {error}")
+    if relative_paths and verified_mcap_paths == len(relative_paths):
+        reader_counts, reader_types, reader_errors = _read_core_bag_to_eof(
+            bag_dir, str(contract.get("storage_id", ""))
+        )
+        errors.extend(reader_errors)
+        summary["reader_message_count"] = sum(reader_counts.values())
+        if not reader_errors:
+            summary["reader_verified"] = True
+            all_count_topics = set(topic_counts) | set(reader_counts)
+            for topic in sorted(all_count_topics):
+                if reader_counts.get(topic, 0) != topic_counts.get(topic, 0):
+                    errors.append(
+                        f"rosbag2 reader count disagrees with metadata: {topic}"
+                    )
+            all_type_topics = set(topic_types) | set(reader_types)
+            for topic in sorted(all_type_topics):
+                if reader_types.get(topic) != topic_types.get(topic):
+                    errors.append(
+                        f"rosbag2 reader type disagrees with metadata: {topic}"
+                    )
     summary["complete"] = not errors
     return files, errors, summary
 

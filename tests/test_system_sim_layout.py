@@ -719,6 +719,7 @@ def test_core_rosbag_profile_matches_shared_stack_and_is_enabled():
     assert recording["storage_id"] == module.CORE_BAG_STORAGE_ID
     assert recording["storage_preset_profile"] == module.CORE_BAG_STORAGE_PRESET
     assert recording["topics"] == list(module.CORE_BAG_TOPICS)
+    assert set(recording["topic_types"]) == set(recording["topics"])
     assert 'DeclareLaunchArgument("record_bag", default_value="true")' in launch
     assert 'name="sstg_core_bag_recorder"' in launch
     assert 'PathJoinSubstitution([output_dir, "bags", "core"])' in launch

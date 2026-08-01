@@ -72,6 +72,25 @@ recording:
     - /evaluation/metrics
     - /evaluation/status
     - /task_camera/image_raw
+  topic_types:
+    /clock: rosgraph_msgs/msg/Clock
+    /tf: tf2_msgs/msg/TFMessage
+    /tf_static: tf2_msgs/msg/TFMessage
+    /scan: sensor_msgs/msg/LaserScan
+    /imu: sensor_msgs/msg/Imu
+    /joint_states: sensor_msgs/msg/JointState
+    /odom: nav_msgs/msg/Odometry
+    /map: nav_msgs/msg/OccupancyGrid
+    /cmd_vel: geometry_msgs/msg/Twist
+    /plan: nav_msgs/msg/Path
+    /policy/decision_trace: std_msgs/msg/String
+    /policy/status: std_msgs/msg/String
+    /policy/candidates: visualization_msgs/msg/MarkerArray
+    /evaluation/ground_truth_odom: nav_msgs/msg/Odometry
+    /evaluation/world_stats: ros_gz_interfaces/msg/WorldStatistics
+    /evaluation/metrics: std_msgs/msg/String
+    /evaluation/status: std_msgs/msg/String
+    /task_camera/image_raw: sensor_msgs/msg/Image
   required_nonempty_topics:
     - /clock
     - /scan

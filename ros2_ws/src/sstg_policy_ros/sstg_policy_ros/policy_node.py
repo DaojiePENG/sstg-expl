@@ -675,10 +675,19 @@ def main(args=None) -> None:
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
+    except RuntimeError:
+        # Jazzy can surface RCLError from spin after its signal handler has
+        # already invalidated the context.  Preserve failures while ROS is live.
+        if rclpy.ok():
+            raise
     finally:
         try:
             if node is not None:
-                node.destroy_node()
+                try:
+                    node.destroy_node()
+                except RuntimeError:
+                    if rclpy.ok():
+                        raise
         finally:
             # ROS signal handling may already have shut down the default
             # context.  try_shutdown is idempotent in that case.

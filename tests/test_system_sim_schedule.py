@@ -16,6 +16,7 @@ import yaml
 import scripts.run_system_sim_schedule as system_sim_runner
 from scripts.generate_system_sim_schedule import (
     CORE_BAG_REQUIRED_TOPICS,
+    CORE_BAG_TOPIC_TYPES,
     CORE_BAG_TOPICS,
     ScheduleError,
     freeze_schedule,
@@ -49,6 +50,7 @@ RECORDING_CONTRACT = {
     "storage_preset_profile": "zstd_fast",
     "output": "bags/core",
     "topics": list(CORE_BAG_TOPICS),
+    "topic_types": dict(CORE_BAG_TOPIC_TYPES),
     "required_nonempty_topics": list(CORE_BAG_REQUIRED_TOPICS),
 }
 
@@ -479,6 +481,11 @@ def test_shared_stack_seed_contract_is_required_and_fail_closed(
         ("enabled", False, "enabled must be True"),
         ("storage_id", "sqlite3", "storage_id must be 'mcap'"),
         ("topics", ["/map"], "topics must match"),
+        (
+            "topic_types",
+            {"/map": "nav_msgs/msg/OccupancyGrid"},
+            "topic_types must match",
+        ),
         (
             "required_nonempty_topics",
             ["/map"],
@@ -915,39 +922,54 @@ def _artifact_writer_program() -> str:
     )
 
 
-def _write_core_bag(output: Path, *, empty_topic: str | None = None) -> None:
+def _write_core_bag(
+    output: Path,
+    *,
+    empty_topic: str | None = None,
+    wrong_type_topic: str | None = None,
+) -> None:
+    rosbag2_py = pytest.importorskip("rosbag2_py")
     bag = output / "bags" / "core"
-    bag.mkdir(parents=True)
-    mcap_name = "core_0.mcap"
-    (bag / mcap_name).write_bytes(b"valid-test-mcap")
-    topics = []
-    total = 0
-    for topic in CORE_BAG_TOPICS:
-        count = 0 if topic == empty_topic else 2
-        total += count
-        topics.append(
-            {
-                "topic_metadata": {
-                    "name": topic,
-                    "type": "std_msgs/msg/String",
-                    "serialization_format": "cdr",
-                },
-                "message_count": count,
-            }
-        )
-    _write_yaml(
-        bag / "metadata.yaml",
-        {
-            "rosbag2_bagfile_information": {
-                "version": 9,
-                "storage_identifier": "mcap",
-                "duration": {"nanoseconds": 2_000_000_000},
-                "message_count": total,
-                "topics_with_message_count": topics,
-                "relative_file_paths": [mcap_name],
-            }
-        },
+    bag.parent.mkdir(parents=True, exist_ok=True)
+    writer = rosbag2_py.SequentialWriter()
+    writer.open(
+        rosbag2_py.StorageOptions(
+            uri=str(bag),
+            storage_id="mcap",
+            storage_preset_profile="zstd_fast",
+        ),
+        rosbag2_py.ConverterOptions(
+            input_serialization_format="",
+            output_serialization_format="",
+        ),
     )
+    timestamp_ns = 1_000_000
+    for index, topic in enumerate(CORE_BAG_TOPICS):
+        topic_type = CORE_BAG_TOPIC_TYPES[topic]
+        if topic == wrong_type_topic:
+            topic_type = "std_msgs/msg/String"
+        writer.create_topic(
+            rosbag2_py.TopicMetadata(
+                id=index,
+                name=topic,
+                type=topic_type,
+                serialization_format="cdr",
+            )
+        )
+        if topic == empty_topic:
+            continue
+        for _ in range(2):
+            writer.write(topic, b"\x00\x01\x00\x00", timestamp_ns)
+            timestamp_ns += 1_000_000
+    writer.close()
+    del writer
+    metadata_path = bag / "metadata.yaml"
+    metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
+    information = metadata["rosbag2_bagfile_information"]
+    # Jazzy's direct SequentialWriter doubles this per-file test count; the
+    # ros2 bag record CLI used by system runs writes the correct aggregate.
+    information["files"][0]["message_count"] = information["message_count"]
+    _write_yaml(metadata_path, metadata)
 
 
 def test_supervisor_terminates_group_and_audits_terminal_artifacts(
@@ -1190,7 +1212,7 @@ def test_artifact_audit_hashes_core_mcap_and_requires_key_topics(
         output, expected_recording_contract=RECORDING_CONTRACT
     )
 
-    assert audit["valid"] is True
+    assert audit["valid"] is True, audit["errors"]
     assert audit["completion_checks"]["core_bag_complete"] is True
     assert audit["core_bag"]["message_count"] > 0
     assert "bags/core/metadata.yaml" in audit["files"]
@@ -1213,6 +1235,61 @@ def test_artifact_audit_hashes_core_mcap_and_requires_key_topics(
         "required topic is empty or absent: /scan" in error
         for error in missing["errors"]
     )
+
+
+def test_artifact_audit_reads_mcap_to_eof_and_checks_types_and_counts(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    with (output / "launch.log").open("w", encoding="utf-8") as launch_log:
+        subprocess.run(
+            [sys.executable, "-c", _artifact_writer_program(), str(output), "exit"],
+            check=True,
+            stdout=launch_log,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    _write_core_bag(output, wrong_type_topic="/scan")
+
+    wrong_type = validate_completed_artifacts(
+        output, expected_recording_contract=RECORDING_CONTRACT
+    )
+    assert wrong_type["valid"] is False
+    assert any(
+        "topic type disagrees with recording contract: /scan" in error
+        for error in wrong_type["errors"]
+    )
+
+    metadata_path = output / "bags/core/metadata.yaml"
+    metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
+    metadata["rosbag2_bagfile_information"]["message_count"] += 1
+    _write_yaml(metadata_path, metadata)
+    count_drift = validate_completed_artifacts(
+        output, expected_recording_contract=RECORDING_CONTRACT
+    )
+    assert count_drift["valid"] is False
+    assert "core bag topic counts do not sum to message_count" in count_drift["errors"]
+
+
+def test_artifact_audit_rejects_truncated_mcap(tmp_path: Path) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    _write_core_bag(output)
+    metadata = yaml.safe_load(
+        (output / "bags/core/metadata.yaml").read_text(encoding="utf-8")
+    )
+    relative = metadata["rosbag2_bagfile_information"]["relative_file_paths"][0]
+    mcap_path = output / "bags/core" / relative
+    content = mcap_path.read_bytes()
+    mcap_path.write_bytes(content[:-8])
+
+    audit = validate_completed_artifacts(
+        output, expected_recording_contract=RECORDING_CONTRACT
+    )
+
+    assert audit["valid"] is False
+    assert any("MCAP framing is invalid" in error for error in audit["errors"])
 
 
 def test_artifact_audit_rejects_core_bag_outside_run_output(

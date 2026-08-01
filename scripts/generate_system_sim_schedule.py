@@ -59,6 +59,26 @@ CORE_BAG_TOPICS = (
     "/evaluation/status",
     "/task_camera/image_raw",
 )
+CORE_BAG_TOPIC_TYPES = {
+    "/clock": "rosgraph_msgs/msg/Clock",
+    "/tf": "tf2_msgs/msg/TFMessage",
+    "/tf_static": "tf2_msgs/msg/TFMessage",
+    "/scan": "sensor_msgs/msg/LaserScan",
+    "/imu": "sensor_msgs/msg/Imu",
+    "/joint_states": "sensor_msgs/msg/JointState",
+    "/odom": "nav_msgs/msg/Odometry",
+    "/map": "nav_msgs/msg/OccupancyGrid",
+    "/cmd_vel": "geometry_msgs/msg/Twist",
+    "/plan": "nav_msgs/msg/Path",
+    "/policy/decision_trace": "std_msgs/msg/String",
+    "/policy/status": "std_msgs/msg/String",
+    "/policy/candidates": "visualization_msgs/msg/MarkerArray",
+    "/evaluation/ground_truth_odom": "nav_msgs/msg/Odometry",
+    "/evaluation/world_stats": "ros_gz_interfaces/msg/WorldStatistics",
+    "/evaluation/metrics": "std_msgs/msg/String",
+    "/evaluation/status": "std_msgs/msg/String",
+    "/task_camera/image_raw": "sensor_msgs/msg/Image",
+}
 CORE_BAG_REQUIRED_TOPICS = (
     "/clock",
     "/scan",
@@ -165,6 +185,9 @@ def validate_recording_contract(
     topics = value.get("topics")
     if not isinstance(topics, list) or tuple(topics) != CORE_BAG_TOPICS:
         raise ScheduleError(f"{label}.topics must match the frozen core topic list")
+    topic_types = value.get("topic_types")
+    if not isinstance(topic_types, Mapping) or dict(topic_types) != CORE_BAG_TOPIC_TYPES:
+        raise ScheduleError(f"{label}.topic_types must match the frozen ROS types")
     required = value.get("required_nonempty_topics")
     if not isinstance(required, list) or tuple(required) != CORE_BAG_REQUIRED_TOPICS:
         raise ScheduleError(
@@ -173,6 +196,7 @@ def validate_recording_contract(
     return {
         **expected_scalars,
         "topics": list(CORE_BAG_TOPICS),
+        "topic_types": dict(CORE_BAG_TOPIC_TYPES),
         "required_nonempty_topics": list(CORE_BAG_REQUIRED_TOPICS),
     }
 
