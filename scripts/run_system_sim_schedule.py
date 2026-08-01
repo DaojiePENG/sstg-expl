@@ -46,6 +46,7 @@ try:
         validate_experiment_budget,
         validate_recording_contract,
         validate_ros_gz_bridge_contract,
+        validate_ros_middleware_contract,
     )
 except ModuleNotFoundError as error:
     if error.name != "scripts":
@@ -66,6 +67,7 @@ except ModuleNotFoundError as error:
         validate_experiment_budget,
         validate_recording_contract,
         validate_ros_gz_bridge_contract,
+        validate_ros_middleware_contract,
     )
 
 
@@ -96,6 +98,7 @@ class RunPlan:
     command: tuple[str, ...]
     schedule_row: Mapping[str, str]
     ros_gz_bridge_contract: Mapping[str, Any] | None = None
+    ros_middleware_contract: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -1128,6 +1131,48 @@ def _ros_gz_bridge_contract(
     return frozen
 
 
+def _normalized_ros_middleware_contract(
+    value: Any, *, label: str
+) -> dict[str, Any]:
+    try:
+        return validate_ros_middleware_contract(value, label=label)
+    except ScheduleError as error:
+        raise RunnerError(str(error)) from error
+
+
+def _ros_middleware_contract(
+    *, root: Path, manifest: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Cross-check the RMW requirement at every frozen provenance layer."""
+    inputs = manifest.get("inputs")
+    if not isinstance(inputs, Mapping):
+        raise RunnerError("freeze manifest has no inputs mapping")
+    shared_record = inputs.get("shared_stack")
+    if not isinstance(shared_record, Mapping):
+        raise RunnerError("freeze manifest has no shared stack record")
+    shared_path = _resolve_inside(
+        root, str(shared_record.get("path", "")), "shared stack"
+    )
+    shared_stack = _load_yaml_mapping(shared_path, "shared stack")
+    declared = _normalized_ros_middleware_contract(
+        shared_stack.get("ros_middleware"),
+        label="shared_stack.ros_middleware",
+    )
+    recorded = _normalized_ros_middleware_contract(
+        shared_record.get("ros_middleware_contract"),
+        label="freeze manifest shared_stack.ros_middleware_contract",
+    )
+    frozen = _normalized_ros_middleware_contract(
+        manifest.get("ros_middleware_contract"),
+        label="freeze manifest ros_middleware_contract",
+    )
+    if recorded != declared or frozen != declared:
+        raise RunnerError(
+            "freeze manifest ROS middleware contract disagrees with its input"
+        )
+    return frozen
+
+
 def _runtime_command(
     command: Sequence[str], *, label: str
 ) -> subprocess.CompletedProcess[str]:
@@ -1154,6 +1199,132 @@ def _relative_runtime_path(root: Path, path: Path) -> str:
         return path.relative_to(root.resolve()).as_posix()
     except ValueError:
         return path.as_posix()
+
+
+def verify_ros_middleware_runtime(
+    root: Path, contract: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Attest the RMW selection and reject undeclared ROS underlays."""
+    root = root.resolve()
+    expected = _normalized_ros_middleware_contract(
+        contract, label="runtime ROS middleware contract"
+    )
+    implementation = os.environ.get("RMW_IMPLEMENTATION", "")
+    if implementation != expected["implementation"]:
+        raise RunnerError(
+            "RMW_IMPLEMENTATION must be "
+            f"{expected['implementation']}, observed: "
+            f"{implementation or '<unset>'}"
+        )
+    configured_forbidden = [
+        name
+        for name in expected["forbidden_environment"]
+        if os.environ.get(name)
+    ]
+    if configured_forbidden:
+        raise RunnerError(
+            "custom middleware environment is forbidden: "
+            + ", ".join(configured_forbidden)
+        )
+
+    allowed_roots = [
+        (
+            (root / Path(value)).resolve()
+            if not Path(value).is_absolute()
+            else Path(value).resolve()
+        )
+        for value in expected["allowed_prefix_roots"]
+    ]
+    prefix_environment: dict[str, list[str]] = {}
+    outside_prefixes: list[str] = []
+    for name in expected["prefix_path_environment"]:
+        paths = [
+            value
+            for value in os.environ.get(name, "").split(os.pathsep)
+            if value
+        ]
+        prefix_environment[name] = paths
+        for value in paths:
+            resolved = Path(value).resolve()
+            if not any(resolved.is_relative_to(allowed) for allowed in allowed_roots):
+                outside_prefixes.append(f"{name}={value}")
+    if outside_prefixes:
+        raise RunnerError(
+            "ROS environment contains undeclared underlay paths: "
+            + ", ".join(outside_prefixes)
+        )
+
+    prefix = Path(expected["required_prefix"]).resolve()
+    prefix_result = _runtime_command(
+        ["ros2", "pkg", "prefix", expected["package"]],
+        label="ROS middleware package prefix",
+    )
+    prefix_lines = [
+        line.strip()
+        for line in prefix_result.stdout.splitlines()
+        if line.strip()
+    ]
+    if len(prefix_lines) != 1 or Path(prefix_lines[0]).resolve() != prefix:
+        observed = prefix_result.stdout.strip() or "<empty>"
+        raise RunnerError(
+            f"{expected['package']} must resolve to {prefix}, observed: {observed}"
+        )
+
+    package_xml = prefix / "share" / expected["package"] / "package.xml"
+    try:
+        package_root = ElementTree.parse(package_xml).getroot()
+    except (OSError, ElementTree.ParseError) as error:
+        raise RunnerError(
+            f"cannot parse middleware package metadata: {error}"
+        ) from error
+    version = (package_root.findtext("version") or "").strip()
+    if version != expected["required_version"]:
+        raise RunnerError(
+            f"{expected['package']} version must be {expected['required_version']}, "
+            f"observed: {version or '<empty>'}"
+        )
+
+    library = prefix / "lib" / "librmw_fastrtps_cpp.so"
+    if not library.is_file():
+        raise RunnerError(f"middleware library is missing: {library}")
+    ldd_result = _runtime_command(["ldd", str(library)], label="middleware linkage")
+    dependency_patterns = {
+        "rmw_fastrtps_shared_cpp": r"librmw_fastrtps_shared_cpp\.so(?:\.\S+)?",
+        "fastrtps": r"libfastrtps\.so(?:\.\S+)?",
+        "fastcdr": r"libfastcdr\.so(?:\.\S+)?",
+    }
+    linked_dependencies: dict[str, str] = {}
+    for label, pattern in dependency_patterns.items():
+        match = re.search(
+            rf"^\s*{pattern}\s*=>\s*(\S+)",
+            ldd_result.stdout,
+            flags=re.MULTILINE,
+        )
+        if match is None:
+            raise RunnerError(f"middleware linkage does not list {label}")
+        linked = Path(match.group(1)).resolve()
+        if not linked.is_relative_to(prefix):
+            raise RunnerError(
+                f"middleware dependency {label} resolves outside {prefix}: {linked}"
+            )
+        linked_dependencies[label] = linked.as_posix()
+
+    return {
+        "implementation": implementation,
+        "package": expected["package"],
+        "version": version,
+        "prefix": prefix.as_posix(),
+        "library": {
+            "path": library.as_posix(),
+            "sha256": sha256_file(library),
+        },
+        "linked_dependencies": linked_dependencies,
+        "environment": {
+            "forbidden_variables_set": [],
+            "allowed_prefix_roots": [path.as_posix() for path in allowed_roots],
+            "prefix_paths": prefix_environment,
+        },
+    }
 
 
 def verify_ros_gz_bridge_runtime(
@@ -1366,6 +1537,10 @@ def load_run_plan(
         root=root,
         manifest=manifest,
     )
+    ros_middleware_contract = _ros_middleware_contract(
+        root=root,
+        manifest=manifest,
+    )
     launch_arguments = dict(fixed_args)
     for argument, column in column_args.items():
         value = row.get(column)
@@ -1418,6 +1593,7 @@ def load_run_plan(
         command=command,
         schedule_row=row,
         ros_gz_bridge_contract=ros_gz_bridge_contract,
+        ros_middleware_contract=ros_middleware_contract,
     )
 
 
@@ -1442,6 +1618,11 @@ def _manifest_value(plan: RunPlan, *, status: str, **updates: Any) -> dict[str, 
         "ros_gz_bridge_contract": (
             dict(plan.ros_gz_bridge_contract)
             if plan.ros_gz_bridge_contract is not None
+            else None
+        ),
+        "ros_middleware_contract": (
+            dict(plan.ros_middleware_contract)
+            if plan.ros_middleware_contract is not None
             else None
         ),
         "launch": {
@@ -1483,6 +1664,7 @@ def reserve_run_output(
     plan: RunPlan,
     *,
     ros_gz_bridge_runtime: Mapping[str, Any] | None = None,
+    ros_middleware_runtime: Mapping[str, Any] | None = None,
 ) -> Path:
     """Atomically reserve a unique run directory and write its launch manifest."""
     ensure_run_output_available(plan.root, plan.output_dir)
@@ -1496,17 +1678,18 @@ def reserve_run_output(
     (plan.output_dir / "media" / "raw").mkdir(parents=True)
     (plan.output_dir / "bags").mkdir()
     manifest_path = plan.output_dir / "run_launch_manifest.yaml"
+    runtime_updates: dict[str, Any] = {}
+    if ros_gz_bridge_runtime is not None:
+        runtime_updates["ros_gz_bridge_runtime"] = dict(ros_gz_bridge_runtime)
+    if ros_middleware_runtime is not None:
+        runtime_updates["ros_middleware_runtime"] = dict(ros_middleware_runtime)
     _write_manifest(
         manifest_path,
         _manifest_value(
             plan,
             status="reserved",
             reserved_at_utc=_utc_now(),
-            **(
-                {"ros_gz_bridge_runtime": dict(ros_gz_bridge_runtime)}
-                if ros_gz_bridge_runtime is not None
-                else {}
-            ),
+            **runtime_updates,
         ),
     )
     return manifest_path
@@ -1711,19 +1894,29 @@ def execute_run(
         sigint_grace_s=sigint_grace_s,
         term_grace_s=term_grace_s,
     )
+    ros_middleware_runtime = (
+        verify_ros_middleware_runtime(plan.root, plan.ros_middleware_contract)
+        if plan.ros_middleware_contract is not None
+        else None
+    )
     ros_gz_bridge_runtime = (
         verify_ros_gz_bridge_runtime(plan.root, plan.ros_gz_bridge_contract)
         if plan.ros_gz_bridge_contract is not None
         else None
     )
-    runtime_manifest_update = (
-        {"ros_gz_bridge_runtime": dict(ros_gz_bridge_runtime)}
-        if ros_gz_bridge_runtime is not None
-        else {}
-    )
+    runtime_manifest_update: dict[str, Any] = {}
+    if ros_middleware_runtime is not None:
+        runtime_manifest_update["ros_middleware_runtime"] = dict(
+            ros_middleware_runtime
+        )
+    if ros_gz_bridge_runtime is not None:
+        runtime_manifest_update["ros_gz_bridge_runtime"] = dict(
+            ros_gz_bridge_runtime
+        )
     manifest_path = reserve_run_output(
         plan,
         ros_gz_bridge_runtime=ros_gz_bridge_runtime,
+        ros_middleware_runtime=ros_middleware_runtime,
     )
     started = _utc_now()
     supervisor_started = time.monotonic()
@@ -1996,6 +2189,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "ros_gz_bridge_contract": (
                     dict(plan.ros_gz_bridge_contract)
                     if plan.ros_gz_bridge_contract is not None
+                    else None
+                ),
+                "ros_middleware_contract": (
+                    dict(plan.ros_middleware_contract)
+                    if plan.ros_middleware_contract is not None
                     else None
                 ),
                 "supervision": {

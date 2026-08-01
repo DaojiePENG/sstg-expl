@@ -51,6 +51,32 @@ ROS_GZ_BRIDGE_CONTRACT = {
     "system_apt_version_observed": "1.0.22-1noble.20260615.142443",
     "system_apt_eligible": False,
 }
+ROS_MIDDLEWARE_CONTRACT = {
+    "implementation": "rmw_fastrtps_cpp",
+    "package": "rmw_fastrtps_cpp",
+    "required_version": "8.4.4",
+    "required_prefix": "/opt/ros/jazzy",
+    "apt_version_observed": "8.4.4-1noble.20260615.124621",
+    "custom_underlays_eligible": False,
+    "forbidden_environment": [
+        "CYCLONEDDS_URI",
+        "FASTRTPS_DEFAULT_PROFILES_FILE",
+        "RMW_FASTRTPS_USE_QOS_FROM_XML",
+    ],
+    "prefix_path_environment": [
+        "AMENT_PREFIX_PATH",
+        "CMAKE_PREFIX_PATH",
+        "COLCON_PREFIX_PATH",
+        "LD_LIBRARY_PATH",
+        "PKG_CONFIG_PATH",
+        "PYTHONPATH",
+    ],
+    "allowed_prefix_roots": [
+        "ros2_ws/install",
+        "ros2_ws/build",
+        "/opt/ros/jazzy",
+    ],
+}
 CORE_BAG_TOPICS = (
     "/clock",
     "/tf",
@@ -197,6 +223,30 @@ def validate_ros_gz_bridge_contract(
         if type(actual) is not type(expected) or actual != expected:
             raise ScheduleError(f"{label}.{field} must be {expected!r}")
     return dict(ROS_GZ_BRIDGE_CONTRACT)
+
+
+def validate_ros_middleware_contract(
+    value: Any, *, label: str = "shared_stack.ros_middleware"
+) -> dict[str, Any]:
+    """Require one audited RMW and reject host-specific underlays."""
+    if not isinstance(value, Mapping):
+        raise ScheduleError(f"{label} must be a mapping")
+    missing = [field for field in ROS_MIDDLEWARE_CONTRACT if field not in value]
+    extra = sorted(
+        str(field) for field in value if field not in ROS_MIDDLEWARE_CONTRACT
+    )
+    if missing:
+        raise ScheduleError(f"{label} is missing: {', '.join(missing)}")
+    if extra:
+        raise ScheduleError(f"{label} has unknown fields: {', '.join(extra)}")
+    for field, expected in ROS_MIDDLEWARE_CONTRACT.items():
+        actual = value[field]
+        if type(actual) is not type(expected) or actual != expected:
+            raise ScheduleError(f"{label}.{field} must be {expected!r}")
+    return {
+        field: list(expected) if isinstance(expected, list) else expected
+        for field, expected in ROS_MIDDLEWARE_CONTRACT.items()
+    }
 
 
 def validate_recording_contract(
@@ -798,6 +848,9 @@ def freeze_schedule(
     ros_gz_bridge_contract = validate_ros_gz_bridge_contract(
         shared_stack.get("ros_gz_bridge")
     )
+    ros_middleware_contract = validate_ros_middleware_contract(
+        shared_stack.get("ros_middleware")
+    )
     recording_contract = validate_recording_contract(
         shared_stack.get("recording")
     )
@@ -910,6 +963,7 @@ def freeze_schedule(
             "runner_tool_sha256": runner_tool_sha,
             "experiment_budget": experiment_budget,
             "ros_gz_bridge_contract": ros_gz_bridge_contract,
+            "ros_middleware_contract": ros_middleware_contract,
         }
     )
     method_hashes = {item["method"]: item["sha256"] for item in method_records}
@@ -1048,6 +1102,7 @@ def freeze_schedule(
         "randomization": {"seed": randomization_seed},
         "seed_contract": seed_contract,
         "ros_gz_bridge_contract": ros_gz_bridge_contract,
+        "ros_middleware_contract": ros_middleware_contract,
         "recording_contract": recording_contract,
         "experiment_budget": experiment_budget,
         "budget_provenance": {
@@ -1083,6 +1138,9 @@ def freeze_schedule(
                 ),
                 "ros_gz_bridge_contract": validate_ros_gz_bridge_contract(
                     shared_stack.get("ros_gz_bridge")
+                ),
+                "ros_middleware_contract": validate_ros_middleware_contract(
+                    shared_stack.get("ros_middleware")
                 ),
                 "recording_contract": validate_recording_contract(
                     shared_stack.get("recording")

@@ -14,6 +14,28 @@ ros_gz_bridge:
   system_apt_version_observed: 1.0.22-1noble.20260615.142443
   system_apt_eligible: false
 ros_distribution: jazzy
+ros_middleware:
+  implementation: rmw_fastrtps_cpp
+  package: rmw_fastrtps_cpp
+  required_version: 8.4.4
+  required_prefix: /opt/ros/jazzy
+  apt_version_observed: 8.4.4-1noble.20260615.124621
+  custom_underlays_eligible: false
+  forbidden_environment:
+    - CYCLONEDDS_URI
+    - FASTRTPS_DEFAULT_PROFILES_FILE
+    - RMW_FASTRTPS_USE_QOS_FROM_XML
+  prefix_path_environment:
+    - AMENT_PREFIX_PATH
+    - CMAKE_PREFIX_PATH
+    - COLCON_PREFIX_PATH
+    - LD_LIBRARY_PATH
+    - PKG_CONFIG_PATH
+    - PYTHONPATH
+  allowed_prefix_roots:
+    - ros2_ws/install
+    - ros2_ws/build
+    - /opt/ros/jazzy
 use_sim_time: true
 physics:
   engine: gz_default

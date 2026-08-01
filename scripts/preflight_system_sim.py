@@ -18,10 +18,12 @@ try:
     from scripts.generate_system_sim_schedule import (
         ScheduleError,
         validate_ros_gz_bridge_contract,
+        validate_ros_middleware_contract,
     )
     from scripts.run_system_sim_schedule import (
         RunnerError,
         verify_ros_gz_bridge_runtime,
+        verify_ros_middleware_runtime,
     )
 except ModuleNotFoundError as error:
     if error.name != "scripts":
@@ -29,10 +31,12 @@ except ModuleNotFoundError as error:
     from generate_system_sim_schedule import (  # type: ignore[no-redef]
         ScheduleError,
         validate_ros_gz_bridge_contract,
+        validate_ros_middleware_contract,
     )
     from run_system_sim_schedule import (  # type: ignore[no-redef]
         RunnerError,
         verify_ros_gz_bridge_runtime,
+        verify_ros_middleware_runtime,
     )
 
 
@@ -178,6 +182,10 @@ def static_checks():
         validate_ros_gz_bridge_contract(stack.get("ros_gz_bridge"))
     except ScheduleError as error:
         errors.append(str(error))
+    try:
+        validate_ros_middleware_contract(stack.get("ros_middleware"))
+    except ScheduleError as error:
+        errors.append(str(error))
     robot = stack["robot"]
     if robot.get("upstream_package") != "nav2_minimal_tb3_sim":
         errors.append("default robot is not the released Nav2 TurtleBot3")
@@ -238,6 +246,22 @@ def runtime_checks():
     stack = yaml.safe_load((
         ROOT / "experiments/system_sim/configs/shared_stack.yaml"
     ).read_text(encoding="utf-8"))
+    try:
+        middleware_contract = validate_ros_middleware_contract(
+            stack.get("ros_middleware")
+        )
+        middleware_attestation = verify_ros_middleware_runtime(
+            ROOT, middleware_contract
+        )
+        checks["ros_middleware_runtime"] = {
+            "ok": True,
+            "detail": middleware_attestation,
+        }
+    except (ScheduleError, RunnerError) as error:
+        checks["ros_middleware_runtime"] = {
+            "ok": False,
+            "detail": str(error),
+        }
     try:
         bridge_contract = validate_ros_gz_bridge_contract(
             stack.get("ros_gz_bridge")

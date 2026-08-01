@@ -89,6 +89,7 @@ cd ros2_ws
 unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH COLCON_PREFIX_PATH
 unset LD_LIBRARY_PATH PYTHONPATH PKG_CONFIG_PATH
 unset RMW_IMPLEMENTATION CYCLONEDDS_URI FASTRTPS_DEFAULT_PROFILES_FILE
+unset RMW_FASTRTPS_USE_QOS_FROM_XML
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/ros/jazzy/bin
 source /opt/ros/jazzy/setup.bash
 /usr/bin/colcon build --symlink-install \
@@ -110,6 +111,7 @@ source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 unset CYCLONEDDS_URI FASTRTPS_DEFAULT_PROFILES_FILE
+unset RMW_FASTRTPS_USE_QOS_FROM_XML
 cd ..
 /usr/bin/python3 scripts/preflight_system_sim.py --require-runtime
 ros2 launch sstg_nav_bringup system_sim.launch.py \
@@ -129,6 +131,7 @@ cd /home/daojie/SSTG_Explorer/sstg-expl/ros2_ws
 unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH COLCON_PREFIX_PATH
 unset LD_LIBRARY_PATH PYTHONPATH PKG_CONFIG_PATH
 unset RMW_IMPLEMENTATION CYCLONEDDS_URI FASTRTPS_DEFAULT_PROFILES_FILE
+unset RMW_FASTRTPS_USE_QOS_FROM_XML
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/ros/jazzy/bin
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
@@ -194,6 +197,16 @@ contract before reserving an output path, then record both values.
 This controls the declared stochastic inputs; asynchronous ROS scheduling means
 it is not a claim of bitwise-identical trajectories, so repeat runs remain part
 of the development gate.
+
+ROS middleware is fixed to the Jazzy apt `rmw_fastrtps_cpp` 8.4.4 build.
+Execution requires the explicit `RMW_IMPLEMENTATION` value, rejects custom DDS
+profile variables, and audits all ROS prefix-path environment variables against
+only this workspace's install/build artifacts and `/opt/ros/jazzy`.  The build
+root is needed by Python packages produced with `colcon --symlink-install`.  The
+gate also hashes the selected RMW library and confirms its shared Fast DDS
+dependencies resolve below the official ROS prefix.  This prevents a real-robot
+or Conda underlay from changing simulator scheduling as an undeclared control
+variable.
 
 The `ros_gz_bridge` source-overlay contract follows the same fail-closed path.
 Freezing copies its exact version, official tag and commit, required fix,

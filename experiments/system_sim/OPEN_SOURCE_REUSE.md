@@ -33,6 +33,10 @@ a speculative local patch.  Gazebo launch, image bridging, interfaces, robot
 bridge configuration, and spawn composition remain upstream code; no local
 converter patch is carried.
 
+ROS transport uses the unmodified Jazzy apt `rmw_fastrtps_cpp` 8.4.4 package.
+The experiment contract disables custom DDS profiles and excludes personal ROS
+underlays; the runner records the selected RMW library and its Fast DDS linkage.
+
 The existing `frontier`, `nbv`, and `rrt_adapted` strategy switches in the SSTG
 codebase are internal algorithmic ablations.  They are useful for development
 diagnosis but are not independent public baselines and are barred from formal

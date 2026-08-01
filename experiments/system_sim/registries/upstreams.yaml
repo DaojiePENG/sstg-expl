@@ -44,6 +44,15 @@ components:
     license: BSD-3-Clause
     local_use: upstream_async_launch_with_frozen_parameters
     verification_status: office_growing_map_runtime_verified
+  - component_id: rmw_fastrtps_cpp_jazzy_8_4_4
+    role: frozen_ros_middleware
+    acquisition: ros_apt
+    package: rmw_fastrtps_cpp
+    apt_version: 8.4.4-1noble.20260615.124621
+    repository: https://github.com/ros2/rmw_fastrtps
+    license: Apache-2.0
+    local_use: unmodified_default_rmw_with_custom_profiles_disabled
+    verification_status: prefix_version_library_and_linkage_runtime_verified
   - component_id: ros_gz_bridge_jazzy_1_0_23
     role: gazebo_harmonic_ros_message_bridge
     acquisition: vcs_source_overlay

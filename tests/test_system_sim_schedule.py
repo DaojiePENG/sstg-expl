@@ -6,6 +6,7 @@ from dataclasses import replace
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import signal
 import subprocess
@@ -20,11 +21,13 @@ from scripts.generate_system_sim_schedule import (
     CORE_BAG_TOPIC_TYPES,
     CORE_BAG_TOPICS,
     ROS_GZ_BRIDGE_CONTRACT,
+    ROS_MIDDLEWARE_CONTRACT,
     ScheduleError,
     freeze_schedule,
     inverse_spawn_transform,
     sha256_tree,
     validate_ros_gz_bridge_contract,
+    validate_ros_middleware_contract,
 )
 from scripts.run_system_sim_schedule import (
     RunPlan,
@@ -38,6 +41,7 @@ from scripts.run_system_sim_schedule import (
     supervise_process,
     validate_completed_artifacts,
     verify_ros_gz_bridge_runtime,
+    verify_ros_middleware_runtime,
 )
 
 
@@ -140,6 +144,10 @@ def _fixture_project(tmp_path: Path) -> dict[str, object]:
             "backend": "gazebo_harmonic",
             "ros_distribution": "jazzy",
             "ros_gz_bridge": dict(ROS_GZ_BRIDGE_CONTRACT),
+            "ros_middleware": {
+                key: list(value) if isinstance(value, list) else value
+                for key, value in ROS_MIDDLEWARE_CONTRACT.items()
+            },
             "physics": {
                 "seed_source": "replicate_seed",
                 "seed_valid_range_inclusive": [1, 0x7FFFFFFF],
@@ -297,6 +305,10 @@ def test_schedule_is_matched_block_deterministic_and_hashed(tmp_path: Path) -> N
     assert manifest_a["inputs"]["shared_stack"][
         "ros_gz_bridge_contract"
     ] == ROS_GZ_BRIDGE_CONTRACT
+    assert manifest_a["ros_middleware_contract"] == ROS_MIDDLEWARE_CONTRACT
+    assert manifest_a["inputs"]["shared_stack"][
+        "ros_middleware_contract"
+    ] == ROS_MIDDLEWARE_CONTRACT
     assert manifest_a["recording_contract"] == RECORDING_CONTRACT
     assert manifest_a["inputs"]["shared_stack"]["recording_contract"] == (
         manifest_a["recording_contract"]
@@ -529,6 +541,28 @@ def test_shared_stack_bridge_contract_rejects_missing_or_unknown_fields(
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
+        ("implementation", "rmw_cyclonedds_cpp", "implementation must be"),
+        ("required_version", "8.4.3", "required_version must be '8.4.4'"),
+        ("custom_underlays_eligible", True, "must be False"),
+    ],
+)
+def test_shared_stack_middleware_contract_is_fail_closed(
+    tmp_path: Path, field: str, value: object, message: str
+) -> None:
+    project = _fixture_project(tmp_path)
+    shared_path = project["shared"]
+    assert isinstance(shared_path, Path)
+    shared = yaml.safe_load(shared_path.read_text(encoding="utf-8"))
+    shared["ros_middleware"][field] = value
+    _write_yaml(shared_path, shared)
+
+    with pytest.raises(ScheduleError, match=message):
+        _freeze(project, "invalid_middleware_contract")
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
         ("enabled", False, "enabled must be True"),
         ("storage_id", "sqlite3", "storage_id must be 'mcap'"),
         ("topics", ["/map"], "topics must match"),
@@ -725,6 +759,7 @@ def test_run_plan_carries_frozen_world_pose_truth_and_output_args(
     assert plan.recording_contract is not None
     assert plan.recording_contract["topics"] == list(CORE_BAG_TOPICS)
     assert plan.ros_gz_bridge_contract == ROS_GZ_BRIDGE_CONTRACT
+    assert plan.ros_middleware_contract == ROS_MIDDLEWARE_CONTRACT
     for field, value in EXPERIMENT_BUDGET.items():
         assert float(plan.launch_arguments[field]) == pytest.approx(float(value))
         assert f"{field}:={plan.launch_arguments[field]}" in plan.command
@@ -755,6 +790,7 @@ def test_run_reservation_records_manifest_and_cannot_be_reused(
     assert run_manifest["experiment_budget"] == EXPERIMENT_BUDGET
     assert run_manifest["recording_contract"] == plan.recording_contract
     assert run_manifest["ros_gz_bridge_contract"] == ROS_GZ_BRIDGE_CONTRACT
+    assert run_manifest["ros_middleware_contract"] == ROS_MIDDLEWARE_CONTRACT
 
     with pytest.raises(RunnerError, match="existing run output"):
         reserve_run_output(plan)
@@ -926,6 +962,27 @@ def test_runner_rejects_bridge_contract_manifest_drift(tmp_path: Path) -> None:
         )
 
 
+def test_runner_rejects_middleware_contract_manifest_drift(tmp_path: Path) -> None:
+    project = _fixture_project(tmp_path)
+    _, schedule_dir = _freeze(project, "runner_middleware_drift")
+    row = _rows(schedule_dir / "run_schedule.csv")[0]
+    manifest_path = schedule_dir / "schedule_freeze_manifest.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["ros_middleware_contract"]["implementation"] = (
+        "rmw_cyclonedds_cpp"
+    )
+    _write_yaml(manifest_path, manifest)
+    root = project["root"]
+    assert isinstance(root, Path)
+
+    with pytest.raises(RunnerError, match="implementation must be"):
+        load_run_plan(
+            root=root,
+            schedule_dir=schedule_dir,
+            schedule_id=row["schedule_id"],
+        )
+
+
 def test_source_tree_hash_excludes_nested_git_metadata(tmp_path: Path) -> None:
     root = tmp_path / "project"
     source = root / "ros2_ws/src/third_party/example"
@@ -940,6 +997,123 @@ def test_source_tree_hash_excludes_nested_git_metadata(tmp_path: Path) -> None:
     assert sha256_tree(root, [source]) == initial
     (source / "bridge.cpp").write_text("int bridge = 2;\n", encoding="utf-8")
     assert sha256_tree(root, [source]) != initial
+
+
+def _configure_clean_middleware_environment(
+    monkeypatch: pytest.MonkeyPatch, root: Path
+) -> None:
+    contract = ROS_MIDDLEWARE_CONTRACT
+    monkeypatch.setenv("RMW_IMPLEMENTATION", contract["implementation"])
+    for name in contract["forbidden_environment"]:
+        monkeypatch.delenv(name, raising=False)
+    for name in contract["prefix_path_environment"]:
+        monkeypatch.delenv(name, raising=False)
+    workspace_install = root / "ros2_ws/install"
+    monkeypatch.setenv(
+        "AMENT_PREFIX_PATH",
+        os.pathsep.join((str(workspace_install / "ros_gz_bridge"), "/opt/ros/jazzy")),
+    )
+    monkeypatch.setenv("COLCON_PREFIX_PATH", str(workspace_install))
+    monkeypatch.setenv(
+        "CMAKE_PREFIX_PATH",
+        os.pathsep.join((str(workspace_install / "ros_gz_bridge"), "/opt/ros/jazzy")),
+    )
+    monkeypatch.setenv(
+        "LD_LIBRARY_PATH",
+        os.pathsep.join(
+            (
+                str(workspace_install / "ros_gz_bridge/lib"),
+                "/opt/ros/jazzy/lib",
+            )
+        ),
+    )
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        os.pathsep.join(
+            (
+                str(root / "ros2_ws/build/sstg_policy_ros"),
+                "/opt/ros/jazzy/lib/python3.12/site-packages",
+            )
+        ),
+    )
+
+
+def _fake_middleware_run(
+    command: list[str], *, wrong_dependency: bool = False, **_kwargs: object
+) -> subprocess.CompletedProcess[str]:
+    arguments = list(command)
+    if arguments == ["ros2", "pkg", "prefix", "rmw_fastrtps_cpp"]:
+        output = "/opt/ros/jazzy\n"
+    elif arguments == ["ldd", "/opt/ros/jazzy/lib/librmw_fastrtps_cpp.so"]:
+        dependency_root = "/tmp/custom" if wrong_dependency else "/opt/ros/jazzy/lib"
+        output = "\n".join(
+            (
+                "librmw_fastrtps_shared_cpp.so => "
+                f"{dependency_root}/librmw_fastrtps_shared_cpp.so (0x01)",
+                f"libfastrtps.so.2.14 => {dependency_root}/libfastrtps.so.2.14 (0x02)",
+                f"libfastcdr.so.2 => {dependency_root}/libfastcdr.so.2 (0x03)",
+            )
+        )
+    else:
+        raise AssertionError(f"unexpected middleware command: {arguments}")
+    return subprocess.CompletedProcess(arguments, 0, output, "")
+
+
+def test_middleware_runtime_attestation_is_clean_and_pinned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = (tmp_path / "project").resolve()
+    _configure_clean_middleware_environment(monkeypatch, root)
+    monkeypatch.setattr(system_sim_runner.subprocess, "run", _fake_middleware_run)
+
+    attestation = verify_ros_middleware_runtime(
+        root, validate_ros_middleware_contract(ROS_MIDDLEWARE_CONTRACT)
+    )
+
+    assert attestation["implementation"] == "rmw_fastrtps_cpp"
+    assert attestation["version"] == "8.4.4"
+    assert len(attestation["library"]["sha256"]) == 64
+    assert set(attestation["linked_dependencies"]) == {
+        "rmw_fastrtps_shared_cpp",
+        "fastrtps",
+        "fastcdr",
+    }
+    assert attestation["environment"]["forbidden_variables_set"] == []
+
+
+@pytest.mark.parametrize(
+    ("failure_mode", "message"),
+    [
+        ("implementation", "RMW_IMPLEMENTATION must be"),
+        ("profile", "custom middleware environment is forbidden"),
+        ("underlay", "undeclared underlay paths"),
+        ("linkage", "resolves outside"),
+    ],
+)
+def test_middleware_runtime_attestation_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_mode: str,
+    message: str,
+) -> None:
+    root = (tmp_path / "project").resolve()
+    _configure_clean_middleware_environment(monkeypatch, root)
+    if failure_mode == "implementation":
+        monkeypatch.setenv("RMW_IMPLEMENTATION", "rmw_cyclonedds_cpp")
+    elif failure_mode == "profile":
+        monkeypatch.setenv("FASTRTPS_DEFAULT_PROFILES_FILE", "/tmp/custom.xml")
+    elif failure_mode == "underlay":
+        monkeypatch.setenv("AMENT_PREFIX_PATH", "/tmp/custom_underlay")
+    monkeypatch.setattr(
+        system_sim_runner.subprocess,
+        "run",
+        lambda command, **_kwargs: _fake_middleware_run(
+            command, wrong_dependency=failure_mode == "linkage"
+        ),
+    )
+
+    with pytest.raises(RunnerError, match=message):
+        verify_ros_middleware_runtime(root, ROS_MIDDLEWARE_CONTRACT)
 
 
 def test_bridge_runtime_attestation_checks_overlay_source_and_linkage(
@@ -1117,6 +1291,30 @@ def _dummy_run_plan(tmp_path: Path, command: tuple[str, ...]) -> RunPlan:
     )
 
 
+def test_middleware_runtime_gate_runs_before_output_reservation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = replace(
+        _dummy_run_plan(tmp_path, (sys.executable, "-c", "raise SystemExit(0)")),
+        ros_middleware_contract=validate_ros_middleware_contract(
+            ROS_MIDDLEWARE_CONTRACT
+        ),
+    )
+
+    def reject_runtime(_root: Path, _contract: object) -> dict[str, object]:
+        raise RunnerError("ROS environment contains undeclared underlay paths")
+
+    monkeypatch.setattr(
+        system_sim_runner,
+        "verify_ros_middleware_runtime",
+        reject_runtime,
+    )
+
+    with pytest.raises(RunnerError, match="undeclared underlay paths"):
+        execute_run(plan, wall_timeout_s=1.0)
+    assert not plan.output_dir.exists()
+
+
 def test_bridge_runtime_gate_runs_before_output_reservation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1145,6 +1343,9 @@ def test_run_manifest_preserves_bridge_runtime_attestation(
     plan = replace(
         _dummy_run_plan(tmp_path, (sys.executable, "-c", "raise SystemExit(0)")),
         ros_gz_bridge_contract=dict(ROS_GZ_BRIDGE_CONTRACT),
+        ros_middleware_contract=validate_ros_middleware_contract(
+            ROS_MIDDLEWARE_CONTRACT
+        ),
     )
     attestation = {
         "package": "ros_gz_bridge",
@@ -1152,10 +1353,20 @@ def test_run_manifest_preserves_bridge_runtime_attestation(
         "parameter_bridge": {"sha256": "a" * 64},
         "library": {"sha256": "b" * 64},
     }
+    middleware_attestation = {
+        "implementation": "rmw_fastrtps_cpp",
+        "version": "8.4.4",
+        "library": {"sha256": "c" * 64},
+    }
     monkeypatch.setattr(
         system_sim_runner,
         "verify_ros_gz_bridge_runtime",
         lambda _root, _contract: attestation,
+    )
+    monkeypatch.setattr(
+        system_sim_runner,
+        "verify_ros_middleware_runtime",
+        lambda _root, _contract: middleware_attestation,
     )
 
     result = execute_run(
@@ -1172,6 +1383,11 @@ def test_run_manifest_preserves_bridge_runtime_attestation(
     ).read_text(encoding="utf-8"))
     assert manifest["ros_gz_bridge_contract"] == ROS_GZ_BRIDGE_CONTRACT
     assert manifest["execution"]["ros_gz_bridge_runtime"] == attestation
+    assert manifest["ros_middleware_contract"] == ROS_MIDDLEWARE_CONTRACT
+    assert (
+        manifest["execution"]["ros_middleware_runtime"]
+        == middleware_attestation
+    )
 
 
 def _artifact_writer_program() -> str:
