@@ -218,8 +218,11 @@ and audits process search/prefix paths against the workspace install,
 additionally use `ros2_ws/build`, as required by Python packages produced with
 `colcon --symlink-install`.  Empty or relative path segments are rejected.  The
 gate verifies the apt build, hashes the selected RMW library and its linked Fast
-DDS dependencies, and records the complete policy.  This prevents a real-robot
-or Conda underlay, an implicit XML profile, or host discovery settings from
+DDS dependencies, and records the complete policy.  The apt versions, resolved
+library paths and expected hashes of `rmw_fastrtps_shared_cpp`, Fast DDS and
+Fast CDR are frozen too, so a partial dependency upgrade is rejected before an
+output directory is reserved.  This prevents a real-robot or Conda underlay, an
+implicit XML profile, host discovery settings or a mid-study DDS upgrade from
 becoming undeclared control variables.
 
 The `ros_gz_bridge` source-overlay contract follows the same fail-closed path.

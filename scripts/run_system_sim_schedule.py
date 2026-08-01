@@ -1201,6 +1201,20 @@ def _relative_runtime_path(root: Path, path: Path) -> str:
         return path.as_posix()
 
 
+def _runtime_apt_version(package: str) -> str:
+    result = _runtime_command(
+        ["dpkg-query", "-W", "-f=${Version}\\n", package],
+        label=f"apt package version for {package}",
+    )
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if len(lines) != 1:
+        observed = result.stdout.strip() or "<empty>"
+        raise RunnerError(
+            f"apt package {package} returned an ambiguous version: {observed}"
+        )
+    return lines[0]
+
+
 def verify_ros_middleware_runtime(
     root: Path, contract: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -1325,16 +1339,7 @@ def verify_ros_middleware_runtime(
             f"{expected['package']} version must be {expected['required_version']}, "
             f"observed: {version or '<empty>'}"
         )
-    apt_result = _runtime_command(
-        [
-            "dpkg-query",
-            "-W",
-            "-f=${Version}\\n",
-            expected["apt_package"],
-        ],
-        label="ROS middleware apt package version",
-    )
-    apt_version = apt_result.stdout.strip()
+    apt_version = _runtime_apt_version(expected["apt_package"])
     if apt_version != expected["apt_version_observed"]:
         raise RunnerError(
             f"{expected['apt_package']} version must be "
@@ -1345,6 +1350,12 @@ def verify_ros_middleware_runtime(
     library = prefix / "lib" / "librmw_fastrtps_cpp.so"
     if not library.is_file():
         raise RunnerError(f"middleware library is missing: {library}")
+    library_sha256 = sha256_file(library)
+    if library_sha256 != expected["required_library_sha256"]:
+        raise RunnerError(
+            "middleware library hash must be "
+            f"{expected['required_library_sha256']}, observed: {library_sha256}"
+        )
     ldd_result = _runtime_command(["ldd", str(library)], label="middleware linkage")
     dependency_patterns = {
         "rmw_fastrtps_shared_cpp": r"librmw_fastrtps_shared_cpp\.so(?:\.\S+)?",
@@ -1353,6 +1364,7 @@ def verify_ros_middleware_runtime(
     }
     linked_dependencies: dict[str, dict[str, str]] = {}
     for label, pattern in dependency_patterns.items():
+        dependency_contract = expected["required_linked_dependencies"][label]
         match = re.search(
             rf"^\s*{pattern}\s*=>\s*(\S+)",
             ldd_result.stdout,
@@ -1365,11 +1377,37 @@ def verify_ros_middleware_runtime(
             raise RunnerError(
                 f"middleware dependency {label} resolves outside {prefix}: {linked}"
             )
+        required_library = Path(
+            dependency_contract["required_library"]
+        ).resolve()
+        if linked != required_library:
+            raise RunnerError(
+                f"middleware dependency {label} must resolve to "
+                f"{required_library}, observed: {linked}"
+            )
         if not linked.is_file():
             raise RunnerError(f"middleware dependency {label} is missing: {linked}")
+        dependency_sha256 = sha256_file(linked)
+        if dependency_sha256 != dependency_contract["required_sha256"]:
+            raise RunnerError(
+                f"middleware dependency {label} hash must be "
+                f"{dependency_contract['required_sha256']}, observed: "
+                f"{dependency_sha256}"
+            )
+        dependency_apt_version = _runtime_apt_version(
+            dependency_contract["apt_package"]
+        )
+        if dependency_apt_version != dependency_contract["apt_version"]:
+            raise RunnerError(
+                f"{dependency_contract['apt_package']} version must be "
+                f"{dependency_contract['apt_version']}, observed: "
+                f"{dependency_apt_version}"
+            )
         linked_dependencies[label] = {
             "path": linked.as_posix(),
-            "sha256": sha256_file(linked),
+            "sha256": dependency_sha256,
+            "apt_package": dependency_contract["apt_package"],
+            "apt_version": dependency_apt_version,
         }
 
     return {
@@ -1381,7 +1419,7 @@ def verify_ros_middleware_runtime(
         "prefix": prefix.as_posix(),
         "library": {
             "path": library.as_posix(),
-            "sha256": sha256_file(library),
+            "sha256": library_sha256,
         },
         "linked_dependencies": linked_dependencies,
         "environment": {

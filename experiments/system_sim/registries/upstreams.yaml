@@ -50,10 +50,27 @@ components:
     package: rmw_fastrtps_cpp
     apt_package: ros-jazzy-rmw-fastrtps-cpp
     apt_version: 8.4.4-1noble.20260615.124621
+    library_sha256: 046375a1ef195094abb57c832b275c385261052cfed3ee044cce70e25a42cef3
+    required_runtime_dependencies:
+      - package: rmw_fastrtps_shared_cpp
+        apt_package: ros-jazzy-rmw-fastrtps-shared-cpp
+        apt_version: 8.4.4-1noble.20260615.124045
+        repository: https://github.com/ros2/rmw_fastrtps
+        library_sha256: c1abaceb3433fd4f20b1f5a5fa6686d285659bce8a2bb81ec2d61954a6d490ec
+      - package: fastrtps
+        apt_package: ros-jazzy-fastrtps
+        apt_version: 2.14.6-1noble.20260303.233638
+        repository: https://github.com/eProsima/Fast-DDS
+        library_sha256: 8d39de86a55a92e1be92640a22e6322f099227930d4fc98bd821b6effd7a3eaa
+      - package: fastcdr
+        apt_package: ros-jazzy-fastcdr
+        apt_version: 2.2.7-1noble.20260225.051855
+        repository: https://github.com/eProsima/Fast-CDR
+        library_sha256: 0eeb1f3d1859db07e7551be9df814053a8a4805c9feb9cb990363e43ac45cd69
     repository: https://github.com/ros2/rmw_fastrtps
     license: Apache-2.0
     local_use: unmodified_default_rmw_with_custom_profiles_disabled
-    verification_status: prefix_version_library_and_linkage_runtime_verified
+    verification_status: all_apt_versions_library_hashes_and_linkage_verified
   - component_id: ros_gz_bridge_jazzy_1_0_23
     role: gazebo_harmonic_ros_message_bridge
     acquisition: vcs_source_overlay

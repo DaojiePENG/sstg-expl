@@ -19,8 +19,25 @@ ros_middleware:
   package: rmw_fastrtps_cpp
   required_version: 8.4.4
   required_prefix: /opt/ros/jazzy
+  required_library_sha256: 046375a1ef195094abb57c832b275c385261052cfed3ee044cce70e25a42cef3
   apt_package: ros-jazzy-rmw-fastrtps-cpp
   apt_version_observed: 8.4.4-1noble.20260615.124621
+  required_linked_dependencies:
+    rmw_fastrtps_shared_cpp:
+      apt_package: ros-jazzy-rmw-fastrtps-shared-cpp
+      apt_version: 8.4.4-1noble.20260615.124045
+      required_library: /opt/ros/jazzy/lib/librmw_fastrtps_shared_cpp.so
+      required_sha256: c1abaceb3433fd4f20b1f5a5fa6686d285659bce8a2bb81ec2d61954a6d490ec
+    fastrtps:
+      apt_package: ros-jazzy-fastrtps
+      apt_version: 2.14.6-1noble.20260303.233638
+      required_library: /opt/ros/jazzy/lib/libfastrtps.so.2.14.6
+      required_sha256: 8d39de86a55a92e1be92640a22e6322f099227930d4fc98bd821b6effd7a3eaa
+    fastcdr:
+      apt_package: ros-jazzy-fastcdr
+      apt_version: 2.2.7-1noble.20260225.051855
+      required_library: /opt/ros/jazzy/lib/libfastcdr.so.2.2.7
+      required_sha256: 0eeb1f3d1859db07e7551be9df814053a8a4805c9feb9cb990363e43ac45cd69
   custom_underlays_eligible: false
   required_environment:
     ROS_DISTRO: jazzy

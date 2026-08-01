@@ -559,6 +559,31 @@ def test_shared_stack_middleware_contract_is_fail_closed(
         _freeze(project, "invalid_middleware_contract")
 
 
+def test_shared_stack_middleware_contract_rejects_missing_or_unknown_fields(
+    tmp_path: Path,
+) -> None:
+    project = _fixture_project(tmp_path)
+    shared_path = project["shared"]
+    assert isinstance(shared_path, Path)
+    shared = yaml.safe_load(shared_path.read_text(encoding="utf-8"))
+    del shared["ros_middleware"]["required_linked_dependencies"]
+    _write_yaml(shared_path, shared)
+    with pytest.raises(
+        ScheduleError, match="is missing: required_linked_dependencies"
+    ):
+        _freeze(project, "missing_middleware_contract_field")
+
+    shared["ros_middleware"] = validate_ros_middleware_contract(
+        ROS_MIDDLEWARE_CONTRACT
+    )
+    shared["ros_middleware"]["host_defaults_allowed"] = True
+    _write_yaml(shared_path, shared)
+    with pytest.raises(
+        ScheduleError, match="has unknown fields: host_defaults_allowed"
+    ):
+        _freeze(project, "extra_middleware_contract_field")
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
@@ -1053,22 +1078,30 @@ def _fake_middleware_run(
     *,
     wrong_dependency: bool = False,
     wrong_apt_version: bool = False,
+    wrong_dependency_apt_version: bool = False,
     **_kwargs: object,
 ) -> subprocess.CompletedProcess[str]:
     arguments = list(command)
     if arguments == ["ros2", "pkg", "prefix", "rmw_fastrtps_cpp"]:
         output = "/opt/ros/jazzy\n"
-    elif arguments == [
-        "dpkg-query",
-        "-W",
-        "-f=${Version}\\n",
-        "ros-jazzy-rmw-fastrtps-cpp",
-    ]:
-        output = (
-            "8.4.3-1noble.invalid\n"
-            if wrong_apt_version
-            else "8.4.4-1noble.20260615.124621\n"
-        )
+    elif arguments[:3] == ["dpkg-query", "-W", "-f=${Version}\\n"]:
+        versions = {
+            "ros-jazzy-rmw-fastrtps-cpp": "8.4.4-1noble.20260615.124621",
+            "ros-jazzy-rmw-fastrtps-shared-cpp": (
+                "8.4.4-1noble.20260615.124045"
+            ),
+            "ros-jazzy-fastrtps": "2.14.6-1noble.20260303.233638",
+            "ros-jazzy-fastcdr": "2.2.7-1noble.20260225.051855",
+        }
+        package = arguments[3]
+        if package not in versions:
+            raise AssertionError(f"unexpected apt package: {package}")
+        if wrong_apt_version and package == "ros-jazzy-rmw-fastrtps-cpp":
+            output = "8.4.3-1noble.invalid\n"
+        elif wrong_dependency_apt_version and package == "ros-jazzy-fastrtps":
+            output = "2.14.5-1noble.invalid\n"
+        else:
+            output = versions[package] + "\n"
     elif arguments == ["ldd", "/opt/ros/jazzy/lib/librmw_fastrtps_cpp.so"]:
         dependency_root = "/tmp/custom" if wrong_dependency else "/opt/ros/jazzy/lib"
         output = "\n".join(
@@ -1108,6 +1141,12 @@ def test_middleware_runtime_attestation_is_clean_and_pinned(
         len(dependency["sha256"]) == 64
         for dependency in attestation["linked_dependencies"].values()
     )
+    for label, contract in ROS_MIDDLEWARE_CONTRACT[
+        "required_linked_dependencies"
+    ].items():
+        dependency = attestation["linked_dependencies"][label]
+        assert dependency["sha256"] == contract["required_sha256"]
+        assert dependency["apt_version"] == contract["apt_version"]
     assert attestation["environment"]["forbidden_variables_set"] == []
 
 
@@ -1128,6 +1167,8 @@ def test_middleware_runtime_attestation_is_clean_and_pinned(
         ("build_library", "undeclared underlay paths"),
         ("linkage", "resolves outside"),
         ("apt_version", "version must be"),
+        ("dependency_apt_version", "ros-jazzy-fastrtps version must be"),
+        ("dependency_hash", "dependency fastrtps hash must be"),
     ],
 )
 def test_middleware_runtime_attestation_fails_closed(
@@ -1164,6 +1205,17 @@ def test_middleware_runtime_attestation_fails_closed(
         monkeypatch.setenv(
             "LD_LIBRARY_PATH", str(root / "ros2_ws/build/custom/lib")
         )
+    real_sha256_file = system_sim_runner.sha256_file
+    if failure_mode == "dependency_hash":
+        monkeypatch.setattr(
+            system_sim_runner,
+            "sha256_file",
+            lambda path: (
+                "0" * 64
+                if Path(path).resolve().name == "libfastrtps.so.2.14.6"
+                else real_sha256_file(Path(path))
+            ),
+        )
     monkeypatch.setattr(
         system_sim_runner.subprocess,
         "run",
@@ -1171,6 +1223,9 @@ def test_middleware_runtime_attestation_fails_closed(
             command,
             wrong_dependency=failure_mode == "linkage",
             wrong_apt_version=failure_mode == "apt_version",
+            wrong_dependency_apt_version=(
+                failure_mode == "dependency_apt_version"
+            ),
         ),
     )
 
