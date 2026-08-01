@@ -934,14 +934,17 @@ def test_artifact_audit_rejects_child_crash_but_allows_coordinated_sigint(
     )
 
 
-def test_replicate_seed_must_fit_gazebo_unsigned_32_bit_range(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    "seed", [-1, 0, 0x80000000, 0xFFFFFFFF, True, 1.0]
+)
+def test_replicate_seed_must_fit_gazebo_positive_signed_32_bit_range(
+    tmp_path: Path, seed: object,
 ) -> None:
     project = _fixture_project(tmp_path)
     root = project["root"]
     assert isinstance(root, Path)
 
-    with pytest.raises(ScheduleError, match="unsigned 32-bit"):
+    with pytest.raises(ScheduleError, match="positive signed 32-bit"):
         freeze_schedule(
             root=root,
             study_id="invalid_seed",
@@ -951,7 +954,7 @@ def test_replicate_seed_must_fit_gazebo_unsigned_32_bit_range(
             method_paths=project["methods"],
             condition_path=project["condition"],
             world_ids=["dev_office_01"],
-            replicate_seeds=[0x100000000],
+            replicate_seeds=[seed],
             randomization_seed=1,
             source_paths=project["source_paths"],
         )

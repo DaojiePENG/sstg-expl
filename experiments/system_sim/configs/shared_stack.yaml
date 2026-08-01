@@ -7,6 +7,7 @@ use_sim_time: true
 physics:
   engine: gz_default
   seed_source: replicate_seed
+  seed_valid_range_inclusive: [1, 2147483647]
   max_step_size_s: 0.004
   target_real_time_factor: 1.0
 robot:

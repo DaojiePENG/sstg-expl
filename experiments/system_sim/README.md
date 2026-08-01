@@ -124,8 +124,9 @@ the frozen shared-stack values.
 The replicate seed is also copied to both `policy_seed` and
 `simulation_seed`.  Gazebo is launched with that seed, so the simulator's
 LiDAR/IMU noise stream and the policy's stochastic choices are paired within a
-matched block.  Direct development launches must set both arguments explicitly;
-the schedule runner does this automatically and records the values.
+matched block.  Valid replicate seeds are `1..2147483647`; zero does not freeze
+Gazebo's random stream.  Direct development launches must set both arguments
+explicitly; the schedule runner does this automatically and records the values.
 
 Inspect one row's exact launch plan without starting ROS or writing files:
 

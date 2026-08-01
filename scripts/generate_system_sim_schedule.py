@@ -609,14 +609,21 @@ def freeze_schedule(
         raise ScheduleError("evidence_tier must be development or formal")
     if start_policy not in {"first", "all"}:
         raise ScheduleError("start_policy must be first or all")
-    seeds = sorted({int(seed) for seed in replicate_seeds})
+    if any(
+        isinstance(seed, bool) or not isinstance(seed, int)
+        for seed in replicate_seeds
+    ):
+        raise ScheduleError(
+            "replicate seeds must be positive signed 32-bit integers for Gazebo"
+        )
+    seeds = sorted(set(replicate_seeds))
     if not seeds:
         raise ScheduleError("at least one replicate seed is required")
     if len(seeds) != len(replicate_seeds):
         raise ScheduleError("replicate seeds must be unique")
-    if any(not 0 <= seed <= 0xFFFFFFFF for seed in seeds):
+    if any(not 1 <= seed <= 0x7FFFFFFF for seed in seeds):
         raise ScheduleError(
-            "replicate seeds must be unsigned 32-bit integers for Gazebo"
+            "replicate seeds must be positive signed 32-bit integers for Gazebo"
         )
     if randomization_seed < 0:
         raise ScheduleError("randomization seed must be a non-negative integer")

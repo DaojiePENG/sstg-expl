@@ -53,10 +53,12 @@ def _validated_simulation_seed(value):
         seed = int(value)
     except (TypeError, ValueError) as error:
         raise RuntimeError(
-            "simulation_seed must be an unsigned 32-bit integer"
+            "simulation_seed must be a positive signed 32-bit integer"
         ) from error
-    if str(seed) != str(value).strip() or not 0 <= seed <= 0xFFFFFFFF:
-        raise RuntimeError("simulation_seed must be an unsigned 32-bit integer")
+    if str(seed) != str(value).strip() or not 1 <= seed <= 0x7FFFFFFF:
+        raise RuntimeError(
+            "simulation_seed must be a positive signed 32-bit integer"
+        )
     return seed
 
 
@@ -213,7 +215,7 @@ def generate_launch_description():
         DeclareLaunchArgument("start_y", default_value="-4.5"),
         DeclareLaunchArgument("start_z", default_value="0.01"),
         DeclareLaunchArgument("start_yaw", default_value="0.0"),
-        DeclareLaunchArgument("simulation_seed", default_value="0"),
+        DeclareLaunchArgument("simulation_seed", default_value="1"),
         DeclareLaunchArgument(
             "robot_name", default_value="turtlebot3_waffle"
         ),

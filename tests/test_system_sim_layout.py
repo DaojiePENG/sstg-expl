@@ -437,10 +437,10 @@ def test_headless_launch_keeps_gpu_sensor_rendering_and_dynamic_world_stats():
 def test_simulation_seed_validation_is_fail_closed():
     module = _load_sim_launch_module()
 
-    assert module._validated_simulation_seed("0") == 0
-    assert module._validated_simulation_seed("4294967295") == 0xFFFFFFFF
-    for invalid in ("-1", "1.0", "4294967296", "seed"):
-        with pytest.raises(RuntimeError, match="unsigned 32-bit"):
+    assert module._validated_simulation_seed("1") == 1
+    assert module._validated_simulation_seed("2147483647") == 0x7FFFFFFF
+    for invalid in ("-1", "0", "1.0", "2147483648", "4294967295", "seed"):
+        with pytest.raises(RuntimeError, match="positive signed 32-bit"):
             module._validated_simulation_seed(invalid)
 
 
@@ -654,6 +654,8 @@ def test_system_sim_budget_matches_policy_and_is_required_by_launch():
         ROOT / "ros2_ws/src/sstg_policy_ros/config/policy.yaml"
     ).read_text(encoding="utf-8"))["sstg_policy"]["ros__parameters"]
     launch = SYSTEM_LAUNCH_PATH.read_text(encoding="utf-8")
+
+    assert shared["physics"]["seed_valid_range_inclusive"] == [1, 0x7FFFFFFF]
 
     for field, value in shared["experiment_budget"].items():
         assert policy[field] == value
