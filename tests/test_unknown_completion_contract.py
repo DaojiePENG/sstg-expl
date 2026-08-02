@@ -151,6 +151,6 @@ def test_protocol_constructs_the_same_shared_explorer_configuration():
 
     assert asdict(config)["termination_mode"] == "candidate_exhaustion"
     assert config.robot_radius == 0.24
-    assert config.minimum_goal_clearance == 0.40
+    assert config.minimum_goal_clearance == 0.60
     assert config.max_decisions == 80
     assert config.online_exhaustion_confirmations == 3

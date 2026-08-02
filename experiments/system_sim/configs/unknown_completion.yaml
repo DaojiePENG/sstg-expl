@@ -70,8 +70,10 @@ shared_policy:
   robot_radius_m: 0.24
   safety_margin_m: 0.0
   # Endpoint-only clearance for braking and in-place sensing. Traversal still
-  # uses the 0.24 m physical footprint, so narrow doors remain connected.
-  minimum_goal_clearance_m: 0.40
+  # uses the 0.24 m physical footprint, so narrow doors remain connected.  The
+  # 0.60 m endpoint threshold leaves 0.36 m beyond that footprint for fixed
+  # localization/control uncertainty without reading truth or ATE at runtime.
+  minimum_goal_clearance_m: 0.60
   preferred_clearance_m: 0.50
   target_spacing_m: 2.0
   scan_interval_m: 1.0

@@ -242,7 +242,7 @@ class SSTGPolicyNode(Node):
             "lidar_angular_resolution_deg": 1.0,
             "robot_radius_m": 0.24,
             "safety_margin_m": 0.0,
-            "minimum_goal_clearance_m": 0.40,
+            "minimum_goal_clearance_m": 0.60,
             "failed_goal_suppression_radius_m": 0.80,
             "preferred_clearance_m": 0.5,
             "target_spacing_m": 2.0,
