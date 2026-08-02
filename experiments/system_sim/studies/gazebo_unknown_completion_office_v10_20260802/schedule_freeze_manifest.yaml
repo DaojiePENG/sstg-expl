@@ -1,5 +1,5 @@
 schema: sstg_system_sim_schedule_freeze/v2
-study_id: gazebo_unknown_completion_office_v9_20260802
+study_id: gazebo_unknown_completion_office_v10_20260802
 backend: gazebo_harmonic
 eligibility:
   evidence_tier: development
@@ -38,7 +38,7 @@ design:
   replicate_seeds:
   - 311
   start_policy: first
-  run_output_root: system_sim_outputs/unknown_completion/runs/gazebo_unknown_completion_office_v9_20260802
+  run_output_root: system_sim_outputs/unknown_completion/runs/gazebo_unknown_completion_office_v10_20260802
   block_count: 1
   methods_per_block: 5
   scheduled_run_count: 5
@@ -232,9 +232,9 @@ budget_provenance:
     max_decisions: 80
     goal_timeout_s: 180.0
 source:
-  repository_commit: 8454697d8ee8c59573bbfb0d7c1d391042f02c3b
+  repository_commit: d7869a875952d3495117ba6856f3388e59d8d921
   repository_dirty: false
-  source_tree_sha256: b631a5a06d19c4df419b5b7cf3e908612924a9383647003d8ef36d653c25c9a7
+  source_tree_sha256: 38c6a7bfd7fca9e347f76fb374ee4ed15e27a34ba1e14db94bf8e3fafb45fe78
   source_paths:
   - src
   - ros2_ws/src
@@ -244,13 +244,13 @@ source:
   runner_tool_sha256: a215ee698fcbb9ff1ab16ad5b066c8e6a743c61214a94edfd10162be7e92aeca
   tree_hash_algorithm: sha256(path-length || path || file-sha256)/v1
 inputs:
-  study_config_sha256: 6cd6105a8eba78ea77532dc93699efcc79d3d5084ca3222ec7f9bd48f6568ffb
+  study_config_sha256: dfbf0230c3fc33713989f0258807f14bef81a0543f0d0903e33b2fb884a587ee
   world_registry:
     path: experiments/system_sim/registries/worlds.yaml
     sha256: d4e3109a228ce52b6b834e863eecdffe058c60eb2f664eda0c3384ca866795eb
   shared_stack:
     path: experiments/system_sim/configs/shared_stack.yaml
-    sha256: c9b04b0e0754c72f0be609eeef2d591adac360f8fac56cc80edd395f90a52951
+    sha256: 9ab8ad8147210eba2bce634a615d88f54f230ac6e5af76735dadd88759496df6
     freeze_status: development
     seed_contract:
       seed_source: replicate_seed
@@ -521,7 +521,7 @@ launch:
     truth_to_map_yaw_rad: truth_to_map_yaw_rad
 outputs:
   run_schedule: run_schedule.csv
-  run_schedule_sha256: dc1dbc07b786626b7ae88c6b3e65dde230720b3b5b8b526e95c39a2078c92679
+  run_schedule_sha256: 9e038b2f3025820a23f436d28f47c46ab47c306e4dd0e871a4aae087ac71c097
 execution:
   simulator_invoked: false
   status: not_started
