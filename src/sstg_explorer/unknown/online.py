@@ -42,6 +42,7 @@ class OnlineDecision:
     known_free_cells: int
     known_topological_coverage: float
     native_termination_rule: str
+    native_completion_trigger: Optional[str]
     exhaustion_confirmation: int
     exhaustion_confirmations_required: int
     decision_time_ms: float
@@ -86,7 +87,10 @@ class OnlineExplorerSession:
         "nbv": "no_nbv_candidate_above_information_or_topological_gain",
         "rrt": "no_rrt_expansion_above_information_or_topological_gain",
         "ans": "no_ans_guided_candidate_above_information_or_topological_gain",
-        "sstg": "no_multi_frontier_vantage_or_joint_gap_above_gain",
+        "sstg": (
+            "no_reachable_informative_frontier_and_"
+            "known_topological_target_met"
+        ),
     }
 
     def __init__(self, config: UnknownExplorerConfig, start_pose: Pose2D):
@@ -119,6 +123,7 @@ class OnlineExplorerSession:
         self._map_resolution: Optional[float] = None
         self._exhaustion_confirmation = 0
         self._last_exhaustion_map_revision: Optional[int] = None
+        self._native_completion_trigger: Optional[str] = None
         self.termination_reason = "running"
 
     @staticmethod
@@ -151,6 +156,34 @@ class OnlineExplorerSession:
             belief, self.positions
         )
         return known_free, ratio
+
+    def _sstg_frontier_topology_converged(
+        self,
+        active: Sequence[Dict],
+        known_topological_coverage: float,
+    ) -> bool:
+        """Apply SSTG's belief-only native stopping condition.
+
+        A locally tiny map can appear fully covered, so the topological target
+        is never sufficient by itself.  At least one reachable frontier with
+        predicted information gain keeps exploration active.  Once those
+        frontiers are exhausted and the already-known free space meets the
+        frozen topological target, remaining topology-only gap candidates are
+        tail refinement rather than evidence of another unknown room.
+        """
+        if self.config.strategy != "sstg":
+            return False
+        if (
+            known_topological_coverage + 1e-12
+            < self.config.target_topological_coverage
+        ):
+            return False
+        return not any(
+            candidate.get("kind") == "frontier"
+            and int(candidate.get("predicted_gain", 0))
+            >= self.config.min_gain_cells
+            for candidate in active
+        )
 
     def propose(
         self,
@@ -207,13 +240,25 @@ class OnlineExplorerSession:
             active, belief, ans_predicted
         )
 
+        native_completion_trigger: Optional[str] = None
+        if self._sstg_frontier_topology_converged(active, known_topology):
+            selected = None
+            native_completion_trigger = "sstg_frontier_topology_convergence"
+        elif selected is None:
+            native_completion_trigger = "candidate_exhaustion"
+
         status = "confirming"
-        reason = "candidate_exhaustion_pending"
+        reason = (
+            f"{native_completion_trigger}_pending"
+            if native_completion_trigger is not None
+            else "candidate_exhaustion_pending"
+        )
         target_pose = None
         planned_path: List[Point2D] = []
         if selected is not None:
             self._exhaustion_confirmation = 0
             self._last_exhaustion_map_revision = None
+            self._native_completion_trigger = None
             path = self.policy._plan(
                 planner, current, selected, belief.data.size
             )
@@ -235,6 +280,7 @@ class OnlineExplorerSession:
         ):
             self._exhaustion_confirmation += 1
             self._last_exhaustion_map_revision = map_revision
+            self._native_completion_trigger = native_completion_trigger
         if (
             selected is None
             and self._exhaustion_confirmation
@@ -259,6 +305,7 @@ class OnlineExplorerSession:
             native_termination_rule=self._NATIVE_TERMINATION_RULES[
                 self.config.strategy
             ],
+            native_completion_trigger=native_completion_trigger,
             exhaustion_confirmation=self._exhaustion_confirmation,
             exhaustion_confirmations_required=(
                 self.config.online_exhaustion_confirmations
@@ -414,6 +461,7 @@ class OnlineExplorerSession:
             "native_termination_rule": self._NATIVE_TERMINATION_RULES[
                 self.config.strategy
             ],
+            "native_completion_trigger": self._native_completion_trigger,
             "exhaustion_confirmation": self._exhaustion_confirmation,
             "exhaustion_confirmations_required": (
                 self.config.online_exhaustion_confirmations

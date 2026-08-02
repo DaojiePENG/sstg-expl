@@ -110,7 +110,7 @@ methods:
     strategy: sstg
     config: experiments/system_sim/configs/methods/sstg.yaml
     procedural_algorithm: sstg
-    native_termination_rule: no_multi_frontier_vantage_or_joint_gap_above_gain
+    native_termination_rule: no_reachable_informative_frontier_and_known_topological_target_met
 
 ans_checkpoint:
   path: models/checkpoints/ans_global_policy.pt

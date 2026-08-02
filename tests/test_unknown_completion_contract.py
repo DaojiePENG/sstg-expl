@@ -5,7 +5,11 @@ from pathlib import Path
 
 import yaml
 
-from sstg_explorer import SensorConfig, UnknownExplorerConfig
+from sstg_explorer import (
+    OnlineExplorerSession,
+    SensorConfig,
+    UnknownExplorerConfig,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +44,9 @@ def test_five_ros_methods_map_one_to_one_to_procedural_algorithms():
     assert len({item["strategy"] for item in mappings}) == 5
     for item in mappings:
         assert item["native_termination_rule"].startswith("no_")
+        assert OnlineExplorerSession._NATIVE_TERMINATION_RULES[
+            item["strategy"]
+        ] == item["native_termination_rule"]
         method = _yaml(ROOT / item["config"])
         assert method["method"] == item["method"]
         assert method["strategy"] == item["strategy"]

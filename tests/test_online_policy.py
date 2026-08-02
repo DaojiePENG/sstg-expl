@@ -207,6 +207,49 @@ def test_online_completion_does_not_claim_truth_coverage():
     assert session.summary()["termination_reason"] == "candidate_exhaustion"
 
 
+def test_sstg_native_completion_skips_topology_only_tail():
+    session = _session(target_topological_coverage=0.01)
+    belief = _known_room()
+
+    first = session.propose(belief, map_revision=1)
+    second = session.propose(belief, map_revision=2)
+    complete = session.propose(belief, map_revision=3)
+
+    assert first.status == "confirming"
+    assert first.reason == "sstg_frontier_topology_convergence_pending"
+    assert first.native_completion_trigger == (
+        "sstg_frontier_topology_convergence"
+    )
+    assert first.active_candidates
+    assert not any(
+        candidate["kind"] == "frontier"
+        and candidate["predicted_gain"] >= session.config.min_gain_cells
+        for candidate in first.active_candidates
+    )
+    assert second.exhaustion_confirmation == 2
+    assert complete.status == "complete"
+    assert complete.reason == "candidate_exhaustion"
+    assert session.summary()["native_completion_trigger"] == (
+        "sstg_frontier_topology_convergence"
+    )
+
+
+def test_sstg_native_completion_never_ignores_informative_frontier():
+    belief = _known_room()
+    belief.data[30:70, 70:97] = -1
+    session = _session(target_topological_coverage=0.01)
+
+    decision = session.propose(belief, map_revision=1)
+
+    assert decision.status == "navigate"
+    assert decision.native_completion_trigger is None
+    assert any(
+        candidate["kind"] == "frontier"
+        and candidate["predicted_gain"] >= session.config.min_gain_cells
+        for candidate in decision.active_candidates
+    )
+
+
 def test_goal_tolerance_pose_is_bridged_back_to_conservative_safe_space():
     belief = _known_room()
     # This measured pose is known free but lies inside the 0.3 m erosion band,
