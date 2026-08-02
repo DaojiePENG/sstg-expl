@@ -364,7 +364,7 @@ simulation evidence:
 /usr/bin/python3 scripts/render_system_sim_depth_video.py \
   system_sim_outputs/runs/<study_id>/<schedule_id>
 
-/usr/bin/python3 scripts/register_system_sim_media.py \
+/usr/bin/python3 scripts/register_system_sim_rendered_media.py \
   system_sim_outputs/runs/<study_id>/<schedule_id> \
   --evidence-tier development
 ```
@@ -374,6 +374,15 @@ stream and writes `media/raw/task_camera_depth.mp4`.  It uses a fixed
 0.05--5.0 m color scale, preserves simulation-time playback at 5 Hz, labels
 the output as development simulation, and verifies H.264 dimensions, duration,
 frame count and SHA-256 before atomically publishing the file.
+
+The rendered-media registrar generates the capture index for those three
+standard MCAP derivatives, then delegates hashing and validation to the common
+media registrar.  It accepts only a terminal-completed, artifact-valid run and
+refuses overwrite.  Its manifest deliberately lists `gazebo_overview` and
+`rviz_navigation` as missing; only actual GUI screen captures may satisfy
+those roles.  For a GUI bundle, fill
+`experiments/system_sim/templates/media_capture_index.yaml` and invoke the
+general `register_system_sim_media.py` command instead.
 
 The registrar hashes the captures and requires Gazebo, RViz, sensor-sanity,
 final-state and key-interval-video roles before marking the media bundle
