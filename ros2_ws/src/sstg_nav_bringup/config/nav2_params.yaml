@@ -86,7 +86,7 @@ controller_server:
       # Unknown-completion policies legitimately issue dense sub-metre views.
       # Keep this below the goal tolerance so those views are not mistaken for
       # four consecutive "no progress" failures by the Nav2 recovery tree.
-      required_movement_radius: 0.05
+      required_movement_radius: 0.02
       movement_time_allowance: 10.0
     # Goal checker parameters
     #precise_goal_checker:
@@ -97,7 +97,9 @@ controller_server:
     general_goal_checker:
       stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.25
+      # Frontier updates can be one map cell apart.  A TurtleBot-scale 0.25 m
+      # tolerance would acknowledge those observations without moving at all.
+      xy_goal_tolerance: 0.05
       yaw_goal_tolerance: 0.25
     FollowPath:
       plugin: "nav2_mppi_controller::MPPIController"

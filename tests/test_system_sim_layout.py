@@ -709,6 +709,11 @@ def test_frozen_nav2_parameters_stay_inside_upstream_tb3_limits():
     assert controller_server["progress_checker"][
         "required_movement_radius"
     ] < controller_server["general_goal_checker"]["xy_goal_tolerance"]
+    assert controller_server["general_goal_checker"][
+        "xy_goal_tolerance"
+    ] <= nav2["global_costmap"]["global_costmap"]["ros__parameters"][
+        "resolution"
+    ]
     assert policy["sstg_policy"]["ros__parameters"]["robot_radius_m"] == (
         unknown_completion["shared_policy"]["robot_radius_m"]
     )
