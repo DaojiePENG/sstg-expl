@@ -737,6 +737,33 @@ def test_action_trace_classifies_cancellations_by_origin():
     assert snapshot["navigation_technical_failure_count"] == 3
 
 
+def test_action_trace_classifies_policy_distance_budget_cancel_as_expected():
+    actions = ActionTraceAccumulator()
+    actions.ingest(_record("execution", {
+        "decision_id": 1,
+        "succeeded": False,
+        "reason": "nav2_status_5:distance_budget",
+        "translation_m": 1.0,
+        "rotation_deg": 0.0,
+        "path": [[0.0, 0.0], [1.0, 0.0]],
+        "nav2_status": 5,
+        "cancel_origin": "adapter_session_termination",
+        "termination_reason": "distance_budget",
+        "topological_node_eligibility": "ineligible_action_outcome",
+        "topological_node_trigger": None,
+        "topological_node_event_id": None,
+    }))
+
+    snapshot = actions.snapshot()
+    assert snapshot["navigation_failure_count"] == 1
+    assert snapshot["navigation_canceled_count"] == 1
+    assert snapshot["navigation_upstream_cancel_count"] == 0
+    assert snapshot["navigation_adapter_cancel_count"] == 1
+    assert snapshot["navigation_non_cancel_failure_count"] == 0
+    assert snapshot["navigation_policy_transition_count"] == 0
+    assert snapshot["navigation_technical_failure_count"] == 0
+
+
 def test_action_trace_legacy_failure_without_cancel_fields_is_non_cancel():
     actions = ActionTraceAccumulator()
     actions.ingest(_record("execution", {

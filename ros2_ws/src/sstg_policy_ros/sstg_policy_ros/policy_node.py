@@ -36,6 +36,14 @@ from .conversions import (
 from .readiness import LifecycleActiveGate, ReadinessResult
 
 
+_BUDGET_TERMINATION_REASONS = frozenset({
+    "action_budget",
+    "distance_budget",
+    "time_budget",
+})
+_SESSION_TERMINATION_CANCEL_ORIGIN = "adapter_session_termination"
+
+
 def _validated_policy_budget(
     values: dict[str, Any],
 ) -> dict[str, float | int]:
@@ -65,6 +73,27 @@ def _validated_policy_budget(
     if normalized["goal_timeout_s"] > normalized["max_duration_s"]:
         raise ValueError("goal_timeout_s must not exceed max_duration_s")
     return normalized
+
+
+def _navigation_result_metadata(
+    nav2_status: Optional[int],
+    termination_reason: Optional[str],
+) -> dict[str, Any]:
+    """Describe a Nav2 result using the shared action-trace contract."""
+    normalized_status = None if nav2_status is None else int(nav2_status)
+    metadata: dict[str, Any] = {
+        "nav2_status": normalized_status,
+        "cancel_origin": None,
+    }
+    if (
+        normalized_status == GoalStatus.STATUS_CANCELED
+        and termination_reason in _BUDGET_TERMINATION_REASONS
+    ):
+        metadata.update({
+            "cancel_origin": _SESSION_TERMINATION_CANCEL_ORIGIN,
+            "termination_reason": termination_reason,
+        })
+    return metadata
 
 
 def _jsonable(value: Any) -> Any:
@@ -551,16 +580,28 @@ class SSTGPolicyNode(Node):
         result_future.add_done_callback(self._goal_result_callback)
 
     def _goal_result_callback(self, future) -> None:
+        nav2_status = None
         try:
             wrapped = future.result()
-            succeeded = wrapped.status == GoalStatus.STATUS_SUCCEEDED
-            reason = f"nav2_status_{wrapped.status}"
+            nav2_status = int(wrapped.status)
+            succeeded = nav2_status == GoalStatus.STATUS_SUCCEEDED
+            reason = f"nav2_status_{nav2_status}"
         except Exception as error:  # rclpy action transport failure
             succeeded = False
             reason = f"result_transport_error:{error}"
-        self._finish_navigation(succeeded, reason)
+        self._finish_navigation(
+            succeeded,
+            reason,
+            nav2_status=nav2_status,
+        )
 
-    def _finish_navigation(self, succeeded: bool, reason: str) -> None:
+    def _finish_navigation(
+        self,
+        succeeded: bool,
+        reason: str,
+        *,
+        nav2_status: Optional[int] = None,
+    ) -> None:
         pose = self._lookup_pose()
         execution_pose = self._lookup_pose(self.execution_frame)
         if (
@@ -576,6 +617,15 @@ class SSTGPolicyNode(Node):
         if self.session is None or self.session.pending_decision is None:
             self._append_trace("orphan_navigation_result", {"reason": reason})
         else:
+            result_metadata = _navigation_result_metadata(
+                nav2_status,
+                self.termination_requested_reason,
+            )
+            termination_reason = result_metadata.get("termination_reason")
+            trace_reason = (
+                f"{reason}:{termination_reason}"
+                if termination_reason is not None else reason
+            )
             decision_id = self.session.pending_decision.decision_id
             record = self.session.record_execution(
                 decision_id,
@@ -583,9 +633,11 @@ class SSTGPolicyNode(Node):
                 pose,
                 executed_path=self.execution_path,
                 executed_path_frame=self.execution_frame,
-                reason=reason,
+                reason=trace_reason,
             )
-            self._append_trace("execution", record.to_dict())
+            payload = record.to_dict()
+            payload.update(result_metadata)
+            self._append_trace("execution", payload)
         self.busy = False
         self.goal_handle = None
         self.goal_started = None
