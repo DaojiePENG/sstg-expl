@@ -1,5 +1,5 @@
 schema: sstg_system_sim_schedule_freeze/v2
-study_id: gazebo_unknown_completion_office_v1_20260802
+study_id: gazebo_unknown_completion_office_v2_20260802
 backend: gazebo_harmonic
 eligibility:
   evidence_tier: development
@@ -38,7 +38,7 @@ design:
   replicate_seeds:
   - 311
   start_policy: first
-  run_output_root: system_sim_outputs/unknown_completion/runs/gazebo_unknown_completion_office_v1_20260802
+  run_output_root: system_sim_outputs/unknown_completion/runs/gazebo_unknown_completion_office_v2_20260802
   block_count: 1
   methods_per_block: 5
   scheduled_run_count: 5
@@ -228,9 +228,9 @@ budget_provenance:
   source: shared_stack
   development_overrides: {}
 source:
-  repository_commit: 95d1bebedcfc43e8c68e060298029eb4e42dfbc1
+  repository_commit: 4b758e9ef8a1fbac456fcc459706311edfffa805
   repository_dirty: false
-  source_tree_sha256: 804aefbbad9252bd346042fe69810ef91c07da40eb6a6a9dbae15890f62e23ab
+  source_tree_sha256: 6605daff9b3624f597f3fd9d7d70718198622d73017c05408743bd6bd03b9681
   source_paths:
   - src
   - ros2_ws/src
@@ -244,7 +244,7 @@ source:
   runner_tool_sha256: a215ee698fcbb9ff1ab16ad5b066c8e6a743c61214a94edfd10162be7e92aeca
   tree_hash_algorithm: sha256(path-length || path || file-sha256)/v1
 inputs:
-  study_config_sha256: f54df54bad8242eba71af362fc8700bb9965425aae9e1f1df65e72abe599d7c7
+  study_config_sha256: 158857b298738667a55755b84586888f3e9de0d791b9e5019a7ef807cc94f3f9
   world_registry:
     path: experiments/system_sim/registries/worlds.yaml
     sha256: d4e3109a228ce52b6b834e863eecdffe058c60eb2f664eda0c3384ca866795eb
@@ -521,7 +521,7 @@ launch:
     truth_to_map_yaw_rad: truth_to_map_yaw_rad
 outputs:
   run_schedule: run_schedule.csv
-  run_schedule_sha256: 67e4f2f3a452640fcd9210825caabec77da68f10174c88bc05515340eda25151
+  run_schedule_sha256: ae8276798d3997fbab2ae0a63d976fe2ccdb496f9d0bef951337ca64829bfe08
 execution:
   simulator_invoked: false
   status: not_started
