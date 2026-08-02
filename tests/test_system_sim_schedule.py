@@ -2451,6 +2451,73 @@ def test_artifact_audit_rejects_child_crash_but_allows_coordinated_sigint(
     )
 
 
+def test_artifact_audit_allows_known_parameter_bridge_shutdown_race(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    subprocess.run(
+        [sys.executable, "-c", _artifact_writer_program(), str(output), "exit"],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    (output / "launch.log").write_text(
+        f"{SUPERVISOR_SHUTDOWN_BEGIN}\n"
+        "[parameter_bridge-6] terminate called after throwing an instance of "
+        "'std::system_error'\n"
+        "[parameter_bridge-6]   what():  Invalid argument\n"
+        "[ERROR] [parameter_bridge-6]: process has died "
+        "[pid 11, exit code -6, cmd parameter_bridge]\n"
+        f"{SUPERVISOR_SHUTDOWN_END}SIGINT,SIGTERM\n",
+        encoding="utf-8",
+    )
+
+    audit = validate_completed_artifacts(output)
+
+    assert audit["valid"] is True
+    assert audit["completion_checks"]["launch_log_clean"] is True
+
+
+@pytest.mark.parametrize(
+    "log_body",
+    [
+        (
+            "[parameter_bridge-6] terminate called after throwing an instance "
+            "of 'std::system_error'\n"
+            "[parameter_bridge-6]   what():  Invalid argument\n"
+            "[ERROR] [parameter_bridge-6]: process has died "
+            "[pid 11, exit code -6, cmd parameter_bridge]\n"
+        ),
+        (
+            f"{SUPERVISOR_SHUTDOWN_BEGIN}\n"
+            "[parameter_bridge-6] terminate called after throwing an instance "
+            "of 'std::system_error'\n"
+            "[parameter_bridge-6]   what():  Operation not permitted\n"
+            "[ERROR] [parameter_bridge-6]: process has died "
+            "[pid 11, exit code -6, cmd parameter_bridge]\n"
+            f"{SUPERVISOR_SHUTDOWN_END}SIGINT,SIGTERM\n"
+        ),
+    ],
+)
+def test_artifact_audit_rejects_bridge_abort_outside_exact_shutdown_race(
+    tmp_path: Path,
+    log_body: str,
+) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    subprocess.run(
+        [sys.executable, "-c", _artifact_writer_program(), str(output), "exit"],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    (output / "launch.log").write_text(log_body, encoding="utf-8")
+
+    audit = validate_completed_artifacts(output)
+
+    assert audit["valid"] is False
+    assert audit["completion_checks"]["launch_log_clean"] is False
+
+
 def test_artifact_audit_rejects_required_process_clean_exit_before_shutdown(
     tmp_path: Path,
 ) -> None:

@@ -151,6 +151,10 @@ FATAL_LAUNCH_MARKERS = (
     "double free or corruption",
     "terminate called after throwing",
 )
+SHUTDOWN_BRIDGE_EXCEPTION_PATTERN = re.compile(
+    r"\[(?P<process>parameter_bridge-\d+)\] "
+    r"terminate called after throwing an instance of 'std::system_error'"
+)
 SUPERVISOR_SHUTDOWN_BEGIN = "[sstg-runner] coordinated shutdown begin"
 SUPERVISOR_SHUTDOWN_END = "[sstg-runner] coordinated shutdown complete signals="
 COMMON_RUNTIME_PROCESS_PREFIXES = (
@@ -219,6 +223,45 @@ def _shutdown_log_window(
     return begin[0], end[0], allowed_codes, []
 
 
+def _known_shutdown_bridge_race_lines(
+    lines: Sequence[str],
+    *,
+    shutdown_begin: int | None,
+    shutdown_end: int | None,
+) -> tuple[set[int], set[int]]:
+    """Identify the narrow ros_gz_bridge shutdown race seen after SIGINT.
+
+    Jazzy's parameter bridge can throw ``std::system_error(Invalid argument)``
+    while its executor is being torn down.  This is acceptable only inside a
+    runner-owned shutdown window and only when the same bridge subsequently
+    exits with SIGABRT.  Runtime occurrences remain fatal.
+    """
+    if shutdown_begin is None or shutdown_end is None:
+        return set(), set()
+    ignored_markers: set[int] = set()
+    ignored_deaths: set[int] = set()
+    for index in range(shutdown_begin + 1, shutdown_end):
+        match = SHUTDOWN_BRIDGE_EXCEPTION_PATTERN.search(lines[index])
+        if match is None:
+            continue
+        process = match.group("process")
+        has_invalid_argument = any(
+            f"[{process}]   what():  Invalid argument" in lines[probe]
+            for probe in range(index + 1, shutdown_end)
+        )
+        death_indexes = [
+            probe
+            for probe in range(index + 1, shutdown_end)
+            if (death := PROCESS_DIED_PATTERN.search(lines[probe])) is not None
+            and death.group("process") == process
+            and int(death.group("code")) == -int(signal.SIGABRT)
+        ]
+        if has_invalid_argument and death_indexes:
+            ignored_markers.add(index)
+            ignored_deaths.add(death_indexes[0])
+    return ignored_markers, ignored_deaths
+
+
 def _launch_log_runtime_errors(
     path: Path, expected_runtime_adapter: str | None = None
 ) -> list[str]:
@@ -247,6 +290,13 @@ def _launch_log_runtime_errors(
     shutdown_begin, shutdown_end, allowed_codes, detected = _shutdown_log_window(
         lines
     )
+    ignored_fatal_markers, ignored_bridge_deaths = (
+        _known_shutdown_bridge_race_lines(
+            lines,
+            shutdown_begin=shutdown_begin,
+            shutdown_end=shutdown_end,
+        )
+    )
     if expected_runtime_adapter is not None:
         started_processes = {
             match.group("process")
@@ -262,10 +312,10 @@ def _launch_log_runtime_errors(
                 detected.append(
                     "required adapter process did not start: " + prefix
                 )
-    for marker in FATAL_LAUNCH_MARKERS:
-        if marker in content:
-            detected.append(f"fatal runtime marker: {marker}")
     for index, line in enumerate(lines):
+        for marker in FATAL_LAUNCH_MARKERS:
+            if marker in line and index not in ignored_fatal_markers:
+                detected.append(f"fatal runtime marker: {marker}")
         finished = PROCESS_FINISHED_PATTERN.search(line)
         if (
             finished is not None
@@ -283,6 +333,8 @@ def _launch_log_runtime_errors(
             continue
         process = match.group("process")
         code = int(match.group("code"))
+        if index in ignored_bridge_deaths:
+            continue
         if (
             shutdown_begin is not None
             and shutdown_end is not None
