@@ -210,8 +210,8 @@ def static_checks():
     ).read_text(encoding="utf-8"))
     controller = nav2["controller_server"]["ros__parameters"]["FollowPath"]
     if (
-        controller["vx_max"] > robot["max_linear_velocity_mps"]
-        or controller["wz_max"] > robot["max_angular_velocity_radps"]
+        controller["max_linear_vel"] > robot["max_linear_velocity_mps"]
+        or controller["max_angular_vel"] > robot["max_angular_velocity_radps"]
     ):
         errors.append("Nav2 controller exceeds robot velocity limits")
     return {"ok": not errors, "parsed": parsed, "errors": errors}

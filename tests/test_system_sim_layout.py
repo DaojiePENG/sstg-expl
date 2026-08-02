@@ -28,6 +28,7 @@ from ros2_ws.src.sstg_gazebo.sstg_gazebo.instrumented_tb3 import (
 )
 from scripts.generate_gazebo_scene_world import generate as generate_scene_world
 from scripts.generate_gazebo_truth_map import collision_boxes, rasterize
+from scripts.preflight_system_sim import static_checks
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -742,6 +743,12 @@ def test_frozen_nav2_parameters_stay_inside_upstream_tb3_limits():
     assert policy["sstg_policy"]["ros__parameters"]["robot_radius_m"] == (
         unknown_completion["shared_policy"]["robot_radius_m"]
     )
+
+
+def test_system_sim_static_preflight_accepts_rpp_controller_keys():
+    result = static_checks()
+
+    assert result["ok"], result["errors"]
 
 
 def test_system_sim_budget_matches_policy_and_is_required_by_launch():
