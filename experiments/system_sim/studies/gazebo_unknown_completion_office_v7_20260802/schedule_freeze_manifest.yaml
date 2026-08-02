@@ -1,5 +1,5 @@
 schema: sstg_system_sim_schedule_freeze/v2
-study_id: gazebo_unknown_completion_office_v6_20260802
+study_id: gazebo_unknown_completion_office_v7_20260802
 backend: gazebo_harmonic
 eligibility:
   evidence_tier: development
@@ -38,7 +38,7 @@ design:
   replicate_seeds:
   - 311
   start_policy: first
-  run_output_root: system_sim_outputs/unknown_completion/runs/gazebo_unknown_completion_office_v6_20260802
+  run_output_root: system_sim_outputs/unknown_completion/runs/gazebo_unknown_completion_office_v7_20260802
   block_count: 1
   methods_per_block: 5
   scheduled_run_count: 5
@@ -225,16 +225,12 @@ experiment_budget:
   max_decisions: 80
   goal_timeout_s: 180.0
 budget_provenance:
-  source: development_override
-  development_overrides:
-    max_duration_s: 1800.0
-    max_distance_m: 300.0
-    max_decisions: 80
-    goal_timeout_s: 180.0
+  source: shared_stack
+  development_overrides: {}
 source:
-  repository_commit: cd04e9a8344e06ed17125397f202a2b0361510ec
+  repository_commit: 857762b5a8a52f969184d5b4f1defa1309dfbd9f
   repository_dirty: false
-  source_tree_sha256: 1c7fa9c28661287279a26ba7c541300601118921d61dca3a14b119b838c6a24c
+  source_tree_sha256: a1d91fde7773daa88cd8985106f717ad867bce051ed9f4ba19b8187fbc2cb5a1
   source_paths:
   - src
   - ros2_ws/src
@@ -244,13 +240,13 @@ source:
   runner_tool_sha256: a215ee698fcbb9ff1ab16ad5b066c8e6a743c61214a94edfd10162be7e92aeca
   tree_hash_algorithm: sha256(path-length || path || file-sha256)/v1
 inputs:
-  study_config_sha256: 7efb3f7d5b8f8fc3592cb2adb55557b6597a3c283a34d4123ce4d3b2e7d8d1fe
+  study_config_sha256: 63e13a557cb33f710958865620bf39b0a6e4a8590b9e0c6fe50789b758135c95
   world_registry:
     path: experiments/system_sim/registries/worlds.yaml
     sha256: d4e3109a228ce52b6b834e863eecdffe058c60eb2f664eda0c3384ca866795eb
   shared_stack:
     path: experiments/system_sim/configs/shared_stack.yaml
-    sha256: 0a6724eb1d1d06e99438afc7144949a92d3b770c2ad5bc3fb3f58b2f77f4ee21
+    sha256: 86de532ff5d979c456406e97e2710109192f084e8b5f10c51ac9d25acd2ea7b9
     freeze_status: development
     seed_contract:
       seed_source: replicate_seed
@@ -428,8 +424,8 @@ inputs:
         role: descriptive_only
       formal_threshold_policy: externally_anchor_and_freeze_before_test_split_or_report_none
     experiment_budget:
-      max_duration_s: 900.0
-      max_distance_m: 150.0
+      max_duration_s: 1800.0
+      max_distance_m: 300.0
       max_decisions: 80
       goal_timeout_s: 180.0
   condition:
@@ -521,7 +517,7 @@ launch:
     truth_to_map_yaw_rad: truth_to_map_yaw_rad
 outputs:
   run_schedule: run_schedule.csv
-  run_schedule_sha256: 69bdf68412e7f300bd68aabf1e674bafbc780f601c5e057b4083d0e1b2c17254
+  run_schedule_sha256: 83f7115b9e81f1423913543e9c795083787ac8504383e6fff1280b89b85232cc
 execution:
   simulator_invoked: false
   status: not_started
