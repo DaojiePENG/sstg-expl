@@ -25,6 +25,8 @@ embodied_execution_adaptation:
   applies_to_all_methods: true
   truth_or_ate_access: false
   rationale: avoid_retrying_neighboring_boundary_goals_after_physical_navigation_failure
+  sstg_native_topological_margin: map_resolution_m / topological_radius_m
+  sstg_native_topological_margin_truth_access: false
 
 evaluator_contract:
   truth_access: true
@@ -110,7 +112,7 @@ methods:
     strategy: sstg
     config: experiments/system_sim/configs/methods/sstg.yaml
     procedural_algorithm: sstg
-    native_termination_rule: no_reachable_informative_frontier_and_known_topological_target_met
+    native_termination_rule: no_reachable_informative_frontier_and_known_topological_target_plus_one_cell_margin_met
 
 ans_checkpoint:
   path: models/checkpoints/ans_global_policy.pt

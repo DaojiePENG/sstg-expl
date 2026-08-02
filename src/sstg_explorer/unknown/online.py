@@ -43,6 +43,7 @@ class OnlineDecision:
     known_topological_coverage: float
     native_termination_rule: str
     native_completion_trigger: Optional[str]
+    native_completion_topological_threshold: Optional[float]
     exhaustion_confirmation: int
     exhaustion_confirmations_required: int
     decision_time_ms: float
@@ -89,7 +90,7 @@ class OnlineExplorerSession:
         "ans": "no_ans_guided_candidate_above_information_or_topological_gain",
         "sstg": (
             "no_reachable_informative_frontier_and_"
-            "known_topological_target_met"
+            "known_topological_target_plus_one_cell_margin_met"
         ),
     }
 
@@ -161,6 +162,7 @@ class OnlineExplorerSession:
         self,
         active: Sequence[Dict],
         known_topological_coverage: float,
+        belief_resolution: float,
     ) -> bool:
         """Apply SSTG's belief-only native stopping condition.
 
@@ -173,9 +175,8 @@ class OnlineExplorerSession:
         """
         if self.config.strategy != "sstg":
             return False
-        if (
-            known_topological_coverage + 1e-12
-            < self.config.target_topological_coverage
+        if known_topological_coverage + 1e-12 < (
+            self._sstg_native_topological_threshold(belief_resolution)
         ):
             return False
         return not any(
@@ -183,6 +184,16 @@ class OnlineExplorerSession:
             and int(candidate.get("predicted_gain", 0))
             >= self.config.min_gain_cells
             for candidate in active
+        )
+
+    def _sstg_native_topological_threshold(
+        self, belief_resolution: float
+    ) -> float:
+        """Add one normalized map cell of conservative belief-side margin."""
+        return min(
+            1.0,
+            self.config.target_topological_coverage
+            + float(belief_resolution) / self.config.topological_radius,
         )
 
     def propose(
@@ -241,7 +252,9 @@ class OnlineExplorerSession:
         )
 
         native_completion_trigger: Optional[str] = None
-        if self._sstg_frontier_topology_converged(active, known_topology):
+        if self._sstg_frontier_topology_converged(
+            active, known_topology, belief.resolution
+        ):
             selected = None
             native_completion_trigger = "sstg_frontier_topology_convergence"
         elif selected is None:
@@ -306,6 +319,10 @@ class OnlineExplorerSession:
                 self.config.strategy
             ],
             native_completion_trigger=native_completion_trigger,
+            native_completion_topological_threshold=(
+                self._sstg_native_topological_threshold(belief.resolution)
+                if self.config.strategy == "sstg" else None
+            ),
             exhaustion_confirmation=self._exhaustion_confirmation,
             exhaustion_confirmations_required=(
                 self.config.online_exhaustion_confirmations

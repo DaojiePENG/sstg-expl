@@ -220,6 +220,9 @@ def test_sstg_native_completion_skips_topology_only_tail():
     assert first.native_completion_trigger == (
         "sstg_frontier_topology_convergence"
     )
+    assert first.native_completion_topological_threshold == pytest.approx(
+        0.06
+    )
     assert first.active_candidates
     assert not any(
         candidate["kind"] == "frontier"
