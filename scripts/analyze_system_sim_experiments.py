@@ -131,7 +131,9 @@ METRICS = (
     ("mean_clearance_m", "mean_clearance_m"),
     ("minimum_clearance_m", "minimum_clearance_m"),
     ("clearance_q05_m", "clearance_q05_m"),
+    ("ate_mean_m", "ate_mean_m"),
     ("ate_rmse_m", "ate_rmse_m"),
+    ("ate_max_m", "ate_max_m"),
 )
 AGGREGATE_FIELDS = (
     "condition",
@@ -975,6 +977,9 @@ def analyze_study(
         "study_id": study_id,
         "evidence_source": "system_simulation",
         "formal_result_eligible": freeze_formal,
+        "localization_reporting_contract": freeze.get(
+            "localization_reporting_contract"
+        ),
         "definitions": {
             "task_completed": (
                 "runner status terminal_completed with artifact-valid final "
@@ -989,6 +994,13 @@ def analyze_study(
             "target_recall_proxy": "deterministic evaluator geometry proxy",
             "continuous_metric_policy": (
                 "use observed last snapshot for failed runs; never impute missing values"
+            ),
+            "localization_analysis_population": (
+                "all scheduled runs; localization quality never excludes a run"
+            ),
+            "localization_comparison_role": (
+                "ATE mean/RMSE/maximum are continuous secondary outcomes and "
+                "are not post-treatment adjustment covariates"
             ),
         },
         "bootstrap": {

@@ -13,6 +13,7 @@ from scripts.analyze_system_sim_experiments import (
     AnalysisError,
     analyze_study,
 )
+from scripts.generate_system_sim_schedule import LOCALIZATION_REPORTING_CONTRACT
 
 
 def _sha(path: Path) -> str:
@@ -245,6 +246,7 @@ def _fixture_project(tmp_path: Path) -> dict[str, object]:
             "evidence_tier": "development",
             "formal_result_eligible": False,
         },
+        "localization_reporting_contract": LOCALIZATION_REPORTING_CONTRACT,
         "outputs": {
             "run_schedule": "run_schedule.csv",
             "run_schedule_sha256": schedule_sha,
@@ -386,6 +388,15 @@ def test_analysis_retains_all_runs_and_separates_success_constructs(
     assert sstg["task_completion_n_runs"] == "3"
     assert sstg["collision_free_n_runs"] == "2"
     assert sstg["minimum_clearance_m_n_runs"] == "1"
+    assert sstg["ate_mean_m_n_runs"] == "1"
+    assert sstg["ate_rmse_m_n_runs"] == "1"
+    assert sstg["ate_max_m_n_runs"] == "1"
+    assert manifest["localization_reporting_contract"] == (
+        LOCALIZATION_REPORTING_CONTRACT
+    )
+    assert "never excludes" in manifest["definitions"][
+        "localization_analysis_population"
+    ]
     table = (output / "system_sim_main_table.tex").read_text(encoding="utf-8")
     assert "Task completion" in table
     assert "dual-threshold success" in table

@@ -21,6 +21,7 @@ from scripts.generate_system_sim_schedule import (
     CORE_BAG_REQUIRED_TOPICS_BY_RUNTIME_ADAPTER,
     CORE_BAG_TOPIC_TYPES,
     CORE_BAG_TOPICS,
+    LOCALIZATION_REPORTING_CONTRACT,
     ROS_GZ_BRIDGE_CONTRACT,
     ROS_MIDDLEWARE_CONTRACT,
     ScheduleError,
@@ -70,6 +71,7 @@ RECORDING_CONTRACT = {
         )
     },
 }
+LOCALIZATION_CONTRACT = dict(LOCALIZATION_REPORTING_CONTRACT)
 
 
 def _write_yaml(path: Path, value: dict) -> None:
@@ -160,6 +162,7 @@ def _fixture_project(tmp_path: Path) -> dict[str, object]:
                 "seed_valid_range_inclusive": [1, 0x7FFFFFFF],
             },
             "recording": RECORDING_CONTRACT,
+            "localization_reporting": LOCALIZATION_CONTRACT,
             "experiment_budget": EXPERIMENT_BUDGET,
             "freeze_status": "development",
         },
@@ -321,6 +324,12 @@ def test_schedule_is_matched_block_deterministic_and_hashed(tmp_path: Path) -> N
     assert manifest_a["inputs"]["shared_stack"]["recording_contract"] == (
         manifest_a["recording_contract"]
     )
+    assert manifest_a["localization_reporting_contract"] == (
+        LOCALIZATION_CONTRACT
+    )
+    assert manifest_a["inputs"]["shared_stack"][
+        "localization_reporting_contract"
+    ] == LOCALIZATION_CONTRACT
     assert manifest_a["launch"]["fixed_arguments"]["record_bag"] == "true"
     assert manifest_a["experiment_budget"] == EXPERIMENT_BUDGET
     assert manifest_a["budget_provenance"] == {
@@ -724,6 +733,38 @@ def test_shared_stack_recording_contract_is_required_and_fail_closed(
 
     with pytest.raises(ScheduleError, match=message):
         _freeze(project, "invalid_recording_contract")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        {},
+        {
+            **LOCALIZATION_CONTRACT,
+            "localization_based_run_exclusion": True,
+        },
+        {
+            **LOCALIZATION_CONTRACT,
+            "map_to_odom_diagnostic": {
+                **LOCALIZATION_CONTRACT["map_to_odom_diagnostic"],
+                "threshold_m": 0.5,
+            },
+        },
+    ],
+)
+def test_localization_reporting_contract_is_required_and_fail_closed(
+    tmp_path: Path, value: object
+) -> None:
+    project = _fixture_project(tmp_path)
+    shared_path = project["shared"]
+    assert isinstance(shared_path, Path)
+    shared = yaml.safe_load(shared_path.read_text(encoding="utf-8"))
+    shared["localization_reporting"] = value
+    _write_yaml(shared_path, shared)
+
+    with pytest.raises(ScheduleError, match="localization"):
+        _freeze(project, "invalid_localization_contract")
 
 
 def test_development_budget_override_is_explicit_and_formal_override_is_refused(

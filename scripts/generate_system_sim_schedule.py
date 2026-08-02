@@ -216,6 +216,32 @@ CORE_BAG_REQUIRED_TOPICS_BY_RUNTIME_ADAPTER = {
         "/baseline/frontier_mrtsp_dp/navigate_to_pose/_action/status",
     ),
 }
+LOCALIZATION_REPORTING_CONTRACT = {
+    "schema": "sstg_system_sim_localization_reporting/v1",
+    "evidence_source": "evaluator_ground_truth_ate",
+    "continuous_metrics": ["ate_mean_m", "ate_rmse_m", "ate_max_m"],
+    "analysis_population": "all_scheduled_runs",
+    "missing_data_policy": "retain_as_missing_without_imputation",
+    "localization_based_run_exclusion": False,
+    "method_comparison_role": "secondary_outcome_not_adjustment_covariate",
+    "paired_reporting_keys": [
+        "world_id",
+        "start_id",
+        "condition",
+        "replicate_seed",
+    ],
+    "map_to_odom_diagnostic": {
+        "source_topic": "/tf",
+        "parent_frame": "map",
+        "child_frame": "odom",
+        "statistic": "largest_adjacent_translation_correction_m",
+        "threshold_m": None,
+        "role": "descriptive_only",
+    },
+    "formal_threshold_policy": (
+        "externally_anchor_and_freeze_before_test_split_or_report_none"
+    ),
+}
 CSV_FIELDS = (
     "schema",
     "study_id",
@@ -391,6 +417,17 @@ def validate_recording_contract(
             expected_required_by_adapter
         ),
     }
+
+
+def validate_localization_reporting_contract(
+    value: Any, *, label: str = "shared_stack.localization_reporting"
+) -> dict[str, Any]:
+    """Freeze continuous localization reporting without post-hoc exclusion."""
+    if not isinstance(value, Mapping):
+        raise ScheduleError(f"{label} must be a mapping")
+    if dict(value) != LOCALIZATION_REPORTING_CONTRACT:
+        raise ScheduleError(f"{label} must match the frozen localization contract")
+    return deepcopy(LOCALIZATION_REPORTING_CONTRACT)
 
 
 def validate_experiment_budget(
@@ -963,6 +1000,11 @@ def freeze_schedule(
     recording_contract = validate_recording_contract(
         shared_stack.get("recording")
     )
+    localization_reporting_contract = (
+        validate_localization_reporting_contract(
+            shared_stack.get("localization_reporting")
+        )
+    )
     experiment_budget, applied_budget_overrides = _effective_experiment_budget(
         shared_stack, evidence_tier, budget_overrides
     )
@@ -1232,6 +1274,7 @@ def freeze_schedule(
         "ros_gz_bridge_contract": ros_gz_bridge_contract,
         "ros_middleware_contract": ros_middleware_contract,
         "recording_contract": recording_contract,
+        "localization_reporting_contract": localization_reporting_contract,
         "experiment_budget": experiment_budget,
         "budget_provenance": {
             "source": (
@@ -1272,6 +1315,11 @@ def freeze_schedule(
                 ),
                 "recording_contract": validate_recording_contract(
                     shared_stack.get("recording")
+                ),
+                "localization_reporting_contract": (
+                    validate_localization_reporting_contract(
+                        shared_stack.get("localization_reporting")
+                    )
                 ),
                 "experiment_budget": validate_experiment_budget(
                     shared_stack.get("experiment_budget"),

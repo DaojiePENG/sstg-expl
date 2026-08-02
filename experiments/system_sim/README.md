@@ -316,6 +316,24 @@ Missing clearance, ATE, contact, target-proxy, or other evaluator fields remain
 NA and are counted in the analysis manifest; they are never replaced with
 zeros or inferred from another metric.
 
+The frozen localization contract retains every scheduled run and aggregates
+ATE mean, RMSE and maximum as continuous secondary outcomes.  It forbids
+localization-based exclusion and post-treatment adjustment of coverage.  A
+recorded `map -> odom` jump can additionally be inspected without defining a
+post-hoc threshold:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source ros2_ws/install/setup.bash
+python3 scripts/plot_system_sim_localization_diagnostics.py \
+  --run method_a=system_sim_outputs/runs/<study_id>/<schedule_a> \
+  --run method_b=system_sim_outputs/runs/<study_id>/<schedule_b> \
+  --output-dir system_sim_outputs/reports/<study_id>/localization
+```
+
+The command writes a hashed JSON report, manifest and four-panel PNG directly
+under the separate system-simulation report tree.
+
 For a descriptive same-seed development audit, compare two terminal-completed
 runs directly:
 

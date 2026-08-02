@@ -109,6 +109,32 @@ repeatability tolerance is declared from the observed pair after the fact.
 The descriptive CSV, JSON and figure are under
 `system_sim_outputs/reports/gazebo_stage0_repeatability_20260801/`.
 
+## Localization-quality reporting amendment
+
+The one-seed paired office development pilot exposed a large SSTG
+`map -> odom` correction.  This observation is retained as an end-to-end
+outcome, but it is not used to fit a localization pass/fail threshold.  Before
+the next multi-family schedule, the following prospective reporting contract
+is frozen in `configs/shared_stack.yaml`:
+
+1. Every scheduled run remains in the analysis population.  Localization
+   quality can never be used to delete or relabel a completed run.
+2. ATE mean, RMSE and maximum are reported as continuous secondary outcomes,
+   including method aggregates and their missing-value counts.  Missing values
+   remain missing and are not imputed.
+3. Matched interpretation uses the already frozen world, start, condition and
+   replicate-seed keys.  Coverage and ATE are shown together, but ATE is not a
+   post-treatment adjustment covariate for a method effect.
+4. The largest adjacent recorded `map -> odom` translation correction may be
+   reported from `/tf` as a descriptive diagnostic.  Development analysis has
+   no threshold and this statistic cannot trigger run exclusion.
+5. Any future formal localization threshold must be anchored independently and
+   frozen before the test split is opened; otherwise no thresholded claim will
+   be made.
+
+This amendment is prospective for subsequent schedules.  It does not rewrite
+the paired-office raw trace, evaluator snapshot or derived CSV.
+
 ## Reuse and baseline identity gate
 
 The upstream registry and integration rules are frozen in

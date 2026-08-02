@@ -190,6 +190,30 @@ recording:
       - /navigate_to_pose/_action/status
       - /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/feedback
       - /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/status
+localization_reporting:
+  schema: sstg_system_sim_localization_reporting/v1
+  evidence_source: evaluator_ground_truth_ate
+  continuous_metrics:
+    - ate_mean_m
+    - ate_rmse_m
+    - ate_max_m
+  analysis_population: all_scheduled_runs
+  missing_data_policy: retain_as_missing_without_imputation
+  localization_based_run_exclusion: false
+  method_comparison_role: secondary_outcome_not_adjustment_covariate
+  paired_reporting_keys:
+    - world_id
+    - start_id
+    - condition
+    - replicate_seed
+  map_to_odom_diagnostic:
+    source_topic: /tf
+    parent_frame: map
+    child_frame: odom
+    statistic: largest_adjacent_translation_correction_m
+    threshold_m: null
+    role: descriptive_only
+  formal_threshold_policy: externally_anchor_and_freeze_before_test_split_or_report_none
 shared_autonomy:
   mapping: slam_toolbox_async
   navigation: nav2
