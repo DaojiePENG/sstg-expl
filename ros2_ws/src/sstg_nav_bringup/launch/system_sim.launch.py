@@ -231,6 +231,7 @@ def generate_launch_description():
             PathJoinSubstitution([output_dir, "bags", "core"]),
             "--disable-keyboard-controls",
             "--use-sim-time",
+            "--include-hidden-topics",
             "--node-name",
             "sstg_core_bag_recorder",
             "--topics",

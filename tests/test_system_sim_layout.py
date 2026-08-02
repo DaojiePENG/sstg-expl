@@ -756,7 +756,10 @@ def test_method_configs_distinguish_internal_and_public_runtime_origins():
     assert external["policy_seed_applicable"] is False
 
 
-def test_core_rosbag_profile_matches_shared_stack_and_is_enabled():
+def test_core_rosbag_profile_matches_shared_stack_and_is_enabled(monkeypatch):
+    from launch import LaunchContext
+    from launch.utilities import perform_substitutions
+
     shared = yaml.safe_load((
         ROOT / "experiments/system_sim/configs/shared_stack.yaml"
     ).read_text(encoding="utf-8"))
@@ -768,6 +771,12 @@ def test_core_rosbag_profile_matches_shared_stack_and_is_enabled():
     dependencies = {node.text for node in package.findall("exec_depend")}
     recording = shared["recording"]
 
+    monkeypatch.setattr(
+        module,
+        "get_package_share_directory",
+        lambda package_name: f"/tmp/{package_name}",
+    )
+
     assert recording["enabled"] is True
     assert recording["storage_id"] == module.CORE_BAG_STORAGE_ID
     assert recording["storage_preset_profile"] == module.CORE_BAG_STORAGE_PRESET
@@ -777,6 +786,31 @@ def test_core_rosbag_profile_matches_shared_stack_and_is_enabled():
     assert 'name="sstg_core_bag_recorder"' in launch
     assert 'PathJoinSubstitution([output_dir, "bags", "core"])' in launch
     assert {"rosbag2", "rosbag2_storage_mcap"}.issubset(dependencies)
+
+    context = LaunchContext()
+    context.launch_configurations["output_dir"] = "/tmp/system_sim_test"
+    recorder_commands = [
+        [perform_substitutions(context, argument) for argument in entity.cmd]
+        for entity in module.generate_launch_description().entities
+        if type(entity).__name__ == "ExecuteProcess"
+    ]
+    assert len(recorder_commands) == 1
+    command = recorder_commands[0]
+    topics_index = command.index("--topics")
+    assert command[topics_index + 1:] == recording["topics"]
+
+    hidden_action_topics = [
+        topic for topic in recording["topics"] if "/_action/" in topic
+    ]
+    assert hidden_action_topics == [
+        "/navigate_to_pose/_action/feedback",
+        "/navigate_to_pose/_action/status",
+        "/baseline/frontier_mrtsp_dp/navigate_to_pose/_action/feedback",
+        "/baseline/frontier_mrtsp_dp/navigate_to_pose/_action/status",
+    ]
+    assert command.count("--include-hidden-topics") == 1
+    assert command.index("--include-hidden-topics") < topics_index
+
 
 def test_development_registry_has_four_distinct_generated_scene_families():
     registry = yaml.safe_load((
