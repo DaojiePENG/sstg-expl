@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import json
 import math
 from pathlib import Path
+import sys
 import threading
 from typing import Any, Optional
 
@@ -31,6 +32,7 @@ from rclpy.action import (
 )
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.duration import Duration
+from rclpy.exceptions import InvalidHandle
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -49,6 +51,34 @@ UPSTREAM_TAG = "v1.6.1"
 UPSTREAM_COMMIT = "b0fad500e5c81ad3154f0469ca283b2702a3f90c"
 ALGORITHM_IDENTITY = "wfd_decision_map_mrtsp_bounded_horizon_dp_with_preemption"
 TOPOLOGICAL_VISIT_CONTRACT = "policy_transition_node_v1"
+
+
+def _shutdown_executor_and_retrieve_tasks(
+    executor: MultiThreadedExecutor,
+) -> list[BaseException]:
+    """Join Jazzy executor workers and consume their terminal exceptions.
+
+    The pinned Jazzy executor can leave its last submitted callback tasks in
+    ``_futures`` when the ROS context is invalidated by SIGINT.  If those tasks
+    encounter an already-destroying ROS handle, rclpy otherwise reports their
+    expected shutdown exception later from ``Future.__del__`` as an unhandled
+    error.  Join the worker pool before destroying this node and retrieve every
+    completed task exception.  InvalidHandle is expected only at this external
+    context-shutdown boundary; other callback errors remain visible to callers.
+    """
+    executor.shutdown()
+    worker_pool = getattr(executor, "_executor", None)
+    if worker_pool is not None:
+        worker_pool.shutdown(wait=True)
+
+    unexpected: list[BaseException] = []
+    for future in list(getattr(executor, "_futures", ())):
+        if not future.done():
+            continue
+        error = future.exception()
+        if error is not None and not isinstance(error, InvalidHandle):
+            unexpected.append(error)
+    return unexpected
 
 
 def _yaw_from_quaternion(rotation: Any) -> float:
@@ -1529,7 +1559,12 @@ def main(args=None) -> None:
         pass
     finally:
         if executor is not None:
-            executor.shutdown()
+            for error in _shutdown_executor_and_retrieve_tasks(executor):
+                print(
+                    "frontier_action_adapter callback failed during shutdown: "
+                    f"{error}",
+                    file=sys.stderr,
+                )
         if node is not None:
             node.destroy_node()
         if rclpy.ok():

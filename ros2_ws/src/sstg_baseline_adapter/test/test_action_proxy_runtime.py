@@ -32,6 +32,7 @@ import rclpy
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.context import Context
+from rclpy.exceptions import InvalidHandle
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
@@ -40,7 +41,58 @@ from rosgraph_msgs.msg import Clock
 from std_msgs.msg import Empty
 from tf2_ros import TransformBroadcaster
 
-from sstg_baseline_adapter.frontier_action_adapter import FrontierActionAdapter
+from sstg_baseline_adapter.frontier_action_adapter import (
+    FrontierActionAdapter,
+    _shutdown_executor_and_retrieve_tasks,
+)
+
+
+class _ShutdownFuture:
+    def __init__(self, error=None, *, done=True):
+        self.error = error
+        self.done_value = done
+        self.exception_retrieved = False
+
+    def done(self):
+        return self.done_value
+
+    def exception(self):
+        self.exception_retrieved = True
+        return self.error
+
+
+class _ShutdownWorkerPool:
+    def __init__(self):
+        self.wait = None
+
+    def shutdown(self, *, wait):
+        self.wait = wait
+
+
+class _ShutdownExecutor:
+    def __init__(self, futures):
+        self.shutdown_called = False
+        self._executor = _ShutdownWorkerPool()
+        self._futures = futures
+
+    def shutdown(self):
+        self.shutdown_called = True
+
+
+def test_shutdown_retrieves_expected_invalid_handle_and_reports_other_errors():
+    invalid = _ShutdownFuture(InvalidHandle("destroying ROS handle"))
+    unexpected = _ShutdownFuture(RuntimeError("callback defect"))
+    pending = _ShutdownFuture(done=False)
+    executor = _ShutdownExecutor([invalid, unexpected, pending])
+
+    errors = _shutdown_executor_and_retrieve_tasks(executor)
+
+    assert executor.shutdown_called is True
+    assert executor._executor.wait is True
+    assert invalid.exception_retrieved is True
+    assert unexpected.exception_retrieved is True
+    assert pending.exception_retrieved is False
+    assert errors == [unexpected.error]
 
 
 def _wait_until(predicate, timeout_s=8.0, description="condition"):
