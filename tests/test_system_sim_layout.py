@@ -711,6 +711,9 @@ def test_frozen_nav2_parameters_stay_inside_upstream_tb3_limits():
     assert controller["use_rotate_to_heading"] is True
     assert controller["stateful"] is True
     assert controller["use_collision_detection"] is False
+    collision_monitor = nav2["collision_monitor"]["ros__parameters"]
+    assert collision_monitor["FootprintApproach"]["enabled"] is False
+    assert collision_monitor["scan"]["enabled"] is False
     progress_checker = controller_server["progress_checker"]
     goal_checker = controller_server["general_goal_checker"]
     assert progress_checker["plugin"] == "nav2_controller::PoseProgressChecker"

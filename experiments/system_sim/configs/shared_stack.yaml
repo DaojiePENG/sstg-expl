@@ -224,7 +224,9 @@ shared_autonomy:
     applies_equally_to_all_methods: true
     symmetric_corridor_retained_as_stress_test: true
   navigation: nav2
-  local_controller: nav2_regulated_pure_pursuit_shared_safety_v2
+  local_controller: nav2_regulated_pure_pursuit_core_v3
+  core_collision_contract: policy_footprint_and_nav2_costmaps_only
+  predictive_collision_monitor_role: disabled_in_core_enable_only_as_safety_ablation
   nav2_params: ros2_ws/src/sstg_nav_bringup/config/nav2_params.yaml
   slam_params: ros2_ws/src/sstg_nav_bringup/config/slam_toolbox.yaml
 experiment_budget:
