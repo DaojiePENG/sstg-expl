@@ -48,6 +48,8 @@ SSTG 的 ROS2 复现保留了纯算法阶段的“少动作、高覆盖过程效
 
 所有方法的真值接触计数均为 0。SSTG 和 ANS 各有 3 次、RRT 有 1 次 Nav2 失败；失败目标集中在 belief clearance 恰好为 0.40 m 的边界视点，换到其他区域后均恢复，没有演化成机器人卡死或连续全局失败。下一步应在五方法共享执行层加入“失败目标空间邻域屏蔽”，不能给 SSTG 单独加真值或 ATE 安全过滤。
 
+Post-study follow-up：共享的 0.80 m 失败目标邻域记忆已在 `ad8874d` 实现，纯算法默认仍为 0，ROS/真机适配层五方法统一启用。它没有回写或重算本页冻结结果；独立验证见 [SSTG failure-memory probe](../gazebo_unknown_completion_sstg_failure_memory_probe_20260802/RESULTS.md)。
+
 定位只作描述性诊断，不参与核心排名。五方法最终 ATE RMSE 为 0.041--0.090 m，最大 ATE 为 0.105--0.200 m，最大相邻 `map -> odom` 平移修正为 0.171--0.215 m。当前轨迹中未观察到此前那种破坏导航连续性的灾难性跳变，但没有事后设置通过阈值。
 
 ## 5. 与纯算法 unknown-completion 的对应关系
