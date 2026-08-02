@@ -230,7 +230,8 @@ shared_autonomy:
 experiment_budget:
   max_duration_s: 900.0
   max_distance_m: 150.0
-  max_decisions: 100
+  # Sole primary protocol now follows the procedural unknown benchmark.
+  max_decisions: 80
   goal_timeout_s: 180.0
 freeze_status: development
 confirmatory_warning: Calibrate and freeze this development profile before Stage 3.
