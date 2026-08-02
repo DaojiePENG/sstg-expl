@@ -690,10 +690,13 @@ def test_frozen_nav2_parameters_stay_inside_upstream_tb3_limits():
     smoother = nav2["velocity_smoother"]["ros__parameters"]
     robot = shared["robot"]
 
-    assert controller["vx_max"] <= robot["max_linear_velocity_mps"]
-    assert controller["wz_max"] <= robot["max_angular_velocity_radps"]
-    assert controller["ax_max"] <= robot["max_linear_acceleration_mps2"]
-    assert controller["az_max"] <= robot["max_angular_acceleration_radps2"]
+    assert controller["plugin"] == (
+        "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+    )
+    assert controller["max_linear_vel"] <= robot["max_linear_velocity_mps"]
+    assert controller["max_angular_vel"] <= robot["max_angular_velocity_radps"]
+    assert controller["max_linear_accel"] <= robot["max_linear_acceleration_mps2"]
+    assert controller["max_angular_accel"] <= robot["max_angular_acceleration_radps2"]
     assert smoother["max_velocity"] == [0.4, 0.0, 1.1]
     assert smoother["max_accel"] == [0.6, 0.0, 1.8]
     assert smoother["max_decel"] == [-0.6, 0.0, -1.8]
@@ -705,10 +708,17 @@ def test_frozen_nav2_parameters_stay_inside_upstream_tb3_limits():
     assert nav2["local_costmap"]["local_costmap"]["ros__parameters"][
         "robot_radius"
     ] == footprint["radius_m"]
-    assert controller["CostCritic"]["consider_footprint"] is False
-    assert controller_server["progress_checker"][
-        "required_movement_radius"
-    ] < controller_server["general_goal_checker"]["xy_goal_tolerance"]
+    assert controller["use_rotate_to_heading"] is True
+    assert controller["stateful"] is True
+    progress_checker = controller_server["progress_checker"]
+    goal_checker = controller_server["general_goal_checker"]
+    assert progress_checker["plugin"] == "nav2_controller::PoseProgressChecker"
+    assert progress_checker["required_movement_radius"] < goal_checker[
+        "xy_goal_tolerance"
+    ]
+    assert progress_checker["required_movement_angle"] < goal_checker[
+        "yaw_goal_tolerance"
+    ]
     assert controller_server["general_goal_checker"][
         "xy_goal_tolerance"
     ] <= nav2["global_costmap"]["global_costmap"]["ros__parameters"][
