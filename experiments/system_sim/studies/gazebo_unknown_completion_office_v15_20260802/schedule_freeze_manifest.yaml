@@ -1,5 +1,5 @@
 schema: sstg_system_sim_schedule_freeze/v2
-study_id: gazebo_unknown_completion_office_v14_20260802
+study_id: gazebo_unknown_completion_office_v15_20260802
 backend: gazebo_harmonic
 eligibility:
   evidence_tier: development
@@ -19,7 +19,6 @@ eligibility:
   - method_not_frozen:sstg:frozen_from_procedural_benchmark_for_development
   - world_not_test_split:dev_office_01:development
   - world_not_formal_eligible:dev_office_01
-  - source_paths_dirty
 design:
   matching_unit:
   - world_id
@@ -39,7 +38,7 @@ design:
   replicate_seeds:
   - 311
   start_policy: first
-  run_output_root: system_sim_outputs/unknown_completion/runs/gazebo_unknown_completion_office_v14_20260802
+  run_output_root: system_sim_outputs/unknown_completion/runs/gazebo_unknown_completion_office_v15_20260802
   block_count: 1
   methods_per_block: 5
   scheduled_run_count: 5
@@ -233,8 +232,8 @@ budget_provenance:
     max_decisions: 80
     goal_timeout_s: 180.0
 source:
-  repository_commit: 7eb4eceb75ebe7723d3e0b367446c2ab0bed5808
-  repository_dirty: true
+  repository_commit: 68b4d5ce3cda6103ac3d45b7d8d020dc40100c22
+  repository_dirty: false
   source_tree_sha256: 41730bd4cc1aaa10df3079d17a87d1defed4fceba4364885992db1e1d75b0fc9
   source_paths:
   - src
@@ -242,10 +241,10 @@ source:
   tool_path: scripts/generate_system_sim_schedule.py
   tool_sha256: 84c22e8b4050fb39f4b510a3a37f6e21d0f294c356124c52f85a1608589da0c9
   runner_tool_path: scripts/run_system_sim_schedule.py
-  runner_tool_sha256: a215ee698fcbb9ff1ab16ad5b066c8e6a743c61214a94edfd10162be7e92aeca
+  runner_tool_sha256: 606c197bd35c6647a6ae1a808b72e55116c124b47359aa5059c2e9a9713afc6c
   tree_hash_algorithm: sha256(path-length || path || file-sha256)/v1
 inputs:
-  study_config_sha256: 79e5b26ac16930d7b94d2397cf5daf42cf3af905fbf35aa82f0964d1944786da
+  study_config_sha256: 71002969cc276da5c6b4ae269539ad28fd45498d63f826caf4a3e19a92637b0d
   world_registry:
     path: experiments/system_sim/registries/worlds.yaml
     sha256: d4e3109a228ce52b6b834e863eecdffe058c60eb2f664eda0c3384ca866795eb
@@ -522,7 +521,7 @@ launch:
     truth_to_map_yaw_rad: truth_to_map_yaw_rad
 outputs:
   run_schedule: run_schedule.csv
-  run_schedule_sha256: 495f62925088ed1e20b4b6c88ef3e7da73164e60f4b2c1adf00b64f249a015c0
+  run_schedule_sha256: 9cf96ae61093a30da721740ebc892f1550dba6d48ce771ded80584a59918f0d5
 execution:
   simulator_invoked: false
   status: not_started
