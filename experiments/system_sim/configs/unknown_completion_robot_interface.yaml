@@ -1,0 +1,70 @@
+schema: sstg_unknown_completion_robot_interface/v1
+interface_id: ros2_mobile_robot_drop_in_v1
+acceptance_rule: replacing_drivers_and_optional_topic_frame_remaps_must_not_change_exploration_code
+
+required_inputs:
+  - topic: /scan
+    type: sensor_msgs/msg/LaserScan
+    producer: lidar_driver
+    consumer: slam_toolbox
+  - topic: /imu
+    type: sensor_msgs/msg/Imu
+    producer: imu_driver
+    consumer: base_odometry_or_robot_localization_and_recorder
+  - topic: /odom
+    type: nav_msgs/msg/Odometry
+    producer: base_driver_or_robot_localization
+    consumer: nav2_and_recorder
+  - topic: /joint_states
+    type: sensor_msgs/msg/JointState
+    producer: base_driver
+    consumer: robot_state_publisher_and_recorder
+
+required_transforms:
+  - transform: odom_to_base_footprint
+    producer: base_driver_or_robot_localization
+  - transform: base_footprint_to_sensor_frames
+    producer: robot_state_publisher
+  - transform: map_to_odom
+    producer: slam_toolbox
+
+required_output:
+  topic: /cmd_vel
+  type: geometry_msgs/msg/Twist
+  producer: nav2
+  consumer: differential_drive_base_driver
+
+policy_boundary:
+  map_topic: /map
+  map_type: nav_msgs/msg/OccupancyGrid
+  pose_transform: map_to_base_footprint
+  navigation_action: /navigate_to_pose
+  navigation_type: nav2_msgs/action/NavigateToPose
+  direct_scan_access: false
+  direct_imu_access: false
+  direct_cmd_vel_access: false
+
+driver_replacement_only:
+  gazebo_producers: [gazebo_lidar, gazebo_imu, gazebo_diff_drive]
+  real_producers: [real_lidar_driver, real_imu_driver, real_base_driver]
+  unchanged_components: [slam_toolbox, nav2, sstg_policy_ros, unknown_completion_protocol, rosbag2]
+
+odometry_options:
+  preferred: base_driver_publishes_standard_fused_odom_and_tf
+  optional_open_source_fusion: robot_localization
+  rule: exactly_one_component_publishes_odom_to_base_footprint
+
+canonical_frames:
+  map: map
+  odom: odom
+  base: base_footprint
+  lidar: base_scan
+  imu: imu_link
+
+real_robot_launch:
+  package: sstg_nav_bringup
+  file: unknown_completion_robot.launch.py
+  launches_drivers: false
+  launches_gazebo: false
+  launches_truth_evaluator: false
+  output_root: real_robot_outputs/unknown_completion

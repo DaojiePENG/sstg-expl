@@ -2,7 +2,7 @@
 <package format="3">
   <name>sstg_nav_bringup</name>
   <version>0.1.0</version>
-  <description>Shared SLAM, Nav2 and SSTG system-simulation bring-up.</description>
+  <description>Shared SLAM, Nav2 and SSTG simulation/real-robot bring-up.</description>
   <maintainer email="maintainer@example.invalid">SSTG Team</maintainer>
   <license>LicenseRef-Proprietary-Until-Project-License-Is-Frozen</license>
 

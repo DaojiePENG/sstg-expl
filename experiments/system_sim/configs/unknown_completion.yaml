@@ -99,3 +99,8 @@ outputs:
   root: system_sim_outputs/unknown_completion
   never_write_to: outputs
   required_media: [numbered_map_png, coverage_curve_png, decision_frames, mp4, rosbag2]
+
+real_robot_transfer:
+  interface_contract: experiments/system_sim/configs/unknown_completion_robot_interface.yaml
+  replacement_scope: lidar_imu_base_drivers_and_optional_topic_frame_remaps_only
+  exploration_code_changes_allowed: false
