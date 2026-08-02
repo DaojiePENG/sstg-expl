@@ -64,6 +64,7 @@ class ExecutionRecord:
     path_frame: str
     translation_m: float
     rotation_deg: float
+    failure_neighborhood_recorded: bool
     topological_node_created: bool
     topological_node_id: Optional[int]
 
@@ -286,8 +287,14 @@ class OnlineExplorerSession:
         executed_path: Optional[Sequence[Point2D]] = None,
         reason: str = "navigation_result",
         executed_path_frame: str = "map",
+        suppress_failed_target: bool = True,
     ) -> ExecutionRecord:
-        """Record a navigation outcome and update the online topology."""
+        """Record a navigation outcome and update execution-aware memory.
+
+        ``suppress_failed_target`` must be false for transport/rejection errors
+        and adapter-owned cancellations: those events do not establish that the
+        commanded spatial neighborhood is physically difficult to reach.
+        """
         if self._pending is None or self._pending.decision_id != decision_id:
             raise ValueError("decision_id does not match the pending decision")
         decision = self._pending
@@ -330,6 +337,15 @@ class OnlineExplorerSession:
         # remains explicitly visible in ``execution_records``.
         if execution_key:
             self.policy._executed_candidate_keys.add(execution_key)
+        failure_neighborhood_recorded = bool(
+            not succeeded
+            and suppress_failed_target
+            and self.config.failed_goal_suppression_radius > 0.0
+        )
+        if failure_neighborhood_recorded:
+            self.policy._failed_goal_positions.append(
+                tuple(map(float, decision.target_pose[:2]))
+            )
 
         # Physical execution cost is incurred even when Nav2 ultimately
         # aborts or a goal is canceled.  Keeping only successful travel would
@@ -379,6 +395,7 @@ class OnlineExplorerSession:
             path_frame=path_frame,
             translation_m=translation,
             rotation_deg=rotation,
+            failure_neighborhood_recorded=failure_neighborhood_recorded,
             topological_node_created=node_created,
             topological_node_id=node_id,
         )
@@ -406,6 +423,13 @@ class OnlineExplorerSession:
             "successful_executions": sum(
                 record.succeeded for record in self.execution_records
             ),
+            "failed_goal_suppression_radius_m": (
+                self.config.failed_goal_suppression_radius
+            ),
+            "failed_goal_neighborhoods": [
+                list(position)
+                for position in self.policy._failed_goal_positions
+            ],
             "total_distance_m": self.total_distance_m,
             "total_rotation_deg": self.total_rotation_deg,
             "nodes": [dict(node) for node in self.nodes],

@@ -19,6 +19,13 @@ policy_contract:
     reset_on_any_new_valid_candidate: true
     truth_coverage_used: false
 
+embodied_execution_adaptation:
+  failed_goal_suppression_radius_m: 0.80
+  trigger: nav2_aborted_or_non_adapter_canceled_result
+  applies_to_all_methods: true
+  truth_or_ate_access: false
+  rationale: avoid_retrying_neighboring_boundary_goals_after_physical_navigation_failure
+
 evaluator_contract:
   truth_access: true
   truth_changes_policy_decisions: false

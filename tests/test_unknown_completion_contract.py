@@ -52,6 +52,7 @@ def test_ros_policy_matches_shared_procedural_algorithm_config():
     shared = protocol["shared_policy"]
     sensor = protocol["sensor_adaptation"]
     fail_safes = protocol["fail_safes"]
+    execution_adaptation = protocol["embodied_execution_adaptation"]
     ros = _yaml(POLICY_PATH)["sstg_policy"]["ros__parameters"]
 
     field_map = {
@@ -92,6 +93,11 @@ def test_ros_policy_matches_shared_procedural_algorithm_config():
     for name in ("max_decisions", "max_distance_m", "max_duration_s", "goal_timeout_s"):
         assert ros[name] == fail_safes[name]
     assert ros["ans_checkpoint"] == protocol["ans_checkpoint"]["path"]
+    assert ros["failed_goal_suppression_radius_m"] == execution_adaptation[
+        "failed_goal_suppression_radius_m"
+    ]
+    assert execution_adaptation["applies_to_all_methods"] is True
+    assert execution_adaptation["truth_or_ate_access"] is False
 
 
 def test_protocol_constructs_the_same_shared_explorer_configuration():

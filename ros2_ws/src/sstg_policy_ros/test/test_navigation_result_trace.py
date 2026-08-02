@@ -6,6 +6,7 @@ from action_msgs.msg import GoalStatus
 from sstg_policy_ros.policy_node import (
     SSTGPolicyNode,
     _navigation_result_metadata,
+    _records_failed_goal_neighborhood,
 )
 
 
@@ -47,6 +48,22 @@ def test_only_canceled_budget_result_is_attributed_to_session_termination(
         "nav2_status": nav2_status,
         "cancel_origin": None,
     }
+
+
+def test_only_physical_navigation_results_record_failure_neighborhood():
+    assert _records_failed_goal_neighborhood(
+        GoalStatus.STATUS_ABORTED, None
+    )
+    assert _records_failed_goal_neighborhood(
+        GoalStatus.STATUS_CANCELED, None
+    )
+    assert not _records_failed_goal_neighborhood(
+        GoalStatus.STATUS_CANCELED, "adapter_session_termination"
+    )
+    assert not _records_failed_goal_neighborhood(None, None)
+    assert not _records_failed_goal_neighborhood(
+        GoalStatus.STATUS_SUCCEEDED, None
+    )
 
 
 def test_goal_result_callback_forwards_nav2_terminal_status():
@@ -123,6 +140,7 @@ def test_finish_navigation_emits_distance_budget_cancel_causality():
     )
 
     assert recorded[0][3]["reason"] == "nav2_status_5:distance_budget"
+    assert recorded[0][3]["suppress_failed_target"] is False
     execution = next(
         payload for event, payload in traces if event == "execution"
     )

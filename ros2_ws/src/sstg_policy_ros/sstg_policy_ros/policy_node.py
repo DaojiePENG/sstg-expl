@@ -96,6 +96,20 @@ def _navigation_result_metadata(
     return metadata
 
 
+def _records_failed_goal_neighborhood(
+    nav2_status: Optional[int],
+    cancel_origin: Optional[str],
+) -> bool:
+    """Return whether a terminal result is evidence about target reachability."""
+    return (
+        cancel_origin is None
+        and nav2_status in (
+            GoalStatus.STATUS_ABORTED,
+            GoalStatus.STATUS_CANCELED,
+        )
+    )
+
+
 def _jsonable(value: Any) -> Any:
     """Convert trace content to strict JSON without hiding non-finite values."""
     if isinstance(value, dict):
@@ -229,6 +243,7 @@ class SSTGPolicyNode(Node):
             "robot_radius_m": 0.24,
             "safety_margin_m": 0.0,
             "minimum_goal_clearance_m": 0.40,
+            "failed_goal_suppression_radius_m": 0.80,
             "preferred_clearance_m": 0.5,
             "target_spacing_m": 2.0,
             "information_gain_weight": 0.40,
@@ -300,6 +315,11 @@ class SSTGPolicyNode(Node):
             ),
             minimum_goal_clearance=float(
                 self.get_parameter("minimum_goal_clearance_m").value
+            ),
+            failed_goal_suppression_radius=float(
+                self.get_parameter(
+                    "failed_goal_suppression_radius_m"
+                ).value
             ),
             preferred_clearance=float(
                 self.get_parameter("preferred_clearance_m").value
@@ -667,6 +687,10 @@ class SSTGPolicyNode(Node):
                 executed_path=self.execution_path,
                 executed_path_frame=self.execution_frame,
                 reason=trace_reason,
+                suppress_failed_target=_records_failed_goal_neighborhood(
+                    nav2_status,
+                    result_metadata.get("cancel_origin"),
+                ),
             )
             payload = record.to_dict()
             payload.update(result_metadata)

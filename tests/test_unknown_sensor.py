@@ -124,6 +124,10 @@ def test_gazebo_sstg_utility_weights_are_explicit_and_validated():
         UnknownExplorerConfig(travel_cost_weight=-0.1)
     with np.testing.assert_raises_regex(ValueError, "minimum_goal_clearance"):
         UnknownExplorerConfig(minimum_goal_clearance=-0.1)
+    with np.testing.assert_raises_regex(
+        ValueError, "failed_goal_suppression_radius"
+    ):
+        UnknownExplorerConfig(failed_goal_suppression_radius=-0.1)
 
 
 def test_joint_objective_continues_after_long_range_sensor_saturates():

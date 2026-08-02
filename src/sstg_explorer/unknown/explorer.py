@@ -45,6 +45,10 @@ class UnknownExplorerConfig:
     robot_radius: float = 0.3
     safety_margin: float = 0.0
     minimum_goal_clearance: float = 0.0
+    # Embodied runtimes may set this above zero to avoid retrying neighboring
+    # goals after Nav2 reports a physical navigation failure.  The procedural
+    # benchmark leaves it at zero because its grid executor has no such result.
+    failed_goal_suppression_radius: float = 0.0
     preferred_clearance: float = 0.5
     target_spacing: float = 2.0
     scan_interval: float = 1.0
@@ -95,6 +99,10 @@ class UnknownExplorerConfig:
             raise ValueError("clearance and travel-cost weights must be non-negative")
         if self.minimum_goal_clearance < 0.0:
             raise ValueError("minimum_goal_clearance must be non-negative")
+        if self.failed_goal_suppression_radius < 0.0:
+            raise ValueError(
+                "failed_goal_suppression_radius must be non-negative"
+            )
 
 
 class UnknownMapExplorer:
@@ -135,6 +143,7 @@ class UnknownMapExplorer:
         self._next_candidate_id = 0
         self._previous_candidate_keys = set()
         self._executed_candidate_keys = set()
+        self._failed_goal_positions: List[Tuple[float, float]] = []
         self._ans = None
         self._previous_known_mask = None
         self._previous_known_origin = None
@@ -837,6 +846,30 @@ class UnknownMapExplorer:
                 candidate["status"] = "pruned_executed"
                 traced.append(candidate)
                 continue
+            if (
+                self.config.failed_goal_suppression_radius > 0.0
+                and self._failed_goal_positions
+            ):
+                target_x, target_y = candidate["target"]
+                nearest_failed_distance = min(
+                    math.hypot(
+                        float(target_x) - failed_x,
+                        float(target_y) - failed_y,
+                    )
+                    for failed_x, failed_y in self._failed_goal_positions
+                )
+                candidate["nearest_failed_goal_distance_m"] = float(
+                    nearest_failed_distance
+                )
+                if (
+                    nearest_failed_distance
+                    <= self.config.failed_goal_suppression_radius + 1e-9
+                ):
+                    candidate["status"] = (
+                        "pruned_navigation_failure_neighborhood"
+                    )
+                    traced.append(candidate)
+                    continue
             if index not in shortlist:
                 candidate["status"] = "pruned_evaluation_budget"
                 traced.append(candidate)
@@ -1126,6 +1159,7 @@ class UnknownMapExplorer:
         self._next_candidate_id = 0
         self._previous_candidate_keys = set()
         self._executed_candidate_keys = set()
+        self._failed_goal_positions = []
         self._previous_known_mask = None
         self._previous_known_origin = None
         self._previous_known_resolution = None

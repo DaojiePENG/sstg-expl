@@ -19,7 +19,7 @@ def _known_room(size=100, resolution=0.1):
     return OccupancyGrid(data, resolution, (0.0, 0.0))
 
 
-def _session(start=(5.0, 5.0, 0.0)):
+def _session(start=(5.0, 5.0, 0.0), **config_overrides):
     return OnlineExplorerSession(
         UnknownExplorerConfig(
             strategy="sstg",
@@ -29,6 +29,7 @@ def _session(start=(5.0, 5.0, 0.0)):
             topological_radius=2.0,
             max_decisions=20,
             seed=7,
+            **config_overrides,
         ),
         start,
     )
@@ -125,6 +126,46 @@ def test_failed_goal_still_counts_actual_execution_cost():
     assert summary["total_distance_m"] == pytest.approx(0.5)
     assert summary["total_rotation_deg"] == pytest.approx(30.0)
     assert len(summary["nodes"]) == 1
+
+
+def test_failed_goal_suppresses_neighboring_embodied_targets():
+    session = _session(failed_goal_suppression_radius=20.0)
+    belief = _known_room()
+    failed = session.propose(belief, map_revision=1)
+
+    record = session.record_execution(
+        failed.decision_id,
+        succeeded=False,
+        reached_pose=failed.current_pose,
+        reason="controller_aborted",
+    )
+    next_decision = session.propose(belief, map_revision=2)
+
+    assert record.failure_neighborhood_recorded
+    assert session.summary()["failed_goal_neighborhoods"] == [
+        list(failed.target_pose[:2])
+    ]
+    assert any(
+        candidate["status"] == "pruned_navigation_failure_neighborhood"
+        for candidate in next_decision.generated_candidates
+    )
+    assert not next_decision.active_candidates
+
+
+def test_adapter_cancel_does_not_poison_failed_goal_neighborhood():
+    session = _session(failed_goal_suppression_radius=0.8)
+    decision = session.propose(_known_room())
+
+    record = session.record_execution(
+        decision.decision_id,
+        succeeded=False,
+        reached_pose=decision.current_pose,
+        reason="nav2_status_5:distance_budget",
+        suppress_failed_target=False,
+    )
+
+    assert not record.failure_neighborhood_recorded
+    assert session.summary()["failed_goal_neighborhoods"] == []
 
 
 def test_execution_path_in_odom_is_not_mixed_with_map_endpoints():
