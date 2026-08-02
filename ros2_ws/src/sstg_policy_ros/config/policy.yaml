@@ -23,8 +23,8 @@ sstg_policy:
     lidar_range_m: 20.0
     lidar_angular_resolution_deg: 1.0
     # Policy-side known-safe planning matches the procedural benchmark.
-    # Nav2/evaluator keep the physical 0.24 m padded footprint separately.
-    robot_radius_m: 0.30
+    # Keep policy reachability identical to Nav2's padded physical footprint.
+    robot_radius_m: 0.24
     safety_margin_m: 0.0
     preferred_clearance_m: 0.5
     target_spacing_m: 2.0

@@ -226,7 +226,7 @@ class SSTGPolicyNode(Node):
             "lidar_fov_deg": 360.0,
             "lidar_range_m": 20.0,
             "lidar_angular_resolution_deg": 1.0,
-            "robot_radius_m": 0.30,
+            "robot_radius_m": 0.24,
             "safety_margin_m": 0.0,
             "preferred_clearance_m": 0.5,
             "target_spacing_m": 2.0,

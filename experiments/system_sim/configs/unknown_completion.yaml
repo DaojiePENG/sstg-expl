@@ -54,7 +54,11 @@ shared_policy:
   target_topological_coverage: 0.95
   information_gain_weight: 0.40
   topological_gain_weight: 0.60
-  robot_radius_m: 0.30
+  # Match Nav2's 0.22 m footprint plus 0.02 m padding exactly.  A larger
+  # policy-only radius can split a narrow passage that the physical/Nav2
+  # footprint can traverse and falsely turn low topological coverage into
+  # candidate exhaustion after a map update.
+  robot_radius_m: 0.24
   safety_margin_m: 0.0
   preferred_clearance_m: 0.50
   target_spacing_m: 2.0
