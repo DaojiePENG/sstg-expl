@@ -11,6 +11,9 @@ frontier_explorer:
     completion_event_enabled: true
     completion_event_topic: /baseline/frontier_mrtsp_dp/exploration_complete
     return_to_start_on_complete: false
+    # Freeze suppression off so upstream cancellations remain attributable to
+    # normal reveal/close-enough/reselection policy transitions.
+    frontier_suppression_enabled: false
 
 frontier_baseline_adapter:
   ros__parameters:

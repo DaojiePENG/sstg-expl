@@ -48,6 +48,7 @@ UPSTREAM_REPOSITORY = "https://github.com/mertgulerx/frontier_exploration_ros2"
 UPSTREAM_TAG = "v1.6.1"
 UPSTREAM_COMMIT = "b0fad500e5c81ad3154f0469ca283b2702a3f90c"
 ALGORITHM_IDENTITY = "wfd_decision_map_mrtsp_bounded_horizon_dp_with_preemption"
+TOPOLOGICAL_VISIT_CONTRACT = "policy_transition_node_v1"
 
 
 def _yaw_from_quaternion(rotation: Any) -> float:
@@ -91,6 +92,9 @@ class ForwardedGoal:
     downstream_goal: Any = None
     downstream_status: Optional[int] = None
     downstream_result: Any = None
+    terminal_result_ros_time_ns: Optional[int] = None
+    terminal_execution_pose: Optional[list[float]] = None
+    terminal_map_pose: Optional[list[float]] = None
     transport_error: str = ""
     cancel_sent: bool = False
     cancel_origin: Optional[str] = None
@@ -102,6 +106,17 @@ class ForwardedGoal:
     local_terminal_forced: bool = False
     timeout_requested: bool = False
     superseded_by_decision_id: Optional[int] = None
+    policy_transition_trigger: Optional[str] = None
+    policy_transition_ros_time_ns: Optional[int] = None
+    policy_transition_execution_pose: Optional[list[float]] = None
+    policy_transition_map_pose: Optional[list[float]] = None
+    topological_node_event_id: Optional[str] = None
+    topological_node_event_emitted: bool = False
+    topological_node_created: bool = False
+    topological_node_id: Optional[int] = None
+    topological_node_pose: Optional[list[float]] = None
+    topological_node_trigger: Optional[str] = None
+    topological_node_nearest_distance_m: Optional[float] = None
     distance_accounted: bool = False
     completed: bool = False
     result_event: threading.Event = field(default_factory=threading.Event)
@@ -389,6 +404,7 @@ class FrontierActionAdapter(Node):
             ),
             "runtime_adapter": "frontier_mrtsp_dp_external",
             "adapter_contract": "navigate_to_pose_transparent_proxy_v1",
+            "topological_visit_contract": TOPOLOGICAL_VISIT_CONTRACT,
             "upstream": {
                 "component_id": UPSTREAM_COMPONENT_ID,
                 "repository": UPSTREAM_REPOSITORY,
@@ -429,6 +445,7 @@ class FrontierActionAdapter(Node):
             "state": state,
             "detail": detail,
             "runtime_adapter": "navigate_to_pose_transparent_proxy_v1",
+            "topological_visit_contract": TOPOLOGICAL_VISIT_CONTRACT,
         }, sort_keys=True)
         self.status_publisher.publish(message)
 
@@ -542,6 +559,7 @@ class FrontierActionAdapter(Node):
         self._append_trace("session_started", {
             "method": self.method_id,
             "runtime_adapter": "navigate_to_pose_transparent_proxy_v1",
+            "topological_visit_contract": TOPOLOGICAL_VISIT_CONTRACT,
             "upstream_component_id": UPSTREAM_COMPONENT_ID,
             "nodes": [{"id": 0, "position": initial_pose[:2]}],
             "experiment_budget": {
@@ -598,6 +616,7 @@ class FrontierActionAdapter(Node):
         execution_pose = self._lookup_pose(self.execution_frame)
         map_pose = self._lookup_pose(self.map_frame)
         target = _pose_message_values(goal_handle.request.pose)
+        transition_context = None
         with self._state_lock:
             if self._pending_goal_acceptances <= 0:
                 self.get_logger().error(
@@ -609,10 +628,21 @@ class FrontierActionAdapter(Node):
             decision_id = self._decision_count
             if self._current_goal_key in self._goals:
                 previous = self._goals[self._current_goal_key]
-                if not previous.completed:
+                if (
+                    not previous.completed
+                    and not previous.downstream_result_response_received
+                ):
                     previous.superseded_by_decision_id = decision_id
                     if execution_pose is not None:
                         self._append_path_sample(previous, execution_pose, map_pose)
+                    self._freeze_policy_transition(
+                        previous,
+                        "nav2_native_preemption",
+                        execution_pose=execution_pose,
+                        map_pose=map_pose,
+                        ros_time_ns=self.get_clock().now().nanoseconds,
+                    )
+                    transition_context = previous
             context = ForwardedGoal(
                 key=key,
                 decision_id=decision_id,
@@ -625,6 +655,10 @@ class FrontierActionAdapter(Node):
                 self._append_path_sample(context, execution_pose, map_pose)
             self._goals[key] = context
             self._current_goal_key = key
+        if transition_context is not None:
+            self._commit_policy_transition_node(
+                transition_context, "replacement_goal_accepted"
+            )
         self._append_trace("decision", {
             "decision_id": decision_id,
             "status": "navigate",
@@ -655,6 +689,143 @@ class FrontierActionAdapter(Node):
             mapped = [float(value) for value in map_pose]
             if not context.map_path or context.map_path[-1] != mapped:
                 context.map_path.append(mapped)
+
+    def _freeze_policy_transition(
+        self,
+        context: ForwardedGoal,
+        trigger: str,
+        *,
+        execution_pose: Optional[list[float]] = None,
+        map_pose: Optional[list[float]] = None,
+        ros_time_ns: Optional[int] = None,
+    ) -> None:
+        """Freeze the pose at a policy transition, never at a late result."""
+        with self._state_lock:
+            if context.policy_transition_trigger is not None:
+                return
+        if execution_pose is None:
+            execution_pose = self._lookup_pose(self.execution_frame)
+        if map_pose is None:
+            map_pose = self._lookup_pose(self.map_frame)
+        if ros_time_ns is None:
+            ros_time_ns = self.get_clock().now().nanoseconds
+        with self._state_lock:
+            if context.policy_transition_trigger is not None:
+                return
+            context.policy_transition_trigger = trigger
+            context.policy_transition_ros_time_ns = int(ros_time_ns)
+            if execution_pose is not None:
+                context.policy_transition_execution_pose = list(execution_pose)
+            if map_pose is not None:
+                context.policy_transition_map_pose = list(map_pose)
+            if execution_pose is not None:
+                self._append_path_sample(context, execution_pose, map_pose)
+
+    def _commit_topological_node(
+        self,
+        context: ForwardedGoal,
+        *,
+        trigger: str,
+        pose: Optional[list[float]],
+        causal_ros_time_ns: Optional[int],
+        confirmation: str,
+    ) -> bool:
+        """Emit one causally ordered, evaluator-auditable node event."""
+        if pose is None or causal_ros_time_ns is None:
+            return False
+        with self._state_lock:
+            if context.topological_node_event_id is not None:
+                return context.topological_node_event_emitted
+            merge_distance = float(
+                self.get_parameter("topological_merge_distance_m").value
+            )
+            endpoint = [float(pose[0]), float(pose[1])]
+            nearest_id = min(
+                range(len(self._topological_nodes)),
+                key=lambda index: math.hypot(
+                    endpoint[0] - self._topological_nodes[index][0],
+                    endpoint[1] - self._topological_nodes[index][1],
+                ),
+            )
+            nearest_distance = math.hypot(
+                endpoint[0] - self._topological_nodes[nearest_id][0],
+                endpoint[1] - self._topological_nodes[nearest_id][1],
+            )
+            created = nearest_distance >= merge_distance
+            if created:
+                node_id = len(self._topological_nodes)
+                self._topological_nodes.append(endpoint)
+            else:
+                node_id = nearest_id
+            event_id = (
+                f"decision_{context.decision_id}:{trigger}:"
+                f"{int(causal_ros_time_ns)}"
+            )
+            context.topological_node_event_id = event_id
+            context.topological_node_created = created
+            context.topological_node_id = node_id
+            context.topological_node_pose = endpoint
+            context.topological_node_trigger = trigger
+            context.topological_node_nearest_distance_m = nearest_distance
+            downstream_uuid = (
+                None if context.downstream_goal is None else
+                _uuid_hex(context.downstream_goal.goal_id)
+            )
+            payload = {
+                "event_id": event_id,
+                "decision_id": context.decision_id,
+                "trigger": trigger,
+                "confirmation": confirmation,
+                "causal_ros_time_ns": int(causal_ros_time_ns),
+                "pose": endpoint,
+                "nearest_node_distance_m": nearest_distance,
+                "merge_distance_m": merge_distance,
+                "created": created,
+                "node_id": node_id,
+                "upstream_goal_uuid": _uuid_hex(
+                    context.server_goal.goal_id
+                ),
+                "downstream_goal_uuid": downstream_uuid,
+            }
+            # Keep the state lock through publication so an execution record
+            # can never reference an event that has not yet been emitted.
+            self._append_trace("topological_node", payload)
+            context.topological_node_event_emitted = True
+            return True
+
+    def _commit_policy_transition_node(
+        self, context: ForwardedGoal, confirmation: str
+    ) -> bool:
+        with self._state_lock:
+            trigger = context.policy_transition_trigger
+            pose = context.policy_transition_map_pose
+            causal_ros_time_ns = context.policy_transition_ros_time_ns
+            cancel_origin = context.cancel_origin
+            invalid = (
+                context.local_terminal_forced
+                or context.timeout_requested
+                or bool(context.transport_error)
+                or (
+                    trigger == "upstream_cancel_request"
+                    and cancel_origin != "upstream_cancel_request"
+                )
+                or (
+                    trigger == "nav2_native_preemption"
+                    and context.superseded_by_decision_id is None
+                )
+            )
+        if trigger not in {
+            "upstream_cancel_request",
+            "nav2_native_preemption",
+        } or invalid:
+            return False
+        return self._commit_topological_node(
+            context,
+            trigger=trigger,
+            pose=pose,
+            causal_ros_time_ns=causal_ros_time_ns,
+            confirmation=confirmation,
+        )
 
     def _cancel_callback(self, goal_handle) -> CancelResponse:
         key = bytes(goal_handle.goal_id.uuid)
@@ -824,18 +995,67 @@ class FrontierActionAdapter(Node):
             context = self._goals.get(key)
         if context is None:
             return
+        status = None
+        wrapped_result = None
+        terminal_time_ns = None
+        terminal_execution_pose = None
+        terminal_map_pose = None
+        result_error = None
         try:
             wrapped = future.result()
-            with self._state_lock:
-                context.downstream_status = int(wrapped.status)
-                context.downstream_result = wrapped.result
+            status = int(wrapped.status)
+            wrapped_result = wrapped.result
+            terminal_time_ns = self.get_clock().now().nanoseconds
+            terminal_execution_pose = self._lookup_pose(self.execution_frame)
+            terminal_map_pose = self._lookup_pose(self.map_frame)
         except Exception as error:
-            with self._state_lock:
-                context.transport_error = f"get_result:{error}"
-        finally:
-            with self._state_lock:
-                context.downstream_result_response_received = True
-            context.result_event.set()
+            result_error = f"get_result:{error}"
+        with self._state_lock:
+            if result_error is not None:
+                context.transport_error = result_error
+            else:
+                context.downstream_status = status
+                context.downstream_result = wrapped_result
+                context.terminal_result_ros_time_ns = terminal_time_ns
+                if context.superseded_by_decision_id is not None:
+                    terminal_execution_pose = (
+                        context.policy_transition_execution_pose
+                    )
+                    terminal_map_pose = context.policy_transition_map_pose
+                context.terminal_execution_pose = (
+                    None if terminal_execution_pose is None else
+                    list(terminal_execution_pose)
+                )
+                context.terminal_map_pose = (
+                    None if terminal_map_pose is None else
+                    list(terminal_map_pose)
+                )
+                if (
+                    context.superseded_by_decision_id is None
+                    and terminal_execution_pose is not None
+                ):
+                    self._append_path_sample(
+                        context, terminal_execution_pose, terminal_map_pose
+                    )
+            context.downstream_result_response_received = True
+            completed = context.completed
+        if not completed and status == GoalStatus.STATUS_CANCELED:
+            self._commit_policy_transition_node(
+                context, "downstream_result_canceled"
+            )
+        elif (
+            not completed
+            and status == GoalStatus.STATUS_SUCCEEDED
+            and context.superseded_by_decision_id is None
+        ):
+            self._commit_topological_node(
+                context,
+                trigger="navigation_succeeded",
+                pose=terminal_map_pose,
+                causal_ros_time_ns=terminal_time_ns,
+                confirmation="downstream_result_succeeded",
+            )
+        context.result_event.set()
 
     def _forward_feedback(self, key: bytes, feedback) -> None:
         with self._state_lock:
@@ -856,6 +1076,15 @@ class FrontierActionAdapter(Node):
                 context.cancel_requested_ros_time_ns = (
                     self.get_clock().now().nanoseconds
                 )
+            latched_origin = context.cancel_origin
+            transition_time_ns = context.cancel_requested_ros_time_ns
+        if latched_origin == "upstream_cancel_request":
+            self._freeze_policy_transition(
+                context,
+                "upstream_cancel_request",
+                ros_time_ns=transition_time_ns,
+            )
+        with self._state_lock:
             if context.cancel_sent or context.downstream_goal is None:
                 return
             context.cancel_sent = True
@@ -925,12 +1154,34 @@ class FrontierActionAdapter(Node):
             "return_code_semantics": semantics,
             "goals_canceling": goal_count,
         })
+        if accepted and cancel_origin == "upstream_cancel_request":
+            self._commit_policy_transition_node(
+                context, "downstream_cancel_accepted"
+            )
 
     def _record_execution(self, context: ForwardedGoal, succeeded: bool) -> None:
-        execution_pose = self._lookup_pose(self.execution_frame)
-        reached_pose = self._lookup_pose(self.map_frame)
         with self._state_lock:
-            if execution_pose is not None:
+            terminal_time_ns = context.terminal_result_ros_time_ns
+            execution_pose = (
+                None if context.terminal_execution_pose is None else
+                list(context.terminal_execution_pose)
+            )
+            reached_pose = (
+                None if context.terminal_map_pose is None else
+                list(context.terminal_map_pose)
+            )
+        if terminal_time_ns is None:
+            execution_pose = self._lookup_pose(self.execution_frame)
+            reached_pose = self._lookup_pose(self.map_frame)
+        with self._state_lock:
+            # A newer goal already froze the old path at its supersession
+            # boundary. Never append the robot's later, unrelated pose when
+            # the old Nav2 result eventually arrives.
+            if (
+                execution_pose is not None
+                and terminal_time_ns is None
+                and context.superseded_by_decision_id is None
+            ):
                 self._append_path_sample(context, execution_pose, reached_pose)
             translation = path_length(context.execution_path)
             self._completed_distance_m += translation
@@ -938,25 +1189,36 @@ class FrontierActionAdapter(Node):
             self._execution_count += 1
             self._success_count += int(succeeded)
             termination = self._termination_reason
-            topological_node_created = False
-            if succeeded and reached_pose is not None:
-                merge_distance = float(
-                    self.get_parameter("topological_merge_distance_m").value
-                )
-                endpoint = reached_pose[:2]
-                topological_node_created = all(
-                    math.hypot(
-                        endpoint[0] - node[0], endpoint[1] - node[1]
-                    ) > merge_distance + 1e-12
-                    for node in self._topological_nodes
-                )
-                if topological_node_created:
-                    self._topological_nodes.append(endpoint)
+            cancel_origin = context.cancel_origin
+            if (
+                cancel_origin is None
+                and context.superseded_by_decision_id is not None
+            ):
+                cancel_origin = "nav2_native_preemption"
+        with self._state_lock:
+            execution_path = [list(point) for point in context.execution_path]
+            map_path = [list(point) for point in context.map_path]
+            topological_node_created = context.topological_node_created
+            topological_node_event_id = context.topological_node_event_id
+            topological_node_pose = (
+                None if context.topological_node_pose is None else
+                list(context.topological_node_pose)
+            )
+            topological_node_trigger = context.topological_node_trigger
+            topological_node_id = context.topological_node_id
+            topological_node_nearest_distance_m = (
+                context.topological_node_nearest_distance_m
+            )
+            transition_ros_time_ns = context.policy_transition_ros_time_ns
+            transition_pose = (
+                None if context.policy_transition_map_pose is None else
+                list(context.policy_transition_map_pose)
+            )
         rotation = (
             shortest_rotation_deg(
-                context.map_path[0][2], context.map_path[-1][2]
+                map_path[0][2], map_path[-1][2]
             )
-            if len(context.map_path) >= 2 else 0.0
+            if len(map_path) >= 2 else 0.0
         )
         if context.transport_error:
             reason = context.transport_error
@@ -988,18 +1250,43 @@ class FrontierActionAdapter(Node):
             None if context.downstream_goal is None else
             _uuid_hex(context.downstream_goal.goal_id)
         )
-        cancel_origin = context.cancel_origin
-        if cancel_origin is None and context.superseded_by_decision_id is not None:
-            cancel_origin = "nav2_native_preemption"
+        reached_pose_for_trace = (
+            transition_pose
+            if context.superseded_by_decision_id is not None
+            and transition_pose is not None
+            else reached_pose or context.target_pose
+        )
+        topological_node_eligibility = (
+            "navigation_succeeded"
+            if topological_node_trigger == "navigation_succeeded"
+            else "policy_transition"
+            if topological_node_trigger in {
+                "upstream_cancel_request",
+                "nav2_native_preemption",
+            }
+            else "ineligible_action_outcome"
+        )
         self._append_trace("execution", {
             "decision_id": context.decision_id,
             "succeeded": bool(succeeded),
             "topological_node_created": topological_node_created,
+            "topological_node_event_id": topological_node_event_id,
+            "topological_node_event_emitted": (
+                context.topological_node_event_emitted
+            ),
+            "topological_node_eligibility": topological_node_eligibility,
+            "topological_node_trigger": topological_node_trigger,
+            "topological_node_id": topological_node_id,
+            "topological_node_pose": topological_node_pose,
+            "topological_node_nearest_distance_m": (
+                topological_node_nearest_distance_m
+            ),
+            "policy_transition_ros_time_ns": transition_ros_time_ns,
             "commanded_pose": context.target_pose,
-            "reached_pose": reached_pose or context.target_pose,
+            "reached_pose": reached_pose_for_trace,
             "translation_m": translation,
             "rotation_deg": rotation,
-            "path": context.execution_path,
+            "path": execution_path,
             "executed_path_frame": self.execution_frame,
             "reason": reason,
             "nav2_status": context.downstream_status,

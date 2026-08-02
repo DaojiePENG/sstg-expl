@@ -27,10 +27,18 @@ Outputs are restricted to the evaluator namespace:
 Information coverage C-I (`geometric_coverage`) is
 `truth-free cells classified known-free by /map / all truth-free cells`.
 Topological coverage C-T is the fraction of registered truth-free cells inside
-the union of `topological_radius_m` disks centered on actual nodes. Only the
-initial node in `session_started` and successful `execution` records with
-`topological_node_created=true` enter C-T. Raw and spatially deduplicated node
-counts are both retained. Joint coverage is `min(C-I, C-T)` and success requires
+the union of `topological_radius_m` disks centered on actual nodes. Native SSTG
+traces contribute the initial node and successfully created execution nodes.
+The external preemptive explorer uses the prospective
+`policy_transition_node_v1` adapter contract: its pose is frozen when the
+policy requests cancellation or accepts a replacement goal, then committed by
+a separate `topological_node` event only after the transition is confirmed.
+Late Nav2 results cannot move that node. Adapter budget/timeout cancellation,
+rejection, transport failure and unconfirmed cancellation never qualify.
+Every event retains its trigger, causal timestamp, confirmation, merge distance
+and nearest-node distance; the evaluator recomputes the merge decision. Raw and
+spatially deduplicated node counts are both retained. Joint coverage is
+`min(C-I, C-T)` and success requires
 both frozen thresholds (0.95 by default). The node also reports TF-sampled path
 length, action counts and success rate, decision time, trace-reported path
 length, a recomputed trace-polyline length, and their disagreement.

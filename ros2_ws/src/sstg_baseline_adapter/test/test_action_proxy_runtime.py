@@ -88,6 +88,7 @@ class FakeSharedStack(Node):
         self.cancel_targets: list[int] = []
         self.control_actions: list[int] = []
         self._clock_ns = 1_000_000_000
+        self.robot_x = 0.0
 
         callback_group = ReentrantCallbackGroup()
         clock_qos = QoSProfile(
@@ -147,6 +148,8 @@ class FakeSharedStack(Node):
             transform.header.frame_id = parent
             transform.child_frame_id = child
             transform.transform.rotation.w = 1.0
+            if parent == self.odom_frame and child == self.base_frame:
+                transform.transform.translation.x = self.robot_x
             transforms.append(transform)
         self.tf_broadcaster.sendTransform(transforms)
 
@@ -353,6 +356,16 @@ class RuntimeHarness:
         assert handle.accepted
         return handle
 
+    def move_robot(self, x: float) -> None:
+        self.fake.robot_x = x
+        _wait_until(
+            lambda: abs(
+                (self.adapter._lookup_pose(self.fake.map_frame) or [0.0])[0]
+                - x
+            ) < 0.01,
+            description=f"robot TF at x={x}",
+        )
+
     def finish_from_upstream(self):
         self.fake.completion_publisher.publish(Empty())
         _wait_until(
@@ -427,6 +440,7 @@ def test_overlapping_goals_forward_feedback_and_keep_out_of_order_identity(
     feedback_distances = []
     first = harness.send_goal(1.0)
     _wait_until(harness.fake.first_started.is_set, description="first execution")
+    harness.move_robot(1.0)
     second = harness.send_goal(
         2.0,
         feedback_callback=lambda message: feedback_distances.append(
@@ -437,6 +451,7 @@ def test_overlapping_goals_forward_feedback_and_keep_out_of_order_identity(
     second_result = _future_result(
         second.get_result_async(), description="second proxy result"
     )
+    harness.move_robot(2.0)
     harness.fake.release_first.set()
     first_result = _future_result(
         first.get_result_async(), description="first proxy result"
@@ -470,6 +485,31 @@ def test_overlapping_goals_forward_feedback_and_keep_out_of_order_identity(
     assert by_decision[1]["cancel_origin"] == "nav2_native_preemption"
     assert "superseded_by_2" in by_decision[1]["reason"]
     assert by_decision[1]["nav2_error_code"] == 41
+    assert by_decision[1]["topological_node_eligibility"] == (
+        "policy_transition"
+    )
+    assert by_decision[1]["topological_node_trigger"] == (
+        "nav2_native_preemption"
+    )
+    assert by_decision[1]["topological_node_pose"][0] == pytest.approx(1.0)
+    assert by_decision[1]["reached_pose"][0] == pytest.approx(1.0)
+    assert by_decision[1]["path"][-1][0] == pytest.approx(1.0)
+    assert all(point[0] <= 1.0 + 1e-9 for point in by_decision[1]["path"])
+    node_events = [
+        record["payload"] for record in harness.trace_records()
+        if record["event"] == "topological_node"
+    ]
+    transition = next(
+        record for record in node_events
+        if record["decision_id"] == 1
+    )
+    assert transition["trigger"] == "nav2_native_preemption"
+    assert transition["confirmation"] == "replacement_goal_accepted"
+    assert transition["pose"][0] == pytest.approx(1.0)
+    assert sum(
+        record["event_id"] == transition["event_id"]
+        for record in node_events
+    ) == 1
     for execution in executions:
         assert execution["upstream_goal_uuid"]
         assert execution["downstream_goal_uuid"]
@@ -479,6 +519,7 @@ def test_overlapping_goals_forward_feedback_and_keep_out_of_order_identity(
     manifest = json.loads(harness.adapter.manifest_path.read_text())
     assert manifest["runtime_adapter"] == "frontier_mrtsp_dp_external"
     assert manifest["adapter_contract"] == "navigate_to_pose_transparent_proxy_v1"
+    assert manifest["topological_visit_contract"] == "policy_transition_node_v1"
     assert harness.fake.control_actions[0] == ControlExploration.Request.ACTION_START
     assert ControlExploration.Request.ACTION_STOP in harness.fake.control_actions
 
@@ -492,6 +533,7 @@ def test_upstream_cancel_is_latched_until_downstream_goal_acceptance(
         harness.fake.delayed_accept_entered.is_set,
         description="blocked downstream goal acceptance",
     )
+    harness.move_robot(1.0)
 
     cancel_response = _future_result(
         goal.cancel_goal_async(), description="upstream cancel response"
@@ -526,6 +568,21 @@ def test_upstream_cancel_is_latched_until_downstream_goal_acceptance(
         f"nav2_status_{GoalStatus.STATUS_CANCELED}:upstream_cancel_request"
     )
     assert execution["succeeded"] is False
+    assert execution["topological_node_eligibility"] == "policy_transition"
+    assert execution["topological_node_trigger"] == (
+        "upstream_cancel_request"
+    )
+    assert execution["topological_node_created"] is True
+    assert execution["topological_node_pose"][0] == pytest.approx(1.0)
+    transition = next(
+        record["payload"] for record in harness.trace_records()
+        if record["event"] == "topological_node"
+    )
+    assert transition["trigger"] == "upstream_cancel_request"
+    assert transition["confirmation"] in {
+        "downstream_cancel_accepted",
+        "downstream_result_canceled",
+    }
 
     harness.finish_from_upstream()
     assert sum(
@@ -560,6 +617,10 @@ def test_downstream_rejection_is_explicitly_traced_and_aborts_upstream(
     assert execution["nav2_status"] is None
     assert execution["cancel_origin"] is None
     assert execution["succeeded"] is False
+    assert execution["topological_node_eligibility"] == (
+        "ineligible_action_outcome"
+    )
+    assert execution["topological_node_event_id"] is None
 
     harness.finish_from_upstream()
 
@@ -609,6 +670,12 @@ def test_rejected_downstream_cancel_forces_audited_local_terminal(
     )
     assert execution["reason"] == (
         "cancel_grace_expired:upstream_cancel_request"
+    )
+    assert execution["topological_node_eligibility"] == (
+        "ineligible_action_outcome"
+    )
+    assert not any(
+        record["event"] == "topological_node" for record in records
     )
     harness.finish_from_upstream()
 

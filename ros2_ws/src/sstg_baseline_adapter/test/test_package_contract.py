@@ -33,6 +33,7 @@ def test_integration_overrides_preserve_upstream_algorithm_parameters():
             "/baseline/frontier_mrtsp_dp/exploration_complete"
         ),
         "return_to_start_on_complete": False,
+        "frontier_suppression_enabled": False,
     }
 
 

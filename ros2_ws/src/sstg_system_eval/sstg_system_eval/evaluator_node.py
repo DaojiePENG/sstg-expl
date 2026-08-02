@@ -508,6 +508,10 @@ class SystemEvaluatorNode(Node):
                 "topological": "truth-free cells within topological_radius_m",
                 "joint": "min(information_coverage, topological_coverage)",
                 "success": "both frozen thresholds met",
+                "accepted_topological_visit_contracts": [
+                    "legacy_successful_execution_node",
+                    "policy_transition_node_v1",
+                ],
             },
             "target_recall": {
                 "status": "implemented_geometry_proxy",
@@ -848,6 +852,7 @@ class SystemEvaluatorNode(Node):
         })
         if event in {
             "session_started",
+            "topological_node",
             "execution",
             "decision_error",
             "session_finished",

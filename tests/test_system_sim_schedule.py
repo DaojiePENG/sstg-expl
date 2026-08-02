@@ -1627,8 +1627,9 @@ def _artifact_writer_program() -> str:
             "    'schema': 'sstg_system_sim_evaluator_manifest/v2',",
             "    'truth_access': 'evaluator_only',",
             "    'parameters': {'use_sim_time': True}})",
+            "started = {'event': 'session_started', 'payload': {}}",
             "terminal = {'event': 'session_finished', 'payload': {}}",
-            "write_jsonl('evaluation_observed_policy_trace.jsonl', [terminal])",
+            "write_jsonl('evaluation_observed_policy_trace.jsonl', [started, terminal])",
             "write_jsonl('evaluation_metrics.jsonl', [",
             "    {'event': 'policy_trace_ingested',",
             "     'payload': {'event': 'session_finished'}},",
@@ -1642,8 +1643,7 @@ def _artifact_writer_program() -> str:
             "             'ate_settlement_pending': False},",
             "         'ground_truth_motion': {",
             "             'ate_pending_sample_count': 0}}}])",
-            "write_jsonl('policy_trace.jsonl', [",
-            "    {'event': 'session_started', 'payload': {}}, terminal])",
+            "write_jsonl('policy_trace.jsonl', [started, terminal])",
             "print('terminal artifacts written', flush=True)",
             "if len(sys.argv) > 2 and sys.argv[2] == 'exit':",
             "    raise SystemExit(0)",
@@ -1958,6 +1958,27 @@ def test_artifact_audit_rejects_missing_evaluator_settled_snapshot(
     assert any("policy_session_settled snapshot" in error for error in audit["errors"])
 
 
+def test_artifact_audit_rejects_evaluator_trace_loss(tmp_path: Path) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    subprocess.run(
+        [sys.executable, "-c", _artifact_writer_program(), str(output), "exit"],
+        check=True,
+    )
+    observed_path = output / "evaluation_observed_policy_trace.jsonl"
+    observed = [
+        json.loads(line) for line in observed_path.read_text().splitlines()
+    ]
+    observed_path.write_text(
+        json.dumps(observed[-1]) + "\n", encoding="utf-8"
+    )
+
+    audit = validate_completed_artifacts(output)
+
+    assert audit["valid"] is False
+    assert any("records disagree" in error for error in audit["errors"])
+
+
 def test_artifact_audit_rejects_nonempty_settled_ate_queue(
     tmp_path: Path,
 ) -> None:
@@ -1987,6 +2008,32 @@ def test_artifact_audit_rejects_nonempty_settled_ate_queue(
     assert "evaluation_metrics.jsonl: ATE settlement remains pending" in audit[
         "errors"
     ]
+
+
+@pytest.mark.parametrize(
+    "field", ("trace_rejection_count", "topology_trace_rejection_count")
+)
+def test_artifact_audit_rejects_settled_trace_rejections(
+    tmp_path: Path, field: str,
+) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    subprocess.run(
+        [sys.executable, "-c", _artifact_writer_program(), str(output), "exit"],
+        check=True,
+    )
+    metrics_path = output / "evaluation_metrics.jsonl"
+    metrics = [json.loads(line) for line in metrics_path.read_text().splitlines()]
+    metrics[-1]["payload"]["diagnostics"][field] = 1
+    metrics_path.write_text(
+        "".join(json.dumps(record) + "\n" for record in metrics),
+        encoding="utf-8",
+    )
+
+    audit = validate_completed_artifacts(output)
+
+    assert audit["valid"] is False
+    assert any(field in error for error in audit["errors"])
 
 
 def test_artifact_audit_rejects_runtime_budget_drift(tmp_path: Path) -> None:

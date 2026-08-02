@@ -58,6 +58,23 @@ budgets. The evaluator will also report upstream cancellations separately from
 non-cancel navigation failures. This finding was made before any formal result
 was opened.
 
+## Topological measurement finding
+
+The reported C-T value, 0.056578, contains only the initial node because the
+first adapter contract required Nav2 SUCCEEDED before admitting a terminal
+pose. That rule is lifecycle-biased for this upstream: all ten action terminals
+were normal policy-requested cancellations. As a transparent offline
+diagnostic only, spatially merging those ten observed terminal poses at 0.25 m
+would retain ten nodes including the start and yield C-T 0.431455. This does not
+replace or mutate the artifact-valid result above.
+
+Later development runs prospectively use `policy_transition_node_v1`. It
+freezes a pose and simulation timestamp when the explorer requests cancellation
+or accepts a replacement goal, commits a separate hashed trace event only after
+the transition is confirmed, and excludes adapter budget/timeout, rejection,
+transport failure and unconfirmed cancellation. Raw CANCELED/ABORTED/SUCCEEDED
+counts remain separate. This construct was fixed before opening formal results.
+
 ## Visual evidence
 
 The run contains three registered and hashed artifacts under `media/raw/`:

@@ -101,6 +101,8 @@ RUN_FIELDS = (
     "navigation_upstream_cancel_count",
     "navigation_adapter_cancel_count",
     "navigation_non_cancel_failure_count",
+    "navigation_policy_transition_count",
+    "navigation_technical_failure_count",
     "collision_count",
     "collision_free",
     "contact_message_count",
@@ -470,6 +472,12 @@ def _extract_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         "navigation_non_cancel_failure_count": _number(_nested(
             snapshot, ("actions", "navigation_non_cancel_failure_count")
         ), "navigation non-cancel failure count"),
+        "navigation_policy_transition_count": _number(_nested(
+            snapshot, ("actions", "navigation_policy_transition_count")
+        ), "navigation policy transition count"),
+        "navigation_technical_failure_count": _number(_nested(
+            snapshot, ("actions", "navigation_technical_failure_count")
+        ), "navigation technical failure count"),
         "collision_count": _number(_nested(
             snapshot, ("safety", "collision_count")
         ), "collision count"),
@@ -529,6 +537,8 @@ def _extract_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         "navigation_upstream_cancel_count",
         "navigation_adapter_cancel_count",
         "navigation_non_cancel_failure_count",
+        "navigation_policy_transition_count",
+        "navigation_technical_failure_count",
         "collision_count",
         "contact_message_count",
         "mean_clearance_m",
@@ -550,6 +560,8 @@ def _extract_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
     upstream_canceled = result.get("navigation_upstream_cancel_count")
     adapter_canceled = result.get("navigation_adapter_cancel_count")
     non_cancel_failure = result.get("navigation_non_cancel_failure_count")
+    policy_transition = result.get("navigation_policy_transition_count")
+    technical_failure = result.get("navigation_technical_failure_count")
     if None not in (execution, success, failure):
         if float(success) + float(failure) != float(execution):
             raise AnalysisError(
@@ -564,6 +576,16 @@ def _extract_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         if float(upstream_canceled) + float(adapter_canceled) > float(canceled):
             raise AnalysisError(
                 "attributed navigation cancellations exceed all cancellations"
+            )
+    if None not in (execution, policy_transition):
+        if float(policy_transition) > float(execution):
+            raise AnalysisError(
+                "policy transitions exceed all executions"
+            )
+    if None not in (failure, technical_failure):
+        if float(technical_failure) > float(failure):
+            raise AnalysisError(
+                "technical failures exceed all failures"
             )
     if raw_nodes is not None and duplicate_nodes is not None:
         if float(duplicate_nodes) > float(raw_nodes):

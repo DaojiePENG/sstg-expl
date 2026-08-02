@@ -535,6 +535,92 @@ def test_topological_nodes_use_initial_and_successfully_created_reached_poses():
     assert nodes.positions == [(1.0, 2.0), (3.0, 4.0)]
 
 
+def test_topological_policy_transition_events_are_causal_and_exact_at_merge():
+    nodes = TopologicalNodeAccumulator()
+    assert nodes.ingest_record({
+        "event": "session_started",
+        "payload": {"nodes": [{"id": 0, "position": [0.0, 0.0]}]},
+    }) == 1
+    transition = {
+        "event": "topological_node",
+        "payload": {
+            "event_id": "decision_1:nav2_native_preemption:10",
+            "decision_id": 1,
+            "trigger": "nav2_native_preemption",
+            "confirmation": "replacement_goal_accepted",
+            "causal_ros_time_ns": 10,
+            "pose": [0.25, 0.0],
+            "nearest_node_distance_m": 0.25,
+            "merge_distance_m": 0.25,
+            "created": True,
+            "node_id": 1,
+        },
+    }
+    assert nodes.ingest_record(transition) == 1
+    assert nodes.ingest_record({
+        "event": "execution",
+        "payload": {
+            "decision_id": 1,
+            "succeeded": False,
+            "topological_node_created": True,
+            "topological_node_event_id": transition["payload"]["event_id"],
+            "topological_node_trigger": "nav2_native_preemption",
+            "topological_node_pose": [0.25, 0.0],
+            "reached_pose": [99.0, 99.0, 0.0],
+        },
+    }) == 0
+    merged = {
+        "event": "topological_node",
+        "payload": {
+            "event_id": "decision_2:navigation_succeeded:20",
+            "decision_id": 2,
+            "trigger": "navigation_succeeded",
+            "confirmation": "downstream_result_succeeded",
+            "causal_ros_time_ns": 20,
+            "pose": [0.30, 0.0],
+            "nearest_node_distance_m": 0.05,
+            "merge_distance_m": 0.25,
+            "created": False,
+            "node_id": 1,
+        },
+    }
+    assert nodes.ingest_record(merged) == 0
+
+    snapshot = nodes.snapshot()
+    assert snapshot["topological_node_event_count"] == 2
+    assert snapshot["topological_node_merged_event_count"] == 1
+    assert snapshot["topological_node_trigger_counts"] == {
+        "nav2_native_preemption": 1,
+        "navigation_succeeded": 1,
+    }
+    assert nodes.positions == [(0.0, 0.0), (0.25, 0.0)]
+
+
+def test_topological_policy_transition_rejects_late_pose_contamination():
+    nodes = TopologicalNodeAccumulator()
+    nodes.ingest_record({
+        "event": "session_started",
+        "payload": {"nodes": [{"id": 0, "position": [0.0, 0.0]}]},
+    })
+
+    with pytest.raises(ValueError, match="nearest distance disagrees"):
+        nodes.ingest_record({
+            "event": "topological_node",
+            "payload": {
+                "event_id": "decision_1:nav2_native_preemption:10",
+                "decision_id": 1,
+                "trigger": "nav2_native_preemption",
+                "confirmation": "replacement_goal_accepted",
+                "causal_ros_time_ns": 10,
+                "pose": [2.0, 0.0],
+                "nearest_node_distance_m": 1.0,
+                "merge_distance_m": 0.25,
+                "created": True,
+                "node_id": 1,
+            },
+        })
+
+
 def test_load_truth_map_rejects_invalid_thresholds(tmp_path):
     image = tmp_path / "map.pgm"
     image.write_bytes(b"P5\n1 1\n255\n\xfe")
@@ -599,6 +685,8 @@ def test_action_trace_accumulator_counts_and_recomputes_path_length():
     assert snapshot["navigation_upstream_cancel_count"] == 0
     assert snapshot["navigation_adapter_cancel_count"] == 0
     assert snapshot["navigation_non_cancel_failure_count"] == 0
+    assert snapshot["navigation_policy_transition_count"] == 0
+    assert snapshot["navigation_technical_failure_count"] == 0
     assert snapshot["decision_time_ms_mean"] == 12.5
     assert snapshot["decision_time_observed_count"] == 1
     assert snapshot["decision_time_unavailable_count"] == 0
@@ -611,14 +699,17 @@ def test_action_trace_accumulator_counts_and_recomputes_path_length():
 def test_action_trace_classifies_cancellations_by_origin():
     actions = ActionTraceAccumulator()
     executions = [
-        (1, 5, "upstream_cancel_request"),
-        (2, 5, "nav2_native_preemption"),
-        (3, 5, "adapter_goal_timeout"),
-        (4, 5, "adapter_session_termination"),
-        (5, 5, None),
-        (6, 6, None),
+        (1, 5, "upstream_cancel_request", "policy_transition"),
+        (2, 6, "nav2_native_preemption", "policy_transition"),
+        (3, 5, "adapter_goal_timeout", "ineligible_action_outcome"),
+        (4, 5, "adapter_session_termination", "ineligible_action_outcome"),
+        (5, 5, None, "ineligible_action_outcome"),
+        (6, 6, None, "ineligible_action_outcome"),
     ]
-    for decision_id, nav2_status, cancel_origin in executions:
+    for decision_id, nav2_status, cancel_origin, eligibility in executions:
+        trigger = (
+            cancel_origin if eligibility == "policy_transition" else None
+        )
         actions.ingest(_record("execution", {
             "decision_id": decision_id,
             "succeeded": False,
@@ -628,14 +719,22 @@ def test_action_trace_classifies_cancellations_by_origin():
             "path": [],
             "nav2_status": nav2_status,
             "cancel_origin": cancel_origin,
+            "topological_node_eligibility": eligibility,
+            "topological_node_trigger": trigger,
+            "topological_node_event_id": (
+                f"transition_{decision_id}"
+                if eligibility == "policy_transition" else None
+            ),
         }, ros_time_ns=decision_id))
 
     snapshot = actions.snapshot()
     assert snapshot["navigation_failure_count"] == 6
-    assert snapshot["navigation_canceled_count"] == 5
-    assert snapshot["navigation_upstream_cancel_count"] == 2
+    assert snapshot["navigation_canceled_count"] == 4
+    assert snapshot["navigation_upstream_cancel_count"] == 1
     assert snapshot["navigation_adapter_cancel_count"] == 2
-    assert snapshot["navigation_non_cancel_failure_count"] == 1
+    assert snapshot["navigation_non_cancel_failure_count"] == 2
+    assert snapshot["navigation_policy_transition_count"] == 2
+    assert snapshot["navigation_technical_failure_count"] == 3
 
 
 def test_action_trace_legacy_failure_without_cancel_fields_is_non_cancel():
@@ -655,6 +754,32 @@ def test_action_trace_legacy_failure_without_cancel_fields_is_non_cancel():
     assert snapshot["navigation_upstream_cancel_count"] == 0
     assert snapshot["navigation_adapter_cancel_count"] == 0
     assert snapshot["navigation_non_cancel_failure_count"] == 1
+    assert snapshot["navigation_policy_transition_count"] == 0
+    assert snapshot["navigation_technical_failure_count"] == 1
+
+
+def test_policy_transition_count_is_independent_of_late_terminal_status():
+    actions = ActionTraceAccumulator()
+    actions.ingest(_record("execution", {
+        "decision_id": 1,
+        "succeeded": True,
+        "reason": "nav2_status_4:superseded_by_2",
+        "translation_m": 1.0,
+        "rotation_deg": 0.0,
+        "path": [[0.0, 0.0], [1.0, 0.0]],
+        "nav2_status": 4,
+        "cancel_origin": "nav2_native_preemption",
+        "topological_node_created": True,
+        "topological_node_eligibility": "policy_transition",
+        "topological_node_trigger": "nav2_native_preemption",
+        "topological_node_event_id": "transition_1",
+    }))
+
+    snapshot = actions.snapshot()
+    assert snapshot["navigation_success_count"] == 1
+    assert snapshot["navigation_failure_count"] == 0
+    assert snapshot["navigation_policy_transition_count"] == 1
+    assert snapshot["navigation_technical_failure_count"] == 0
 
 
 def test_action_trace_preserves_unavailable_upstream_decision_time():

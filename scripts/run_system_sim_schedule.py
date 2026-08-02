@@ -178,6 +178,7 @@ RUNTIME_ADAPTER_PROCESS_PREFIXES = {
         "frontier_action_adapter-",
     ),
 }
+EXTERNAL_TOPOLOGICAL_VISIT_CONTRACT = "policy_transition_node_v1"
 REQUIRED_RUNTIME_PROCESS_PREFIXES = (
     COMMON_RUNTIME_PROCESS_PREFIXES
     + tuple(
@@ -681,6 +682,17 @@ def validate_completed_artifacts(
         errors.append(
             "policy_manifest.json: runtime_adapter disagrees with the frozen method"
         )
+    if (
+        policy_manifest is not None
+        and expected_runtime_adapter == "frontier_mrtsp_dp_external"
+        and policy_manifest.get("topological_visit_contract") != (
+            EXTERNAL_TOPOLOGICAL_VISIT_CONTRACT
+        )
+    ):
+        errors.append(
+            "policy_manifest.json: external topological visit contract "
+            "is absent or unsupported"
+        )
     if policy_manifest is not None and expected_experiment_budget is not None:
         parameters = policy_manifest.get("parameters")
         observed_values = (
@@ -723,6 +735,20 @@ def validate_completed_artifacts(
             errors.append(
                 "evaluation_manifest.json: use_sim_time must be true"
             )
+        if expected_runtime_adapter == "frontier_mrtsp_dp_external":
+            coverage = evaluator_manifest.get("coverage_endpoints")
+            contracts = (
+                coverage.get("accepted_topological_visit_contracts")
+                if isinstance(coverage, Mapping) else None
+            )
+            if (
+                not isinstance(contracts, list)
+                or EXTERNAL_TOPOLOGICAL_VISIT_CONTRACT not in contracts
+            ):
+                errors.append(
+                    "evaluation_manifest.json: evaluator does not attest "
+                    "the external topological visit contract"
+                )
 
     core_bag = {"required": False, "complete": None}
     if expected_recording_contract is not None:
@@ -769,6 +795,11 @@ def validate_completed_artifacts(
     ):
         errors.append(
             "evaluation_observed_policy_trace.jsonl: session_finished is absent"
+        )
+    if policy_records and observed_records and policy_records != observed_records:
+        errors.append(
+            "evaluation_observed_policy_trace.jsonl: records disagree with "
+            "policy_trace.jsonl"
         )
     metric_records = jsonl.get("evaluation_metrics.jsonl", [])
     ingested_terminal = any(
@@ -820,6 +851,26 @@ def validate_completed_artifacts(
                 errors.append(
                     "evaluation_metrics.jsonl: ATE settlement remains pending"
                 )
+            for field in (
+                "trace_rejection_count",
+                "topology_trace_rejection_count",
+            ):
+                value = diagnostics.get(field)
+                require_field = (
+                    isinstance(policy_manifest, Mapping)
+                    and policy_manifest.get("topological_visit_contract")
+                    == EXTERNAL_TOPOLOGICAL_VISIT_CONTRACT
+                )
+                if require_field and type(value) is not int:
+                    errors.append(
+                        "evaluation_metrics.jsonl: settled evaluator lacks "
+                        f"integer {field}"
+                    )
+                elif value not in (None, 0):
+                    errors.append(
+                        "evaluation_metrics.jsonl: settled evaluator has "
+                        f"nonzero {field}"
+                    )
         if not isinstance(ground_truth, Mapping):
             errors.append(
                 "evaluation_metrics.jsonl: settled ground-truth metrics are absent"

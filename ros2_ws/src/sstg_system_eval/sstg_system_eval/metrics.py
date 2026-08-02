@@ -1513,6 +1513,10 @@ class TopologicalNodeAccumulator:
         self.initial_node_observation_count = 0
         self.execution_node_observation_count = 0
         self.duplicate_node_observation_count = 0
+        self.topological_node_event_count = 0
+        self.topological_node_merged_event_count = 0
+        self.topological_node_trigger_counts: Dict[str, int] = {}
+        self._topological_events: Dict[str, Dict[str, Any]] = {}
         self.nodes = []
 
     @staticmethod
@@ -1528,7 +1532,13 @@ class TopologicalNodeAccumulator:
             _finite_float(value[1], f"{label} y"),
         )
 
-    def _add(self, position: Tuple[float, float], source: str, source_id: Any) -> bool:
+    def _add(
+        self,
+        position: Tuple[float, float],
+        source: str,
+        source_id: Any,
+        trigger: str,
+    ) -> bool:
         self.raw_node_observation_count += 1
         if source == "session_started":
             self.initial_node_observation_count += 1
@@ -1550,8 +1560,101 @@ class TopologicalNodeAccumulator:
             "y_m": position[1],
             "source": source,
             "source_id": source_id,
+            "trigger": trigger,
         })
         return True
+
+    def _ingest_topological_node_event(self, payload: Dict[str, Any]) -> int:
+        event_id = payload.get("event_id")
+        trigger = payload.get("trigger")
+        confirmation = payload.get("confirmation")
+        created = payload.get("created")
+        if not isinstance(event_id, str) or not event_id:
+            raise ValueError("topological_node event_id must be non-empty")
+        if event_id in self._topological_events:
+            raise ValueError("duplicate topological_node event_id")
+        if trigger not in {
+            "navigation_succeeded",
+            "upstream_cancel_request",
+            "nav2_native_preemption",
+        }:
+            raise ValueError("unsupported topological_node trigger")
+        if not isinstance(confirmation, str) or not confirmation:
+            raise ValueError("topological_node confirmation must be non-empty")
+        allowed_confirmations = {
+            "navigation_succeeded": {"downstream_result_succeeded"},
+            "nav2_native_preemption": {"replacement_goal_accepted"},
+            "upstream_cancel_request": {
+                "downstream_cancel_accepted",
+                "downstream_result_canceled",
+                "replacement_goal_accepted",
+            },
+        }
+        if confirmation not in allowed_confirmations[trigger]:
+            raise ValueError(
+                "topological_node confirmation disagrees with its trigger"
+            )
+        if not isinstance(created, bool):
+            raise ValueError("topological_node created must be boolean")
+        decision_id = int(payload.get("decision_id"))
+        causal_ros_time_ns = int(payload.get("causal_ros_time_ns"))
+        node_id = int(payload.get("node_id"))
+        if decision_id <= 0 or causal_ros_time_ns < 0 or node_id < 0:
+            raise ValueError("topological_node identifiers must be non-negative")
+        position = self._position(payload.get("pose"), "topological_node pose")
+        nearest_distance = _finite_float(
+            payload.get("nearest_node_distance_m"),
+            "topological_node nearest distance",
+        )
+        merge_distance = _finite_float(
+            payload.get("merge_distance_m"),
+            "topological_node merge distance",
+        )
+        if nearest_distance < 0.0 or merge_distance < 0.0:
+            raise ValueError("topological_node distances must be non-negative")
+        if not self.nodes:
+            raise ValueError("topological_node event requires an initial node")
+        recomputed_distances = [
+            math.hypot(
+                position[0] - node["x_m"], position[1] - node["y_m"]
+            )
+            for node in self.nodes
+        ]
+        nearest_index = min(
+            range(len(recomputed_distances)), key=recomputed_distances.__getitem__
+        )
+        recomputed_nearest = recomputed_distances[nearest_index]
+        if not math.isclose(
+            nearest_distance, recomputed_nearest, rel_tol=0.0, abs_tol=1e-6
+        ):
+            raise ValueError(
+                "topological_node nearest distance disagrees with prior nodes"
+            )
+        expected_created = recomputed_nearest >= merge_distance
+        if created != expected_created:
+            raise ValueError(
+                "topological_node created flag disagrees with merge threshold"
+            )
+        expected_node_id = len(self.nodes) if created else nearest_index
+        if node_id != expected_node_id:
+            raise ValueError("topological_node node_id disagrees with node order")
+        self.topological_node_event_count += 1
+        self.topological_node_merged_event_count += int(not created)
+        self.topological_node_trigger_counts[trigger] = (
+            self.topological_node_trigger_counts.get(trigger, 0) + 1
+        )
+        event_record = {
+            "decision_id": decision_id,
+            "trigger": trigger,
+            "created": created,
+            "pose": position,
+        }
+        self._topological_events[event_id] = event_record
+        if not created:
+            return 0
+        return int(self._add(
+            position, "topological_node", event_id, trigger
+        ))
 
     def ingest_record(self, record: Dict[str, Any]) -> int:
         event = record.get("event")
@@ -1570,7 +1673,10 @@ class TopologicalNodeAccumulator:
                     self._position(node.get("position"), f"initial node {index}"),
                     "session_started",
                     node.get("id", index),
+                    "initial_pose",
                 ))
+        elif event == "topological_node":
+            return self._ingest_topological_node_event(payload)
         elif event == "execution":
             succeeded = payload.get("succeeded")
             created = payload.get("topological_node_created")
@@ -1578,11 +1684,38 @@ class TopologicalNodeAccumulator:
                 raise ValueError("execution succeeded must be boolean")
             if not isinstance(created, bool):
                 raise ValueError("execution topological_node_created must be boolean")
+            node_event_id = payload.get("topological_node_event_id")
+            if node_event_id is not None:
+                if not isinstance(node_event_id, str):
+                    raise ValueError(
+                        "execution topological_node_event_id must be a string"
+                    )
+                node_event = self._topological_events.get(node_event_id)
+                if node_event is None:
+                    raise ValueError(
+                        "execution references an unseen topological_node event"
+                    )
+                if (
+                    node_event["decision_id"] != int(payload.get("decision_id"))
+                    or node_event["created"] != created
+                    or node_event["trigger"] != payload.get(
+                        "topological_node_trigger"
+                    )
+                    or node_event["pose"] != self._position(
+                        payload.get("topological_node_pose"),
+                        "execution topological_node_pose",
+                    )
+                ):
+                    raise ValueError(
+                        "execution disagrees with its topological_node event"
+                    )
+                return 0
             if succeeded and created:
                 candidates.append((
                     self._position(payload.get("reached_pose"), "reached_pose"),
                     "execution",
                     payload.get("decision_id"),
+                    "legacy_navigation_succeeded",
                 ))
         return sum(self._add(*candidate) for candidate in candidates)
 
@@ -1600,6 +1733,13 @@ class TopologicalNodeAccumulator:
             "duplicate_node_observation_count": (
                 self.duplicate_node_observation_count
             ),
+            "topological_node_event_count": self.topological_node_event_count,
+            "topological_node_merged_event_count": (
+                self.topological_node_merged_event_count
+            ),
+            "topological_node_trigger_counts": dict(sorted(
+                self.topological_node_trigger_counts.items()
+            )),
             "unique_node_count": len(self.nodes),
             "node_deduplication_tolerance_m": self.deduplication_tolerance_m,
             "unique_nodes": [dict(node) for node in self.nodes],
@@ -1622,6 +1762,8 @@ class ActionTraceAccumulator:
         self.navigation_upstream_cancel_count = 0
         self.navigation_adapter_cancel_count = 0
         self.navigation_non_cancel_failure_count = 0
+        self.navigation_policy_transition_count = 0
+        self.navigation_technical_failure_count = 0
         self.decision_error_count = 0
         self.session_finished_count = 0
         self.decision_time_ms_total = 0.0
@@ -1693,12 +1835,59 @@ class ActionTraceAccumulator:
             failed = not succeeded
             canceled = failed and payload.get("nav2_status") == 5
             cancel_origin = payload.get("cancel_origin")
+            topological_eligibility = payload.get(
+                "topological_node_eligibility"
+            )
+            if topological_eligibility not in {
+                None,
+                "navigation_succeeded",
+                "policy_transition",
+                "ineligible_action_outcome",
+            }:
+                raise ValueError(
+                    "execution has unsupported topological_node_eligibility"
+                )
+            policy_transition = topological_eligibility == "policy_transition"
+            if policy_transition and (
+                payload.get("topological_node_trigger") not in {
+                    "upstream_cancel_request",
+                    "nav2_native_preemption",
+                }
+                or not isinstance(payload.get("topological_node_event_id"), str)
+            ):
+                raise ValueError(
+                    "policy transition execution lacks its causal node event"
+                )
+            if topological_eligibility == "navigation_succeeded" and (
+                not succeeded
+                or payload.get("topological_node_trigger") != (
+                    "navigation_succeeded"
+                )
+                or not isinstance(payload.get("topological_node_event_id"), str)
+            ):
+                raise ValueError(
+                    "navigation-succeeded topology execution lacks its node event"
+                )
+            if topological_eligibility == "ineligible_action_outcome" and (
+                payload.get("topological_node_event_id") is not None
+                or payload.get("topological_node_created") is True
+            ):
+                raise ValueError(
+                    "ineligible topology execution references a created node"
+                )
+            adapter_session_stop = (
+                cancel_origin == "adapter_session_termination"
+            )
             self.execution_count += 1
             self.navigation_success_count += int(succeeded)
             self.navigation_failure_count += int(failed)
             self.navigation_canceled_count += int(canceled)
             self.navigation_non_cancel_failure_count += int(
                 failed and not canceled
+            )
+            self.navigation_policy_transition_count += int(policy_transition)
+            self.navigation_technical_failure_count += int(
+                failed and not policy_transition and not adapter_session_stop
             )
             if canceled and isinstance(cancel_origin, str):
                 if cancel_origin in {
@@ -1747,6 +1936,12 @@ class ActionTraceAccumulator:
             ),
             "navigation_non_cancel_failure_count": (
                 self.navigation_non_cancel_failure_count
+            ),
+            "navigation_policy_transition_count": (
+                self.navigation_policy_transition_count
+            ),
+            "navigation_technical_failure_count": (
+                self.navigation_technical_failure_count
             ),
             "navigation_success_rate": success_rate,
             "decision_error_count": self.decision_error_count,

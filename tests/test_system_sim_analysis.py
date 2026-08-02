@@ -102,6 +102,8 @@ def _snapshot(
             "navigation_upstream_cancel_count": 1,
             "navigation_adapter_cancel_count": 0,
             "navigation_non_cancel_failure_count": 0,
+            "navigation_policy_transition_count": 1,
+            "navigation_technical_failure_count": 0,
         })
     if clearance:
         value["static_clearance"] = {
@@ -361,6 +363,8 @@ def test_analysis_retains_all_runs_and_separates_success_constructs(
     assert completed["navigation_upstream_cancel_count"] == "1"
     assert completed["navigation_adapter_cancel_count"] == "0"
     assert completed["navigation_non_cancel_failure_count"] == "0"
+    assert completed["navigation_policy_transition_count"] == "1"
+    assert completed["navigation_technical_failure_count"] == "0"
     legacy = next(
         row for row in runs
         if row["method"] == "frontier" and row["replicate_seed"] == "2"
@@ -371,6 +375,8 @@ def test_analysis_retains_all_runs_and_separates_success_constructs(
         "navigation_upstream_cancel_count",
         "navigation_adapter_cancel_count",
         "navigation_non_cancel_failure_count",
+        "navigation_policy_transition_count",
+        "navigation_technical_failure_count",
     ):
         assert legacy[field] == ""
     sstg = next(row for row in aggregates if row["method"] == "sstg")
@@ -525,6 +531,8 @@ def test_completed_run_without_settled_snapshot_fails_closed(tmp_path: Path) -> 
         "navigation_upstream_cancel_count",
         "navigation_adapter_cancel_count",
         "navigation_non_cancel_failure_count",
+        "navigation_policy_transition_count",
+        "navigation_technical_failure_count",
     ),
 )
 def test_negative_cancellation_action_count_fails_closed(
@@ -581,6 +589,18 @@ def test_negative_cancellation_action_count_fails_closed(
         (
             {"navigation_upstream_cancel_count": 2},
             "attributed navigation cancellations exceed all cancellations",
+        ),
+        (
+            {
+                "navigation_policy_transition_count": 6,
+            },
+            "policy transitions exceed all executions",
+        ),
+        (
+            {
+                "navigation_technical_failure_count": 2,
+            },
+            "technical failures exceed all failures",
         ),
     ),
 )
