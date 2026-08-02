@@ -40,6 +40,9 @@ SYSTEM_LAUNCH_PATH = (
     ROOT / "ros2_ws/src/sstg_nav_bringup/launch/system_sim.launch.py"
 )
 RVIZ_PATH = ROOT / "ros2_ws/src/sstg_nav_bringup/rviz/system_sim.rviz"
+SLAM_PARAMS_PATH = (
+    ROOT / "ros2_ws/src/sstg_nav_bringup/config/slam_toolbox.yaml"
+)
 
 
 RENDERED_TB3_FIXTURE = """<?xml version="1.0"?>
@@ -199,6 +202,33 @@ def test_policy_topic_allowlist_excludes_evaluator_truth():
     subscriptions = access["policy"]["subscriptions"]
     assert not any(topic.startswith("/evaluation/") for topic in subscriptions)
     assert "/map" in subscriptions
+
+
+def test_shared_slam_profile_excludes_observed_corridor_alias_jumps():
+    params = yaml.safe_load(SLAM_PARAMS_PATH.read_text(encoding="utf-8"))[
+        "slam_toolbox"
+    ]["ros__parameters"]
+    stack = yaml.safe_load((
+        ROOT / "experiments/system_sim/configs/shared_stack.yaml"
+    ).read_text(encoding="utf-8"))
+    mapping = stack["shared_autonomy"]
+
+    assert mapping["mapping_profile"] == "corridor_alias_hardened_v1"
+    assert mapping["mapping_profile_rationale"][
+        "applies_equally_to_all_methods"
+    ] is True
+    observed = mapping["mapping_profile_rationale"][
+        "observed_false_translation_corrections_m"
+    ]
+    assert params["do_loop_closing"] is True
+    assert params["loop_search_maximum_distance"] < min(observed)
+    assert params["loop_search_space_dimension"] <= 2.0 * params[
+        "loop_search_maximum_distance"
+    ]
+    assert params["loop_match_minimum_chain_size"] >= 20
+    assert params["loop_match_maximum_variance_coarse"] <= 1.0
+    assert params["loop_match_minimum_response_coarse"] >= 0.45
+    assert params["loop_match_minimum_response_fine"] >= 0.55
 
 
 def test_released_nav2_turtlebot_is_the_default_robot():

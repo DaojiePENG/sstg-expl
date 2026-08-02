@@ -216,6 +216,13 @@ localization_reporting:
   formal_threshold_policy: externally_anchor_and_freeze_before_test_split_or_report_none
 shared_autonomy:
   mapping: slam_toolbox_async
+  mapping_profile: corridor_alias_hardened_v1
+  mapping_profile_rationale:
+    diagnostic_population: gazebo_stage1_four_family_paired_multiseed_20260802
+    observed_false_translation_corrections_m: [2.134, 2.591, 2.766]
+    observed_false_yaw_correction_max_abs_rad: 0.012
+    applies_equally_to_all_methods: true
+    symmetric_corridor_retained_as_stress_test: true
   navigation: nav2
   local_controller: nav2_mppi_frozen_sstg_dev_v1
   nav2_params: ros2_ws/src/sstg_nav_bringup/config/nav2_params.yaml

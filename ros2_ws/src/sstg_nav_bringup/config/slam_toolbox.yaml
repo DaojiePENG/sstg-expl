@@ -33,17 +33,23 @@ slam_toolbox:
     scan_buffer_maximum_scan_distance: 12.0
     link_match_minimum_response_fine: 0.10
     link_scan_maximum_distance: 1.5
-    loop_search_maximum_distance: 4.0
+    # The development corridor contains repeated, nearly identical alcoves.
+    # With the upstream 3 m / 8 m search windows (and the former local 4 m
+    # candidate radius), slam_toolbox accepted false translational loop
+    # closures of 2.13--2.77 m while changing yaw by less than 0.012 rad.
+    # Re-visits in this suite pass within the link-matching radius, so keep
+    # legitimate local closures while excluding those aliased corridor shifts.
+    loop_search_maximum_distance: 1.5
     do_loop_closing: true
-    loop_match_minimum_chain_size: 10
-    loop_match_maximum_variance_coarse: 3.0
-    loop_match_minimum_response_coarse: 0.35
-    loop_match_minimum_response_fine: 0.45
+    loop_match_minimum_chain_size: 20
+    loop_match_maximum_variance_coarse: 1.0
+    loop_match_minimum_response_coarse: 0.45
+    loop_match_minimum_response_fine: 0.55
 
     correlation_search_space_dimension: 0.5
     correlation_search_space_resolution: 0.01
     correlation_search_space_smear_deviation: 0.10
-    loop_search_space_dimension: 8.0
+    loop_search_space_dimension: 3.0
     loop_search_space_resolution: 0.05
     loop_search_space_smear_deviation: 0.03
     distance_variance_penalty: 0.5
