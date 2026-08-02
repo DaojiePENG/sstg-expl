@@ -80,6 +80,17 @@ RUN_FIELDS = (
     "snapshot_present",
     "snapshot_reason",
     "snapshot_ros_time_ns",
+    "core_information_coverage",
+    "core_topological_coverage",
+    "core_joint_coverage",
+    "core_dual_threshold_success",
+    "core_coverage_distance_auc_normalized",
+    "core_coverage_gain_per_travel_m",
+    "core_ideal_scan_count",
+    "core_unique_endpoint_count",
+    "core_raw_endpoint_observation_count",
+    "core_duplicate_endpoint_observation_count",
+    "core_redundant_endpoint_fraction",
     "information_coverage",
     "topological_coverage",
     "joint_coverage",
@@ -117,6 +128,16 @@ RUN_FIELDS = (
     "evidence_error",
 )
 METRICS = (
+    ("core_information_coverage", "core_information_coverage"),
+    ("core_topological_coverage", "core_topological_coverage"),
+    ("core_joint_coverage", "core_joint_coverage"),
+    (
+        "core_coverage_distance_auc_normalized",
+        "core_coverage_distance_auc_normalized",
+    ),
+    ("core_coverage_gain_per_travel_m", "core_coverage_gain_per_travel_m"),
+    ("core_unique_endpoint_count", "core_unique_endpoint_count"),
+    ("core_redundant_endpoint_fraction", "core_redundant_endpoint_fraction"),
     ("task_completion", "task_completed"),
     ("collision_free", "collision_free"),
     ("dual_success", "dual_threshold_success"),
@@ -393,6 +414,12 @@ def _extract_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         return result
     node_audit = _nested(snapshot, ("topological", "node_audit"))
     node_audit = node_audit if isinstance(node_audit, Mapping) else {}
+    endpoint_audit = _nested(
+        snapshot, ("core_policy", "truth_topological", "endpoint_audit")
+    )
+    endpoint_audit = (
+        endpoint_audit if isinstance(endpoint_audit, Mapping) else {}
+    )
     raw_nodes = _number(
         node_audit.get("raw_node_observation_count"), "raw node count"
     )
@@ -402,10 +429,71 @@ def _extract_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
     redundancy = None
     if raw_nodes is not None and raw_nodes > 0 and duplicate_nodes is not None:
         redundancy = float(duplicate_nodes) / float(raw_nodes)
+    core_raw_endpoints = _number(
+        endpoint_audit.get("raw_endpoint_observation_count"),
+        "core raw endpoint count",
+    )
+    core_duplicate_endpoints = _number(
+        endpoint_audit.get("duplicate_endpoint_observation_count"),
+        "core duplicate endpoint count",
+    )
+    core_redundancy = None
+    if (
+        core_raw_endpoints is not None
+        and core_raw_endpoints > 0
+        and core_duplicate_endpoints is not None
+    ):
+        core_redundancy = float(core_duplicate_endpoints) / float(
+            core_raw_endpoints
+        )
     result.update({
         "snapshot_present": True,
         "snapshot_reason": snapshot.get("reason"),
         "snapshot_ros_time_ns": _number(snapshot.get("ros_time_ns"), "snapshot time"),
+        "core_information_coverage": _bounded_fraction(_nested(
+            snapshot,
+            ("core_policy_endpoints", "c_i_truth_sensor"),
+            ("core_policy", "truth_sensor", "truth_sensor_coverage"),
+        ), "core information coverage"),
+        "core_topological_coverage": _bounded_fraction(_nested(
+            snapshot,
+            ("core_policy_endpoints", "c_t_truth_endpoints"),
+            ("core_policy", "truth_topological", "topological_coverage"),
+        ), "core topological coverage"),
+        "core_joint_coverage": _bounded_fraction(_nested(
+            snapshot,
+            ("core_policy_endpoints", "joint_min"),
+            ("core_policy", "truth_topological", "joint_coverage"),
+        ), "core joint coverage"),
+        "core_dual_threshold_success": _boolean(_nested(
+            snapshot,
+            ("core_policy_endpoints", "dual_threshold_success"),
+            ("core_policy", "truth_topological", "dual_threshold_success"),
+        ), "core dual threshold success"),
+        "core_coverage_distance_auc_normalized": _bounded_fraction(_nested(
+            snapshot,
+            ("core_policy_endpoints", "coverage_distance_auc_normalized"),
+            (
+                "core_policy",
+                "truth_sensor",
+                "coverage_distance_auc_normalized",
+            ),
+        ), "core normalized coverage-distance AUC"),
+        "core_coverage_gain_per_travel_m": _nonnegative(_nested(
+            snapshot,
+            ("core_policy", "truth_sensor", "coverage_gain_per_travel_m"),
+        ), "core coverage gain per travel"),
+        "core_ideal_scan_count": _number(_nested(
+            snapshot,
+            ("core_policy", "truth_sensor", "ideal_scan_count"),
+        ), "core ideal scan count"),
+        "core_unique_endpoint_count": _number(
+            endpoint_audit.get("unique_endpoint_count"),
+            "core unique endpoint count",
+        ),
+        "core_raw_endpoint_observation_count": core_raw_endpoints,
+        "core_duplicate_endpoint_observation_count": core_duplicate_endpoints,
+        "core_redundant_endpoint_fraction": core_redundancy,
         "information_coverage": _bounded_fraction(_nested(
             snapshot,
             ("coverage_endpoints", "c_i_information"),
@@ -592,6 +680,11 @@ def _extract_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
     if raw_nodes is not None and duplicate_nodes is not None:
         if float(duplicate_nodes) > float(raw_nodes):
             raise AnalysisError("duplicate node count exceeds raw node count")
+    if core_raw_endpoints is not None and core_duplicate_endpoints is not None:
+        if float(core_duplicate_endpoints) > float(core_raw_endpoints):
+            raise AnalysisError(
+                "core duplicate endpoint count exceeds raw endpoint count"
+            )
     if result.get("target_total_count") is not None and result.get(
         "detected_target_count"
     ) is not None:

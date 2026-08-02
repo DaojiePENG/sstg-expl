@@ -11,12 +11,14 @@ from sstg_system_eval.metrics import (
     CameraGeometry,
     CollisionAccumulator,
     GroundTruthMotionAccumulator,
+    GroundTruthEndpointAccumulator,
     TargetRecallAccumulator,
     TargetSpec,
     TruthClearanceAccumulator,
     TopologicalNodeAccumulator,
     TrajectoryAccumulator,
     TruthGrid,
+    TruthSensorCoverageAccumulator,
     WorldStatisticsAccumulator,
     compute_geometric_metrics,
     compute_topological_metrics,
@@ -147,6 +149,81 @@ def test_planar_transform_and_ground_truth_path_ate_are_auditable():
     assert snapshot["ate_mean_m"] == pytest.approx(1.5)
     assert snapshot["ate_rmse_m"] == pytest.approx(np.sqrt(2.5))
     assert snapshot["ate_max_m"] == pytest.approx(2.0)
+
+
+def test_truth_sensor_coverage_stops_at_occlusion_and_uses_distance_scans():
+    truth = _truth(
+        [[True, True, False, True, True]],
+        occupied=[[False, False, True, False, False]],
+    )
+    sensor = TruthSensorCoverageAccumulator(
+        truth,
+        maximum_range_m=10.0,
+        field_of_view_rad=2.0 * np.pi,
+        angular_resolution_rad=np.pi / 2.0,
+        scan_interval_m=1.0,
+        distance_checkpoints_m=(0.0, 1.0, 2.0),
+    )
+
+    assert sensor.ingest(1, (0.5, 0.5, 0.0), 0.0) is True
+    assert sensor.ingest(2, (1.0, 0.5, 0.0), 0.5) is False
+    assert sensor.ingest(3, (1.5, 0.5, 0.0), 1.0) is True
+
+    snapshot = sensor.snapshot(1.0)
+    assert snapshot["truth_free_visible_cells"] == 2
+    assert snapshot["truth_sensor_coverage"] == pytest.approx(0.5)
+    assert snapshot["ideal_scan_count"] == 2
+    assert snapshot["skipped_interval_pose_count"] == 1
+    assert snapshot["sensor_model"]["ray_count"] == 4
+    checkpoints = {
+        item["distance_m"]: item["coverage"]
+        for item in snapshot["coverage_at_distance"]
+    }
+    assert checkpoints[0.0] == pytest.approx(0.5)
+    assert checkpoints[1.0] == pytest.approx(0.5)
+    assert checkpoints[2.0] is None
+
+
+def test_truth_sensor_coverage_respects_rotated_truth_origin():
+    truth = TruthGrid(
+        free=np.asarray([[True, True]], dtype=bool),
+        occupied=np.asarray([[False, False]], dtype=bool),
+        resolution=1.0,
+        origin=(10.0, 20.0),
+        origin_yaw=np.pi / 2.0,
+    )
+    sensor = TruthSensorCoverageAccumulator(
+        truth,
+        maximum_range_m=2.0,
+        angular_resolution_rad=np.pi / 2.0,
+    )
+
+    assert sensor.ingest(1, (9.5, 20.5, 0.0), 0.0) is True
+    assert sensor.snapshot(0.0)["truth_sensor_coverage"] == 1.0
+
+
+def test_ground_truth_endpoints_report_policy_redundancy_without_map_frame():
+    endpoints = GroundTruthEndpointAccumulator(merge_distance_m=0.25)
+
+    assert endpoints.add(
+        (0.0, 0.0), source="session_started", source_id=0,
+        event_time_ns=10, truth_time_ns=9,
+    ) is True
+    assert endpoints.add(
+        (0.1, 0.0), source="topological_node", source_id=1,
+        event_time_ns=20, truth_time_ns=18,
+    ) is False
+    assert endpoints.add(
+        (0.25, 0.0), source="topological_node", source_id=2,
+        event_time_ns=30, truth_time_ns=30,
+    ) is True
+
+    snapshot = endpoints.snapshot()
+    assert snapshot["raw_endpoint_observation_count"] == 3
+    assert snapshot["duplicate_endpoint_observation_count"] == 1
+    assert snapshot["redundant_endpoint_fraction"] == pytest.approx(1.0 / 3.0)
+    assert snapshot["unique_endpoint_count"] == 2
+    assert snapshot["truth_pose_age_max_ms"] == pytest.approx(2e-6)
 
 
 def test_truth_clearance_reports_raw_and_radius_reduced_statistics():

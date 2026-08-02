@@ -23,6 +23,15 @@ sstg_system_eval:
     tf_sample_period_s: 0.1
     tf_minimum_step_m: 0.002
     ground_truth_minimum_step_m: 0.002
+    # Evaluator-only policy lane aligned with the pure unknown-map benchmark.
+    # It raycasts static truth from the physical Gazebo trajectory and never
+    # publishes truth back into the policy namespace.
+    truth_sensor_maximum_range_m: 20.0
+    truth_sensor_field_of_view_rad: 6.283185307179586
+    truth_sensor_angular_resolution_rad: 0.017453292519943295
+    truth_sensor_scan_interval_m: 1.0
+    truth_sensor_distance_checkpoints_m: [0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0]
+    truth_endpoint_merge_distance_m: 0.25
     # Nav2's upstream TB3 Waffle radius plus the frozen costmap padding.
     robot_clearance_radius_m: 0.24
     ate_pairing_delay_s: 0.15

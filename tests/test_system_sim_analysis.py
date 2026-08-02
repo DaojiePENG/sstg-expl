@@ -56,6 +56,31 @@ def _snapshot(
         "schema": "sstg_system_sim_evaluator_snapshot/v2",
         "reason": reason,
         "ros_time_ns": 123456789,
+        "core_policy_endpoints": {
+            "c_i_truth_sensor": information,
+            "c_t_truth_endpoints": topological,
+            "joint_min": min(information, topological),
+            "dual_threshold_success": dual,
+            "coverage_distance_auc_normalized": information * 0.9,
+        },
+        "core_policy": {
+            "truth_sensor": {
+                "truth_sensor_coverage": information,
+                "coverage_distance_auc_normalized": information * 0.9,
+                "coverage_gain_per_travel_m": information / max(travel, 1.0),
+                "ideal_scan_count": 20,
+            },
+            "truth_topological": {
+                "topological_coverage": topological,
+                "joint_coverage": min(information, topological),
+                "dual_threshold_success": dual,
+                "endpoint_audit": {
+                    "unique_endpoint_count": nodes,
+                    "raw_endpoint_observation_count": raw_nodes,
+                    "duplicate_endpoint_observation_count": duplicates,
+                },
+            },
+        },
         "coverage_endpoints": {
             "c_i_information": information,
             "c_t_topological": topological,

@@ -28,9 +28,11 @@ from .metrics import (
     BeliefGrid,
     CameraGeometry,
     CollisionAccumulator,
+    GroundTruthEndpointAccumulator,
     GroundTruthMotionAccumulator,
     TargetRecallAccumulator,
     TruthClearanceAccumulator,
+    TruthSensorCoverageAccumulator,
     TopologicalNodeAccumulator,
     TrajectoryAccumulator,
     WorldStatisticsAccumulator,
@@ -130,6 +132,29 @@ class SystemEvaluatorNode(Node):
         self.ground_truth_motion = GroundTruthMotionAccumulator(
             self.ground_truth_minimum_step_m
         )
+        self.truth_sensor_coverage = TruthSensorCoverageAccumulator(
+            self.truth,
+            maximum_range_m=float(
+                self.get_parameter("truth_sensor_maximum_range_m").value
+            ),
+            field_of_view_rad=float(
+                self.get_parameter("truth_sensor_field_of_view_rad").value
+            ),
+            angular_resolution_rad=float(
+                self.get_parameter("truth_sensor_angular_resolution_rad").value
+            ),
+            scan_interval_m=float(
+                self.get_parameter("truth_sensor_scan_interval_m").value
+            ),
+            distance_checkpoints_m=self.get_parameter(
+                "truth_sensor_distance_checkpoints_m"
+            ).value,
+        )
+        self.truth_endpoints = GroundTruthEndpointAccumulator(
+            float(
+                self.get_parameter("truth_endpoint_merge_distance_m").value
+            )
+        )
         self.clearance = TruthClearanceAccumulator(
             self.truth,
             float(self.get_parameter("robot_clearance_radius_m").value),
@@ -220,6 +245,7 @@ class SystemEvaluatorNode(Node):
         self.ate_tf_wait_count = 0
         self.ate_tf_drop_count = 0
         self._last_ground_truth_stamp_ns: Optional[int] = None
+        self._latest_truth_pose: Optional[tuple] = None
         self._pending_ate = deque()
         self.target_session_active = False
         self._ate_session_finalizing = False
@@ -303,6 +329,14 @@ class SystemEvaluatorNode(Node):
             "tf_sample_period_s": 0.1,
             "tf_minimum_step_m": 0.002,
             "ground_truth_minimum_step_m": 0.002,
+            "truth_sensor_maximum_range_m": 20.0,
+            "truth_sensor_field_of_view_rad": 6.283185307179586,
+            "truth_sensor_angular_resolution_rad": 0.017453292519943295,
+            "truth_sensor_scan_interval_m": 1.0,
+            "truth_sensor_distance_checkpoints_m": [
+                0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0,
+            ],
+            "truth_endpoint_merge_distance_m": 0.25,
             "robot_clearance_radius_m": 0.24,
             "ate_pairing_delay_s": 0.15,
             "ate_tf_expiration_s": 2.0,
@@ -390,12 +424,25 @@ class SystemEvaluatorNode(Node):
             "robot_clearance_radius_m",
             "collision_minimum_depth_m",
             "target_los_endpoint_clearance_m",
+            "truth_endpoint_merge_distance_m",
         ):
             value = float(self.get_parameter(name).value)
             if not math.isfinite(value) or value < 0.0:
                 raise ValueError(f"{name} must be non-negative and finite")
         if float(self.get_parameter("robot_clearance_radius_m").value) <= 0.0:
             raise ValueError("robot_clearance_radius_m must be positive")
+        for name in (
+            "truth_sensor_maximum_range_m",
+            "truth_sensor_field_of_view_rad",
+            "truth_sensor_angular_resolution_rad",
+            "truth_sensor_scan_interval_m",
+        ):
+            value = float(self.get_parameter(name).value)
+            if not math.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be positive and finite")
+        fov = float(self.get_parameter("truth_sensor_field_of_view_rad").value)
+        if fov > 2.0 * math.pi + 1e-12:
+            raise ValueError("truth_sensor_field_of_view_rad must not exceed 2*pi")
         if float(self.get_parameter("ate_tf_expiration_s").value) <= float(
             self.get_parameter("ate_pairing_delay_s").value
         ):
@@ -511,6 +558,29 @@ class SystemEvaluatorNode(Node):
                 "accepted_topological_visit_contracts": [
                     "legacy_successful_execution_node",
                     "policy_transition_node_v1",
+                ],
+            },
+            "core_policy_evaluation": {
+                "primary_comparison_lane": True,
+                "information_metric": (
+                    "core_policy.truth_sensor.truth_sensor_coverage"
+                ),
+                "topological_metric": (
+                    "core_policy.truth_topological.topological_coverage"
+                ),
+                "efficiency_metric": (
+                    "core_policy.truth_sensor.coverage_distance_auc_normalized"
+                ),
+                "coordinate_frame": self.ground_truth_frame,
+                "truth_access": "evaluator_only_no_policy_feedback",
+                "sensor_model_alignment": (
+                    "pure_unknown_benchmark_360deg_20m_1deg_1m_interval"
+                ),
+                "system_diagnostics_excluded_from_core_score": [
+                    "planar_ate",
+                    "collision_count",
+                    "static_clearance",
+                    "nav2_technical_failure_count",
                 ],
             },
             "target_recall": {
@@ -637,6 +707,23 @@ class SystemEvaluatorNode(Node):
         if target_metrics["time_origin_ros_time_ns"] is None:
             target_metrics["status"] = "waiting_for_policy_session"
         ground_truth_metrics = self.ground_truth_motion.snapshot()
+        truth_sensor = self.truth_sensor_coverage.snapshot(
+            ground_truth_metrics["ground_truth_path_length_m"]
+        )
+        truth_information_coverage = (
+            truth_sensor["truth_sensor_coverage"]
+            if truth_sensor["ideal_scan_count"] > 0
+            else None
+        )
+        truth_topological = compute_topological_metrics(
+            self.truth,
+            self.truth_endpoints.positions,
+            self.topological_radius_m,
+            information_coverage=truth_information_coverage,
+            information_target=self.information_coverage_target,
+            topological_target=self.topological_coverage_target,
+        )
+        truth_topological["endpoint_audit"] = self.truth_endpoints.snapshot()
         ground_truth_sample_count = ground_truth_metrics[
             "ground_truth_sample_count"
         ]
@@ -667,6 +754,27 @@ class SystemEvaluatorNode(Node):
                 "dual_threshold_success": topological[
                     "dual_threshold_success"
                 ],
+            },
+            "core_policy_endpoints": {
+                "c_i_truth_sensor": truth_topological[
+                    "information_coverage"
+                ],
+                "c_t_truth_endpoints": truth_topological[
+                    "topological_coverage"
+                ],
+                "joint_min": truth_topological["joint_coverage"],
+                "dual_threshold_success": truth_topological[
+                    "dual_threshold_success"
+                ],
+                "coverage_distance_auc_normalized": truth_sensor[
+                    "coverage_distance_auc_normalized"
+                ],
+            },
+            "core_policy": {
+                "schema": "sstg_system_sim_core_policy_metrics/v1",
+                "comparison_role": "primary_policy_information_acquisition",
+                "truth_sensor": truth_sensor,
+                "truth_topological": truth_topological,
             },
             "trajectory": {
                 "role": "estimated_odometry_diagnostic",
@@ -807,6 +915,8 @@ class SystemEvaluatorNode(Node):
             self.ground_truth_motion = GroundTruthMotionAccumulator(
                 self.ground_truth_minimum_step_m
             )
+            self.truth_sensor_coverage.reset()
+            self.truth_endpoints.reset()
             self.clearance.reset_samples()
             self._pending_ate.clear()
             self._last_ground_truth_stamp_ns = None
@@ -817,6 +927,11 @@ class SystemEvaluatorNode(Node):
             self._ate_settlement_deadline_ns = None
             self.target_recall.begin_session(session_time_ns)
             self.target_session_active = True
+            self._add_truth_endpoint(
+                source="session_started",
+                source_id=0,
+                event_time_ns=session_time_ns,
+            )
         elif event == "session_finished":
             self.target_session_active = False
             try:
@@ -841,6 +956,30 @@ class SystemEvaluatorNode(Node):
                 "reason": str(error),
             })
             self.get_logger().error(f"Rejected topology trace fields: {error}")
+        if event == "topological_node":
+            payload = self.actions.latest_record["payload"]
+            self._add_truth_endpoint(
+                source="topological_node",
+                source_id=payload.get("event_id"),
+                event_time_ns=int(payload.get(
+                    "causal_ros_time_ns",
+                    self.actions.latest_record.get("ros_time_ns", self._now_ns()),
+                )),
+            )
+        elif event == "execution":
+            payload = self.actions.latest_record["payload"]
+            if (
+                payload.get("topological_node_event_id") is None
+                and payload.get("succeeded") is True
+                and payload.get("topological_node_created") is True
+            ):
+                self._add_truth_endpoint(
+                    source="legacy_execution",
+                    source_id=payload.get("decision_id"),
+                    event_time_ns=int(self.actions.latest_record.get(
+                        "ros_time_ns", self._now_ns()
+                    )),
+                )
         with self.observed_trace_path.open("a", encoding="utf-8") as stream:
             stream.write(_strict_json(self.actions.latest_record) + "\n")
         self._append_event("policy_trace_ingested", {
@@ -862,6 +1001,21 @@ class SystemEvaluatorNode(Node):
     def _message_stamp_ns(self, stamp) -> int:
         stamp_ns = int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
         return stamp_ns if stamp_ns > 0 else self._now_ns()
+
+    def _add_truth_endpoint(
+        self, *, source: str, source_id: Any, event_time_ns: int
+    ) -> bool:
+        if self._latest_truth_pose is None:
+            self.truth_endpoints.note_missing_pose()
+            return False
+        truth_time_ns, truth_x, truth_y, _truth_yaw = self._latest_truth_pose
+        return self.truth_endpoints.add(
+            (truth_x, truth_y),
+            source=source,
+            source_id=source_id,
+            event_time_ns=event_time_ns,
+            truth_time_ns=truth_time_ns,
+        )
 
     def _ground_truth_callback(self, message: Odometry) -> None:
         try:
@@ -897,6 +1051,10 @@ class SystemEvaluatorNode(Node):
             self._publish_status("GROUND_TRUTH_REJECTED", str(error))
             return
 
+        self._latest_truth_pose = (
+            stamp_ns, truth_x, truth_y, truth_yaw
+        )
+
         accepts_late_terminal_sample = (
             self._ate_session_finalizing
             and self._session_end_ros_time_ns is not None
@@ -915,6 +1073,12 @@ class SystemEvaluatorNode(Node):
         moved = self.ground_truth_motion.add_ground_truth(
             stamp_ns, truth_x, truth_y
         )
+        if self.target_session_active:
+            self.truth_sensor_coverage.ingest(
+                stamp_ns,
+                (truth_x, truth_y, truth_yaw),
+                self.ground_truth_motion.path.path_length_m,
+            )
         self.clearance.add(truth_x, truth_y)
         truth_in_map = transform_planar_point(
             (truth_x, truth_y), self.truth_to_map[:2], self.truth_to_map[2]

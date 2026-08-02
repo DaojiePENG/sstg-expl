@@ -619,6 +619,378 @@ class GroundTruthMotionAccumulator:
         }
 
 
+class TruthSensorCoverageAccumulator:
+    """Ideal planar-LiDAR coverage along the physical Gazebo trajectory.
+
+    This evaluator-only proxy deliberately uses the registered truth pose and
+    static truth occupancy instead of the SLAM map.  It therefore measures the
+    information-acquisition consequence of a policy trajectory without
+    rewarding or penalizing map deformation.  The default 360 degree, 20 m,
+    1 degree model and 1 m scan interval match the pure unknown-map benchmark.
+    """
+
+    def __init__(
+        self,
+        truth: TruthGrid,
+        *,
+        maximum_range_m: float = 20.0,
+        field_of_view_rad: float = 2.0 * math.pi,
+        angular_resolution_rad: float = math.pi / 180.0,
+        scan_interval_m: float = 1.0,
+        distance_checkpoints_m: Sequence[float] = (
+            0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0,
+        ),
+    ):
+        self.truth = truth
+        self.maximum_range_m = _finite_float(
+            maximum_range_m, "truth sensor maximum range"
+        )
+        self.field_of_view_rad = _finite_float(
+            field_of_view_rad, "truth sensor field of view"
+        )
+        self.angular_resolution_rad = _finite_float(
+            angular_resolution_rad, "truth sensor angular resolution"
+        )
+        self.scan_interval_m = _finite_float(
+            scan_interval_m, "truth sensor scan interval"
+        )
+        if self.maximum_range_m <= 0.0:
+            raise ValueError("truth sensor maximum range must be positive")
+        if not 0.0 < self.field_of_view_rad <= 2.0 * math.pi + 1e-12:
+            raise ValueError("truth sensor field of view must be in (0, 2*pi]")
+        if self.angular_resolution_rad <= 0.0:
+            raise ValueError("truth sensor angular resolution must be positive")
+        if self.scan_interval_m <= 0.0:
+            raise ValueError("truth sensor scan interval must be positive")
+        checkpoints = tuple(
+            _finite_float(value, "truth sensor distance checkpoint")
+            for value in distance_checkpoints_m
+        )
+        if any(value < 0.0 for value in checkpoints):
+            raise ValueError("truth sensor distance checkpoints must be non-negative")
+        if tuple(sorted(set(checkpoints))) != checkpoints:
+            raise ValueError(
+                "truth sensor distance checkpoints must be unique and sorted"
+            )
+        self.distance_checkpoints_m = checkpoints
+        ray_count = max(
+            1, int(math.ceil(self.field_of_view_rad / self.angular_resolution_rad))
+        )
+        if self.field_of_view_rad >= 2.0 * math.pi - 1e-12:
+            self._ray_offsets = np.linspace(
+                -math.pi, math.pi, ray_count, endpoint=False, dtype=np.float64
+            )
+        elif ray_count == 1:
+            self._ray_offsets = np.asarray([0.0], dtype=np.float64)
+        else:
+            self._ray_offsets = np.linspace(
+                -0.5 * self.field_of_view_rad,
+                0.5 * self.field_of_view_rad,
+                ray_count,
+                endpoint=True,
+                dtype=np.float64,
+            )
+        self.reset()
+
+    def reset(self) -> None:
+        self.observed_free = np.zeros(self.truth.shape, dtype=bool)
+        self.pose_sample_count = 0
+        self.scan_count = 0
+        self.skipped_interval_pose_count = 0
+        self.outside_or_nonfree_pose_count = 0
+        self.time_reset_count = 0
+        self._last_time_ns: Optional[int] = None
+        self._last_scan_travel_m: Optional[float] = None
+        self._last_scan_coverage = 0.0
+        self._last_scan_auc_travel_m = 0.0
+        self._coverage_distance_area = 0.0
+        self._checkpoint_coverage: Dict[float, float] = {}
+
+    def _truth_local(self, x: float, y: float) -> Tuple[float, float]:
+        delta_x = x - self.truth.origin[0]
+        delta_y = y - self.truth.origin[1]
+        cosine = math.cos(self.truth.origin_yaw)
+        sine = math.sin(self.truth.origin_yaw)
+        return (
+            cosine * delta_x + sine * delta_y,
+            -sine * delta_x + cosine * delta_y,
+        )
+
+    def _coverage(self) -> float:
+        total = int(np.count_nonzero(self.truth.free))
+        return float(np.count_nonzero(self.observed_free & self.truth.free)) / max(
+            total, 1
+        )
+
+    def _trace_ray(
+        self, local_x: float, local_y: float, local_angle: float
+    ) -> None:
+        resolution = self.truth.resolution
+        height, width = self.truth.shape
+        column = int(math.floor(local_x / resolution))
+        row = int(math.floor(local_y / resolution))
+        direction_x = math.cos(local_angle)
+        direction_y = math.sin(local_angle)
+
+        if direction_x > 1e-15:
+            step_column = 1
+            t_max_x = ((column + 1) * resolution - local_x) / direction_x
+            t_delta_x = resolution / direction_x
+        elif direction_x < -1e-15:
+            step_column = -1
+            t_max_x = (column * resolution - local_x) / direction_x
+            t_delta_x = -resolution / direction_x
+        else:
+            step_column = 0
+            t_max_x = math.inf
+            t_delta_x = math.inf
+        if direction_y > 1e-15:
+            step_row = 1
+            t_max_y = ((row + 1) * resolution - local_y) / direction_y
+            t_delta_y = resolution / direction_y
+        elif direction_y < -1e-15:
+            step_row = -1
+            t_max_y = (row * resolution - local_y) / direction_y
+            t_delta_y = -resolution / direction_y
+        else:
+            step_row = 0
+            t_max_y = math.inf
+            t_delta_y = math.inf
+
+        distance = 0.0
+        while distance <= self.maximum_range_m + 1e-12:
+            if not (0 <= row < height and 0 <= column < width):
+                break
+            if not self.truth.free[row, column]:
+                break
+            self.observed_free[row, column] = True
+            if t_max_x < t_max_y - 1e-12:
+                column += step_column
+                distance = t_max_x
+                t_max_x += t_delta_x
+            elif t_max_y < t_max_x - 1e-12:
+                row += step_row
+                distance = t_max_y
+                t_max_y += t_delta_y
+            else:
+                column += step_column
+                row += step_row
+                distance = min(t_max_x, t_max_y)
+                t_max_x += t_delta_x
+                t_max_y += t_delta_y
+
+    def _scan(self, x: float, y: float, yaw: float) -> bool:
+        local_x, local_y = self._truth_local(x, y)
+        column = int(math.floor(local_x / self.truth.resolution))
+        row = int(math.floor(local_y / self.truth.resolution))
+        height, width = self.truth.shape
+        if (
+            not (0 <= row < height and 0 <= column < width)
+            or not self.truth.free[row, column]
+        ):
+            self.outside_or_nonfree_pose_count += 1
+            return False
+        local_yaw = yaw - self.truth.origin_yaw
+        for offset in self._ray_offsets:
+            self._trace_ray(local_x, local_y, local_yaw + float(offset))
+        self.scan_count += 1
+        return True
+
+    def _record_checkpoints(self, travel_m: float, coverage: float) -> None:
+        for checkpoint in self.distance_checkpoints_m:
+            if checkpoint > travel_m + 1e-12:
+                break
+            self._checkpoint_coverage.setdefault(checkpoint, coverage)
+
+    def ingest(
+        self,
+        time_ns: int,
+        pose: Sequence[float],
+        travel_m: float,
+    ) -> bool:
+        if isinstance(pose, (str, bytes)) or len(pose) < 3:
+            raise ValueError("truth sensor pose must contain x, y and yaw")
+        time_ns = int(time_ns)
+        x = _finite_float(pose[0], "truth sensor pose x")
+        y = _finite_float(pose[1], "truth sensor pose y")
+        yaw = _finite_float(pose[2], "truth sensor pose yaw")
+        travel_m = _finite_float(travel_m, "truth sensor travel")
+        if time_ns < 0 or travel_m < 0.0:
+            raise ValueError("truth sensor time and travel must be non-negative")
+        self.pose_sample_count += 1
+        if self._last_time_ns is not None and time_ns < self._last_time_ns:
+            self.time_reset_count += 1
+            self._last_scan_travel_m = None
+            self._last_scan_auc_travel_m = travel_m
+        self._last_time_ns = time_ns
+        due = (
+            self._last_scan_travel_m is None
+            or travel_m - self._last_scan_travel_m
+            >= self.scan_interval_m - 1e-12
+        )
+        scanned = False
+        if due:
+            before = self._last_scan_coverage
+            self._coverage_distance_area += max(
+                0.0, travel_m - self._last_scan_auc_travel_m
+            ) * before
+            self._last_scan_auc_travel_m = travel_m
+            scanned = self._scan(x, y, yaw)
+            if scanned:
+                self._last_scan_travel_m = travel_m
+                self._last_scan_coverage = self._coverage()
+        else:
+            self.skipped_interval_pose_count += 1
+        self._record_checkpoints(travel_m, self._last_scan_coverage)
+        return scanned
+
+    def snapshot(self, travel_m: Optional[float] = None) -> Dict[str, Any]:
+        if travel_m is None:
+            travel_m = self._last_scan_auc_travel_m
+        travel_m = _finite_float(travel_m, "truth sensor snapshot travel")
+        if travel_m < 0.0:
+            raise ValueError("truth sensor snapshot travel must be non-negative")
+        coverage = self._coverage()
+        area = self._coverage_distance_area + max(
+            0.0, travel_m - self._last_scan_auc_travel_m
+        ) * self._last_scan_coverage
+        covered = int(np.count_nonzero(self.observed_free & self.truth.free))
+        total = int(np.count_nonzero(self.truth.free))
+        return {
+            "schema": "sstg_system_sim_truth_sensor_coverage/v1",
+            "status": "available" if self.scan_count else "waiting_for_pose",
+            "semantics": (
+                "ideal static-truth planar LiDAR union along ground-truth "
+                "trajectory; independent of SLAM map deformation"
+            ),
+            "truth_free_total_cells": total,
+            "truth_free_visible_cells": covered,
+            "truth_sensor_coverage": _fraction(covered, total),
+            "coverage_distance_auc_m": area,
+            "coverage_distance_auc_normalized": (
+                None if travel_m <= 0.0 else area / travel_m
+            ),
+            "coverage_gain_per_travel_m": (
+                None if travel_m <= 0.0 else coverage / travel_m
+            ),
+            "ground_truth_travel_m": travel_m,
+            "pose_sample_count": self.pose_sample_count,
+            "ideal_scan_count": self.scan_count,
+            "skipped_interval_pose_count": self.skipped_interval_pose_count,
+            "outside_or_nonfree_pose_count": self.outside_or_nonfree_pose_count,
+            "time_reset_count": self.time_reset_count,
+            "sensor_model": {
+                "field_of_view_rad": self.field_of_view_rad,
+                "maximum_range_m": self.maximum_range_m,
+                "angular_resolution_rad": self.angular_resolution_rad,
+                "ray_count": int(len(self._ray_offsets)),
+                "scan_interval_m": self.scan_interval_m,
+                "occlusion_model": "truth_grid_dda_first_nonfree_stop",
+                "unknown_truth_cells_are_occluding": True,
+            },
+            "coverage_at_distance": [
+                {
+                    "distance_m": checkpoint,
+                    "coverage": self._checkpoint_coverage.get(checkpoint),
+                }
+                for checkpoint in self.distance_checkpoints_m
+            ],
+            "limitations": [
+                "idealized 2-D static sensor proxy; noise and dynamic occluders "
+                "are intentionally excluded to isolate policy information gain",
+                "distance checkpoints use the first ground-truth sample at or "
+                "after each frozen distance",
+            ],
+        }
+
+
+class GroundTruthEndpointAccumulator:
+    """Deduplicate policy transition endpoints in the simulation truth frame."""
+
+    def __init__(self, merge_distance_m: float = 0.25):
+        self.merge_distance_m = _finite_float(
+            merge_distance_m, "ground-truth endpoint merge distance"
+        )
+        if self.merge_distance_m < 0.0:
+            raise ValueError("ground-truth endpoint merge distance must be non-negative")
+        self.reset()
+
+    def reset(self) -> None:
+        self.nodes = []
+        self.raw_endpoint_observation_count = 0
+        self.duplicate_endpoint_observation_count = 0
+        self.missing_truth_pose_count = 0
+        self._absolute_pose_age_ns = []
+
+    def note_missing_pose(self) -> None:
+        self.missing_truth_pose_count += 1
+
+    def add(
+        self,
+        position: Sequence[float],
+        *,
+        source: str,
+        source_id: Any,
+        event_time_ns: int,
+        truth_time_ns: int,
+    ) -> bool:
+        if isinstance(position, (str, bytes)) or len(position) < 2:
+            raise ValueError("ground-truth endpoint must contain x and y")
+        x = _finite_float(position[0], "ground-truth endpoint x")
+        y = _finite_float(position[1], "ground-truth endpoint y")
+        event_time_ns = int(event_time_ns)
+        truth_time_ns = int(truth_time_ns)
+        if event_time_ns < 0 or truth_time_ns < 0:
+            raise ValueError("ground-truth endpoint timestamps must be non-negative")
+        self.raw_endpoint_observation_count += 1
+        self._absolute_pose_age_ns.append(abs(event_time_ns - truth_time_ns))
+        duplicate = next((
+            node["unique_node_index"]
+            for node in self.nodes
+            if math.hypot(x - node["x_m"], y - node["y_m"])
+            < self.merge_distance_m - 1e-12
+        ), None)
+        if duplicate is not None:
+            self.duplicate_endpoint_observation_count += 1
+            return False
+        self.nodes.append({
+            "unique_node_index": len(self.nodes),
+            "x_m": x,
+            "y_m": y,
+            "source": str(source),
+            "source_id": source_id,
+            "event_time_ns": event_time_ns,
+            "truth_time_ns": truth_time_ns,
+        })
+        return True
+
+    @property
+    def positions(self):
+        return [(node["x_m"], node["y_m"]) for node in self.nodes]
+
+    def snapshot(self) -> Dict[str, Any]:
+        raw = self.raw_endpoint_observation_count
+        duplicate = self.duplicate_endpoint_observation_count
+        ages = np.asarray(self._absolute_pose_age_ns, dtype=np.float64)
+        return {
+            "schema": "sstg_system_sim_truth_endpoints/v1",
+            "coordinate_frame": "ground_truth",
+            "merge_distance_m": self.merge_distance_m,
+            "raw_endpoint_observation_count": raw,
+            "duplicate_endpoint_observation_count": duplicate,
+            "redundant_endpoint_fraction": _fraction(duplicate, raw),
+            "unique_endpoint_count": len(self.nodes),
+            "missing_truth_pose_count": self.missing_truth_pose_count,
+            "truth_pose_age_mean_ms": (
+                None if not len(ages) else float(np.mean(ages) / 1e6)
+            ),
+            "truth_pose_age_max_ms": (
+                None if not len(ages) else float(np.max(ages) / 1e6)
+            ),
+            "unique_endpoints": [dict(node) for node in self.nodes],
+        }
+
+
 class TruthClearanceAccumulator:
     """Sample conservative footprint clearance in a static truth grid.
 
