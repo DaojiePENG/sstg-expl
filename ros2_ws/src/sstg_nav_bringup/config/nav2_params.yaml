@@ -123,10 +123,12 @@ controller_server:
       use_velocity_scaled_lookahead_dist: false
       min_approach_linear_velocity: 0.05
       approach_velocity_scaling_dist: 0.6
-      # Collision checking is already shared through the Nav2 costmaps and the
-      # downstream collision_monitor.  Disabling this controller-local copy
-      # avoids a second, controller-specific safety gate in the policy screen.
-      use_collision_detection: false
+      # Keep exactly one reactive collision check in the core screen.  The
+      # downstream collision_monitor action is disabled, so RPP must project
+      # its commanded arc through the shared local costmap.  This uses only
+      # online /scan data (never evaluator truth or ATE) and prevents a policy
+      # goal from leaving the physical robot in contact and unable to replan.
+      use_collision_detection: true
       max_allowed_time_to_collision_up_to_carrot: 1.0
       use_regulated_linear_velocity_scaling: true
       use_cost_regulated_linear_velocity_scaling: false

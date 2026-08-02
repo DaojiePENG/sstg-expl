@@ -225,7 +225,7 @@ shared_autonomy:
     symmetric_corridor_retained_as_stress_test: true
   navigation: nav2
   local_controller: nav2_regulated_pure_pursuit_core_v3
-  core_collision_contract: policy_footprint_and_nav2_costmaps_only
+  core_collision_contract: policy_footprint_nav2_costmaps_and_rpp_arc_check
   predictive_collision_monitor_role: disabled_in_core_enable_only_as_safety_ablation
   nav2_params: ros2_ws/src/sstg_nav_bringup/config/nav2_params.yaml
   slam_params: ros2_ws/src/sstg_nav_bringup/config/slam_toolbox.yaml

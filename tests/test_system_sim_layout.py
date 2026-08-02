@@ -710,7 +710,9 @@ def test_frozen_nav2_parameters_stay_inside_upstream_tb3_limits():
     ] == footprint["radius_m"]
     assert controller["use_rotate_to_heading"] is True
     assert controller["stateful"] is True
-    assert controller["use_collision_detection"] is False
+    # The external collision monitor action is disabled in the core screen,
+    # leaving RPP's local-costmap arc projection as the single reactive gate.
+    assert controller["use_collision_detection"] is True
     collision_monitor = nav2["collision_monitor"]["ros__parameters"]
     assert collision_monitor["FootprintApproach"]["enabled"] is False
     assert collision_monitor["scan"]["enabled"] is False
