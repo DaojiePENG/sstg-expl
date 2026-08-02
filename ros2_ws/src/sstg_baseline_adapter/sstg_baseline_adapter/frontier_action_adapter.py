@@ -34,6 +34,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.duration import Duration
 from rclpy.exceptions import InvalidHandle
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
+from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
@@ -51,6 +52,10 @@ UPSTREAM_TAG = "v1.6.1"
 UPSTREAM_COMMIT = "b0fad500e5c81ad3154f0469ca283b2702a3f90c"
 ALGORITHM_IDENTITY = "wfd_decision_map_mrtsp_bounded_horizon_dp_with_preemption"
 TOPOLOGICAL_VISIT_CONTRACT = "policy_transition_node_v1"
+
+# Jazzy does not re-export RCLError from rclpy.exceptions.  The public rclpy
+# modules use the implementation singleton for the same exception type.
+RCLError = _rclpy.RCLError
 
 
 def _shutdown_executor_and_retrieve_tasks(
@@ -1557,6 +1562,13 @@ def main(args=None) -> None:
         executor.spin()
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
+    except RCLError:
+        # With Jazzy's default signal handlers, SIGINT can invalidate the ROS
+        # context between the executor loop condition and wait-set creation.
+        # That is an expected shutdown race.  Never hide an RCLError while the
+        # context is still live because it may indicate an actual graph fault.
+        if rclpy.ok():
+            raise
     finally:
         if executor is not None:
             for error in _shutdown_executor_and_retrieve_tasks(executor):

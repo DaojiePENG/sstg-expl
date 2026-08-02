@@ -43,7 +43,9 @@ from tf2_ros import TransformBroadcaster
 
 from sstg_baseline_adapter.frontier_action_adapter import (
     FrontierActionAdapter,
+    RCLError,
     _shutdown_executor_and_retrieve_tasks,
+    main,
 )
 
 
@@ -93,6 +95,79 @@ def test_shutdown_retrieves_expected_invalid_handle_and_reports_other_errors():
     assert unexpected.exception_retrieved is True
     assert pending.exception_retrieved is False
     assert errors == [unexpected.error]
+
+
+class _MainNode:
+    def __init__(self):
+        self.destroyed = False
+
+    def destroy_node(self):
+        self.destroyed = True
+
+
+class _MainExecutor:
+    def __init__(self, error):
+        self.error = error
+        self.node = None
+        self.shutdown_called = False
+        self._executor = _ShutdownWorkerPool()
+        self._futures = []
+
+    def add_node(self, node):
+        self.node = node
+
+    def spin(self):
+        raise self.error
+
+    def shutdown(self):
+        self.shutdown_called = True
+
+
+def _patch_main_runtime(monkeypatch, *, context_ok):
+    node = _MainNode()
+    executor = _MainExecutor(RCLError("context is not valid"))
+    monkeypatch.setattr(
+        "sstg_baseline_adapter.frontier_action_adapter.rclpy.init",
+        lambda args=None: None,
+    )
+    monkeypatch.setattr(
+        "sstg_baseline_adapter.frontier_action_adapter.rclpy.ok",
+        lambda: context_ok,
+    )
+    monkeypatch.setattr(
+        "sstg_baseline_adapter.frontier_action_adapter.rclpy.shutdown",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "sstg_baseline_adapter.frontier_action_adapter.FrontierActionAdapter",
+        lambda: node,
+    )
+    monkeypatch.setattr(
+        "sstg_baseline_adapter.frontier_action_adapter.MultiThreadedExecutor",
+        lambda num_threads: executor,
+    )
+    return node, executor
+
+
+def test_main_treats_rcl_error_as_expected_after_context_shutdown(monkeypatch):
+    node, executor = _patch_main_runtime(monkeypatch, context_ok=False)
+
+    main()
+
+    assert executor.shutdown_called is True
+    assert executor._executor.wait is True
+    assert node.destroyed is True
+
+
+def test_main_does_not_hide_rcl_error_while_context_is_live(monkeypatch):
+    node, executor = _patch_main_runtime(monkeypatch, context_ok=True)
+
+    with pytest.raises(RCLError, match="context is not valid"):
+        main()
+
+    assert executor.shutdown_called is True
+    assert executor._executor.wait is True
+    assert node.destroyed is True
 
 
 def _wait_until(predicate, timeout_s=8.0, description="condition"):
