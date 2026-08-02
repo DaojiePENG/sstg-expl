@@ -38,6 +38,7 @@ try:
         FREEZE_SCHEMA,
         GAZEBO_SEED_MAX,
         GAZEBO_SEED_MIN,
+        METHOD_POLICY_DEFAULTS,
         RUNTIME_ADAPTERS,
         SCHEDULE_SCHEMA,
         SEED_LAUNCH_ARGUMENTS,
@@ -60,6 +61,7 @@ except ModuleNotFoundError as error:
         FREEZE_SCHEMA,
         GAZEBO_SEED_MAX,
         GAZEBO_SEED_MIN,
+        METHOD_POLICY_DEFAULTS,
         RUNTIME_ADAPTERS,
         SCHEDULE_SCHEMA,
         SEED_LAUNCH_ARGUMENTS,
@@ -1114,6 +1116,26 @@ def _method_runtime_contract(
             raise RunnerError(
                 f"method config {config_field} disagrees with schedule row"
             )
+    for field, default in METHOD_POLICY_DEFAULTS.items():
+        try:
+            config_value = float(config.get(field, default))
+            row_value = float(row.get(field, ""))
+        except (TypeError, ValueError) as error:
+            raise RunnerError(
+                f"method policy field {field} must be numeric"
+            ) from error
+        if (
+            not math.isfinite(config_value)
+            or not math.isfinite(row_value)
+            or config_value < 0.0
+            or row_value < 0.0
+            or not math.isclose(
+                config_value, row_value, rel_tol=0.0, abs_tol=1e-12
+            )
+        ):
+            raise RunnerError(
+                f"method config {field} disagrees with schedule row"
+            )
     runtime_adapter = str(config.get("runtime_adapter", ""))
     if runtime_adapter not in RUNTIME_ADAPTERS:
         raise RunnerError(
@@ -1127,6 +1149,7 @@ def _method_runtime_contract(
         "runtime_adapter": "runtime_adapter",
         "strategy": "strategy",
         "coverage_objective": "coverage_objective",
+        **{name: name for name in METHOD_POLICY_DEFAULTS},
     }.items():
         if argument in fixed_args or column_args.get(argument) != column:
             raise RunnerError(

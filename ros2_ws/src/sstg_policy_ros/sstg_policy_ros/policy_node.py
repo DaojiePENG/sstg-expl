@@ -231,6 +231,8 @@ class SSTGPolicyNode(Node):
             "information_gain_weight": 0.40,
             "topological_gain_weight": 0.60,
             "spacing_weight": 0.30,
+            "clearance_weight": 1.5,
+            "travel_cost_weight": 0.60,
             "min_gain_cells": 8,
             "min_topological_gain_cells": 8,
             "max_frontier_candidates": 48,
@@ -307,6 +309,12 @@ class SSTGPolicyNode(Node):
             ),
             spacing_weight=float(
                 self.get_parameter("spacing_weight").value
+            ),
+            clearance_weight=float(
+                self.get_parameter("clearance_weight").value
+            ),
+            travel_cost_weight=float(
+                self.get_parameter("travel_cost_weight").value
             ),
             multi_frontier=bool(
                 self.get_parameter("multi_frontier").value

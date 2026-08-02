@@ -13,4 +13,7 @@ coverage_objective: joint
 topological_radius_m: 2.0
 topological_merge_distance_m: 0.25
 policy_seed_applicable: false
+# Passed through the shared launch contract but unused by this upstream adapter.
+clearance_weight: 1.50
+travel_cost_weight: 0.60
 status: development_distance_transition_actionbag_shutdown_e2e_valid

@@ -12,4 +12,6 @@ topological_merge_distance_m: 0.25
 information_gain_weight: 0.40
 topological_gain_weight: 0.60
 spacing_weight: 0.30
+clearance_weight: 1.50
+travel_cost_weight: 0.60
 status: frozen_from_procedural_benchmark_for_development

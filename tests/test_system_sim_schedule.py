@@ -342,6 +342,14 @@ def test_schedule_is_matched_block_deterministic_and_hashed(tmp_path: Path) -> N
     for field, value in EXPERIMENT_BUDGET.items():
         assert manifest_a["launch"]["argument_columns"][field] == field
         assert all(float(row[field]) == pytest.approx(float(value)) for row in rows)
+    assert manifest_a["launch"]["argument_columns"][
+        "clearance_weight"
+    ] == "clearance_weight"
+    assert manifest_a["launch"]["argument_columns"][
+        "travel_cost_weight"
+    ] == "travel_cost_weight"
+    assert all(float(row["clearance_weight"]) == 1.5 for row in rows)
+    assert all(float(row["travel_cost_weight"]) == 0.6 for row in rows)
     assert manifest_a["design"]["run_output_root"] == (
         "system_sim_outputs/runs/gazebo_dev_test"
     )

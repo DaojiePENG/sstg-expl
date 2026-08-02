@@ -37,6 +37,10 @@ EXPERIMENT_BUDGET_FIELDS = (
     "max_decisions",
     "goal_timeout_s",
 )
+METHOD_POLICY_DEFAULTS = {
+    "clearance_weight": 1.5,
+    "travel_cost_weight": 0.60,
+}
 GAZEBO_SEED_MIN = 1
 GAZEBO_SEED_MAX = 0x7FFFFFFF
 SEED_LAUNCH_ARGUMENTS = ("policy_seed", "simulation_seed")
@@ -269,6 +273,7 @@ CSV_FIELDS = (
     "runtime_adapter",
     "strategy",
     "coverage_objective",
+    *METHOD_POLICY_DEFAULTS,
     "condition",
     "replicate_seed",
     "randomization_seed",
@@ -1036,7 +1041,7 @@ def freeze_schedule(
     paired = sorted(zip(methods, method_records), key=lambda pair: pair[1]["method"])
     methods = [item[0] for item in paired]
     method_records = [item[1] for item in paired]
-    method_launch: dict[str, dict[str, str]] = {}
+    method_launch: dict[str, dict[str, Any]] = {}
     for config, record in paired:
         method_id = record["method"]
         runtime_adapter = record["runtime_adapter"]
@@ -1057,7 +1062,20 @@ def freeze_schedule(
             "coverage_objective": _require_id(
                 config.get("coverage_objective"), "coverage_objective"
             ),
+            **{
+                name: _finite_number(
+                    config.get(name, default), f"{method_id}.{name}"
+                )
+                for name, default in METHOD_POLICY_DEFAULTS.items()
+            },
         }
+        if any(
+            method_launch[method_id][name] < 0.0
+            for name in METHOD_POLICY_DEFAULTS
+        ):
+            raise ScheduleError(
+                f"method {method_id} policy weights must be non-negative"
+            )
 
     worlds = _world_specs(root, registry, world_ids, start_policy)
     backend = str(shared_stack.get("backend"))
@@ -1209,6 +1227,12 @@ def freeze_schedule(
                             "coverage_objective": method_launch[method_id][
                                 "coverage_objective"
                             ],
+                            **{
+                                name: _format_float(
+                                    float(method_launch[method_id][name])
+                                )
+                                for name in METHOD_POLICY_DEFAULTS
+                            },
                             "condition": condition_id,
                             "replicate_seed": replicate_seed,
                             "randomization_seed": randomization_seed,
@@ -1371,6 +1395,8 @@ def freeze_schedule(
                 "runtime_adapter": "runtime_adapter",
                 "strategy": "strategy",
                 "coverage_objective": "coverage_objective",
+                "clearance_weight": "clearance_weight",
+                "travel_cost_weight": "travel_cost_weight",
                 "policy_seed": "replicate_seed",
                 "simulation_seed": "replicate_seed",
                 "max_duration_s": "max_duration_s",

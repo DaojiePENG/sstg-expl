@@ -27,6 +27,8 @@ sstg_policy:
     information_gain_weight: 0.40
     topological_gain_weight: 0.60
     spacing_weight: 0.30
+    clearance_weight: 1.5
+    travel_cost_weight: 0.60
     min_gain_cells: 8
     min_topological_gain_cells: 8
     max_frontier_candidates: 48

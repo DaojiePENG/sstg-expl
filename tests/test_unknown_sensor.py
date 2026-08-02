@@ -90,6 +90,18 @@ def test_final_unknown_sstg_uses_selected_spacing_utility():
     config = UnknownExplorerConfig()
     assert config.coverage_objective == "joint"
     assert config.spacing_weight == 0.30
+    assert config.clearance_weight == 1.5
+    assert config.travel_cost_weight == 0.60
+
+
+def test_gazebo_sstg_utility_weights_are_explicit_and_validated():
+    configured = UnknownExplorerConfig(
+        clearance_weight=0.5, travel_cost_weight=0.8
+    )
+    assert configured.clearance_weight == 0.5
+    assert configured.travel_cost_weight == 0.8
+    with np.testing.assert_raises_regex(ValueError, "travel-cost weights"):
+        UnknownExplorerConfig(travel_cost_weight=-0.1)
 
 
 def test_joint_objective_continues_after_long_range_sensor_saturates():

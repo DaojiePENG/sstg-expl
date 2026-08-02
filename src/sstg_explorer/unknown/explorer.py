@@ -49,6 +49,7 @@ class UnknownExplorerConfig:
     random_candidates: int = 24
     exact_gain_budget: int = 18
     clearance_weight: float = 1.5
+    travel_cost_weight: float = 0.60
     # Selected by the full 54-cluster paired joint benchmark: it reduces
     # travel, node/action count and spatial redundancy without a detectable
     # coverage, success or clearance loss relative to spacing_weight=0.
@@ -81,6 +82,8 @@ class UnknownExplorerConfig:
             raise ValueError("coverage gain weights must be non-negative")
         if self.information_gain_weight + self.topological_gain_weight <= 0.0:
             raise ValueError("at least one coverage gain weight must be positive")
+        if self.clearance_weight < 0.0 or self.travel_cost_weight < 0.0:
+            raise ValueError("clearance and travel-cost weights must be non-negative")
 
 
 class UnknownMapExplorer:
@@ -819,7 +822,8 @@ class UnknownMapExplorer:
                     # cross-map oscillations caused by ranking remote gaps only
                     # by their absolute disk area.
                     score = (
-                        1.20 * gain / (1.0 + 0.60 * cost)
+                        1.20 * gain /
+                        (1.0 + self.config.travel_cost_weight * cost)
                         + self.config.spacing_weight * spacing
                         + 0.20 * self.config.clearance_weight * clearance
                     )

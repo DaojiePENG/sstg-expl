@@ -75,6 +75,8 @@ def generate_launch_description():
     evaluator_params = LaunchConfiguration("evaluator_params")
     strategy = LaunchConfiguration("strategy")
     coverage_objective = LaunchConfiguration("coverage_objective")
+    clearance_weight = LaunchConfiguration("clearance_weight")
+    travel_cost_weight = LaunchConfiguration("travel_cost_weight")
     policy_seed = LaunchConfiguration("policy_seed")
     simulation_seed = LaunchConfiguration("simulation_seed")
     max_duration_s = LaunchConfiguration("max_duration_s")
@@ -149,6 +151,12 @@ def generate_launch_description():
                 "strategy": ParameterValue(strategy, value_type=str),
                 "coverage_objective": ParameterValue(
                     coverage_objective, value_type=str
+                ),
+                "clearance_weight": ParameterValue(
+                    clearance_weight, value_type=float
+                ),
+                "travel_cost_weight": ParameterValue(
+                    travel_cost_weight, value_type=float
                 ),
                 "policy_seed": ParameterValue(policy_seed, value_type=int),
                 "max_duration_s": ParameterValue(
@@ -267,6 +275,8 @@ def generate_launch_description():
         DeclareLaunchArgument("evaluator_params", default_value=default_evaluator),
         DeclareLaunchArgument("strategy", default_value="sstg"),
         DeclareLaunchArgument("coverage_objective", default_value="joint"),
+        DeclareLaunchArgument("clearance_weight", default_value="1.5"),
+        DeclareLaunchArgument("travel_cost_weight", default_value="0.60"),
         DeclareLaunchArgument(
             "policy_seed",
             description="required frozen policy random-number seed",

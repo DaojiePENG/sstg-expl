@@ -9,4 +9,6 @@ independent_public_baseline: false
 formal_method_eligible: false
 coverage_objective: joint
 topological_radius_m: 2.0
+clearance_weight: 1.50
+travel_cost_weight: 0.60
 status: development_adapter
