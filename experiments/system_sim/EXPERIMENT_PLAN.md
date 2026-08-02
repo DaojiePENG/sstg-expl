@@ -126,14 +126,20 @@ through the frozen `runtime_adapter` schedule field.  Real ROS graph tests now
 cover overlapping goals, out-of-order results, rejection, feedback,
 cancel-before-accept and bounded cancel failure.  The first local
 Gazebo--SLAM--Nav2 run also passed the complete process, trace, evaluator and
-MCAP audit.  It remains development-only while the prospective
-`policy_transition_node_v1` contract and a nonbinding action cap are calibrated:
-the upstream algorithm uses CANCELED and native replacement as expected policy
-transitions, so raw dispatch count and success-only terminal nodes are not fair
-primary constructs against sequential policies.  The adapter freezes the robot
-pose at the causal transition, preventing a late old-goal result from borrowing
-motion from a newer goal.  Its frontier-exhaustion event is only a termination
-reason; the evaluator, not the method, determines coverage and joint success.
+MCAP audit.  A subsequent 35 m distance-led calibration reached 23 decisions
+without touching its 100-decision fail-safe cap.  Its 22 normal upstream
+cancellations generated 22 independently recomputed causal topology events,
+with zero technical failures or trace rejections.  This validates the observed
+cancel branch of the prospective `policy_transition_node_v1` contract end to
+end: raw Nav2 statuses remain unchanged, while the adapter freezes the robot
+pose at the causal transition so a late result cannot borrow motion from a
+newer goal.  Native replacement has real ROS graph coverage but still needs a
+Gazebo branch-coverage run.  The method remains development-only pending that
+check, alignment of the declared hidden action topics with rosbag2 recording,
+adapter shutdown-future cleanup, matched sensor-parameter freeze, and paired
+multi-scene/multi-seed validation.  Its frontier-exhaustion event is only a
+termination reason; the evaluator, not the method, determines coverage and
+joint success.
 
 ## Visual evidence contract
 

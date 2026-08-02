@@ -53,15 +53,19 @@ separate `NavigateToPose` action server; the adapter forwards overlapping goals,
 feedback, cancellation, and results to the shared Nav2 server while enforcing
 the same simulation-time duration, odometry-distance, decision-count, and
 per-goal budgets.  Schedule rows freeze `runtime_adapter`, and launch selects
-exactly one native or external runtime.  The adapter remains unable to read
-`/evaluation/*`.  Its upstream
+exactly one native or external runtime.  A 35 m Gazebo calibration verified a
+nonbinding 100-decision cap, 22 causally frozen upstream-cancel topology events,
+and zero technical failures or rejected traces.  The adapter remains unable to
+read `/evaluation/*`.  Its upstream
 `exploration_complete` event means frontier exhaustion, not coverage success;
 the independent evaluator still decides coverage, target recall, collision,
 and joint success.  The public API does not expose upstream internal decision
 compute time, so this field is recorded as unavailable rather than a fabricated
-zero.  Until action-proxy transparency and Gazebo--Nav2--SLAM end-to-end gates
-pass, the method remains a development baseline candidate and is ineligible for
-a confirmatory table.
+zero.  Proxy transparency and the observed upstream-cancel Gazebo path now
+pass.  Until native-replacement Gazebo coverage, matched sensor freeze, and
+hidden action-topic recording and shutdown-cleanup gates pass, followed by
+paired multi-scene/multi-seed validation, the method remains a development
+baseline candidate and is ineligible for a confirmatory table.
 
 Experiment-specific room topology and collision truth may be generated locally
 because they are controlled independent variables.  Decorative meshes and

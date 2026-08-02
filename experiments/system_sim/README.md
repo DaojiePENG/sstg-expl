@@ -131,12 +131,16 @@ ablation methods select `sstg_policy`; the pinned public candidate selects
 `frontier_mrtsp_dp_external`, which launches the unmodified upstream explorer
 behind the common Nav2 action/trace/budget proxy.  The external package has no
 policy RNG, so its paired `policy_seed` is recorded as not applicable while the
-matched Gazebo seed still controls the simulator.  It remains development-only
-while its causal `policy_transition_node_v1` topology events and nonbinding
-action cap are calibrated; proxy-transparency and the first Gazebo end-to-end
-artifact gate have passed.  Raw Nav2 outcomes remain unchanged, while a policy
+matched Gazebo seed still controls the simulator.  Proxy transparency, the
+first Gazebo artifact gate, and a 35 m distance-led run with a nonbinding
+100-decision fail-safe have passed.  In that calibration, 22 normal upstream
+cancellations produced 22 accepted `policy_transition_node_v1` events and zero
+technical failures.  Raw Nav2 outcomes remain unchanged, while a policy
 cancel/replacement pose is frozen when it occurs so a late result cannot be
-credited with a newer goal's motion.
+credited with a newer goal's motion.  The method remains development-only until
+the native-replacement branch is exercised in Gazebo, sensor parameters are
+frozen, the hidden action-topic recording contract and adapter shutdown cleanup
+are closed, and paired multi-scene/multi-seed validation passes.
 
 Keep the system `protoc` ahead of Conda while compiling this overlay.  A Conda
 protobuf compiler paired with ROS's system protobuf libraries is an unsupported
