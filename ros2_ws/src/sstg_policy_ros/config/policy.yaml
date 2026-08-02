@@ -4,6 +4,7 @@ sstg_policy:
     auto_start: true
     strategy: sstg
     coverage_objective: joint
+    termination_mode: candidate_exhaustion
     map_topic: /map
     map_frame: map
     base_frame: base_footprint
@@ -20,7 +21,9 @@ sstg_policy:
     lidar_fov_deg: 360.0
     lidar_range_m: 20.0
     lidar_angular_resolution_deg: 1.0
-    robot_radius_m: 0.24
+    # Policy-side known-safe planning matches the procedural benchmark.
+    # Nav2/evaluator keep the physical 0.24 m padded footprint separately.
+    robot_radius_m: 0.30
     safety_margin_m: 0.0
     preferred_clearance_m: 0.5
     target_spacing_m: 2.0
@@ -38,7 +41,8 @@ sstg_policy:
     use_topological_vantages: true
     require_known_footprint: true
     policy_seed: 42
-    max_decisions: 100
+    ans_checkpoint: models/checkpoints/ans_global_policy.pt
+    max_decisions: 80
     max_distance_m: 150.0
     max_duration_s: 900.0
     allow_existing_output: false

@@ -1,0 +1,101 @@
+schema: sstg_unknown_completion_protocol/v1
+protocol_id: unknown_completion_v1
+purpose: reproduce_the_procedural_unknown_global_information_comparison_in_ros2
+
+procedural_reference:
+  manifest: outputs/joint_benchmark_selected/20260719_223630/manifest.json
+  manifest_sha256: 55aa68cb97d98bc69b53aab055ec22521c3f57b1da5c2ffbfae4edabbf0e61fc
+  original_termination_mode: coverage_target
+  original_sensor_suite: [fov360_r8, fov360_r12, fov360_r16, fov240_r12, fov120_r12, fov90_r12]
+
+policy_contract:
+  truth_access: false
+  belief_source: ros2_slam_occupancy_grid
+  pose_source: ros2_map_to_base_footprint
+  termination_mode: candidate_exhaustion
+  rationale: unknown_cells_continue_to_generate_goals_until_no_informative_reachable_candidate_remains
+
+evaluator_contract:
+  truth_access: true
+  truth_changes_policy_decisions: false
+  sensor_success_threshold: 0.95
+  topological_success_threshold: 0.95
+  success_objective: joint
+  threshold_role: offline_outcome_not_policy_stop
+
+fail_safes:
+  max_decisions: 80
+  max_distance_m: 150.0
+  max_duration_s: 900.0
+  goal_timeout_s: 180.0
+  interpretation: any_fail_safe_hit_is_incomplete_not_success
+
+sensor_adaptation:
+  reason: use_the_upstream_turtlebot3_physical_lidar_for_ros_and_real_robot_transfer
+  field_of_view_deg: 360.0
+  max_range_m: 20.0
+  angular_resolution_deg: 1.0
+  samples: 360
+  update_rate_hz: 5.0
+  procedural_digital_twin_uses_this_same_profile: true
+
+shared_policy:
+  coverage_objective: joint
+  topological_radius_m: 2.0
+  topological_merge_distance_m: 0.25
+  target_sensor_coverage: 0.95
+  target_topological_coverage: 0.95
+  information_gain_weight: 0.40
+  topological_gain_weight: 0.60
+  robot_radius_m: 0.30
+  safety_margin_m: 0.0
+  preferred_clearance_m: 0.50
+  target_spacing_m: 2.0
+  scan_interval_m: 1.0
+  min_gain_cells: 8
+  min_topological_gain_cells: 8
+  max_frontier_candidates: 48
+  random_candidates: 24
+  exact_gain_budget: 18
+  clearance_weight: 1.50
+  travel_cost_weight: 0.60
+  spacing_weight: 0.30
+  multi_frontier: true
+  use_topological_vantages: true
+  require_known_footprint: true
+
+methods:
+  - method: frontier
+    strategy: frontier
+    config: experiments/system_sim/configs/methods/frontier.yaml
+    procedural_algorithm: frontier
+  - method: nbv
+    strategy: nbv
+    config: experiments/system_sim/configs/methods/nbv.yaml
+    procedural_algorithm: nbv
+  - method: rrt_adapted
+    strategy: rrt
+    config: experiments/system_sim/configs/methods/rrt_adapted.yaml
+    procedural_algorithm: rrt
+  - method: ans_adapted
+    strategy: ans
+    config: experiments/system_sim/configs/methods/ans_adapted.yaml
+    procedural_algorithm: ans
+  - method: sstg
+    strategy: sstg
+    config: experiments/system_sim/configs/methods/sstg.yaml
+    procedural_algorithm: sstg
+
+ans_checkpoint:
+  path: models/checkpoints/ans_global_policy.pt
+  sha256: 616fd1485e1f0ba9673db08340d586c050f001f171890d966809c0b9f0320314
+  implementation: existing_active_neural_slam_adapter
+
+excluded_from_primary_comparison:
+  - method: frontier_mrtsp_dp_external
+    reason: not_the_same_frontier_algorithm_as_the_procedural_reference
+
+outputs:
+  root: system_sim_outputs/unknown_completion
+  never_write_to: outputs
+  required_media: [numbered_map_png, coverage_curve_png, decision_frames, mp4, rosbag2]

@@ -75,6 +75,7 @@ def test_finish_navigation_emits_distance_budget_cancel_causality():
 
     class Session:
         pending_decision = SimpleNamespace(decision_id=7)
+        termination_reason = "running"
 
         def record_execution(self, decision_id, succeeded, pose, **kwargs):
             recorded.append((decision_id, succeeded, pose, kwargs))
@@ -90,6 +91,9 @@ def test_finish_navigation_emits_distance_budget_cancel_causality():
         @staticmethod
         def summary():
             return {"execution_count": 1}
+
+        def terminate(self, reason):
+            self.termination_reason = reason
 
     now = SimpleNamespace(nanoseconds=123_000_000)
     node = SimpleNamespace(

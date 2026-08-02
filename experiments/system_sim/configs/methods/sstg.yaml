@@ -15,3 +15,4 @@ spacing_weight: 0.30
 clearance_weight: 1.50
 travel_cost_weight: 0.60
 status: frozen_from_procedural_benchmark_for_development
+unknown_completion_protocol: unknown_completion_v1

@@ -78,6 +78,11 @@ class OnlineExplorerSession:
     """
 
     def __init__(self, config: UnknownExplorerConfig, start_pose: Pose2D):
+        if config.termination_mode != "candidate_exhaustion":
+            raise ValueError(
+                "online exploration requires termination_mode="
+                "'candidate_exhaustion' because policy-visible state has no truth"
+            )
         self.config = config
         self.policy = UnknownMapExplorer(config)
         self.current_pose = self._normalize_pose(start_pose)
@@ -100,6 +105,7 @@ class OnlineExplorerSession:
         self._next_decision_id = 1
         self._pending: Optional[OnlineDecision] = None
         self._map_resolution: Optional[float] = None
+        self.termination_reason = "running"
 
     @staticmethod
     def _normalize_pose(pose: Sequence[float]) -> Pose2D:
@@ -226,7 +232,16 @@ class OnlineExplorerSession:
         self._next_decision_id += 1
         if decision.status == "navigate":
             self._pending = decision
+        else:
+            self.termination_reason = decision.reason
         return decision
+
+    def terminate(self, reason: str) -> None:
+        """Record an evaluator-neutral external fail-safe termination."""
+        normalized = str(reason).strip()
+        if not normalized:
+            raise ValueError("termination reason must be non-empty")
+        self.termination_reason = normalized
 
     def record_execution(
         self,
@@ -342,6 +357,8 @@ class OnlineExplorerSession:
         return {
             "strategy": self.config.strategy,
             "coverage_objective": self.config.coverage_objective,
+            "termination_mode": self.config.termination_mode,
+            "termination_reason": self.termination_reason,
             "decisions_issued": self._next_decision_id - 1,
             "executions": len(self.execution_records),
             "successful_executions": sum(

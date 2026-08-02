@@ -76,6 +76,26 @@ def test_unknown_explorer_reaches_target_without_leaking_false_cells():
     assert np.array_equal(replayed, belief)
 
 
+def test_candidate_exhaustion_mode_does_not_stop_at_truth_target():
+    environment = create_environment("empty", width=8.0, height=8.0)
+    explorer = UnknownMapExplorer(UnknownExplorerConfig(
+        strategy="frontier",
+        sensor=SensorConfig(360.0, 8.0, angular_resolution_deg=1.0),
+        coverage_objective="sensor",
+        target_coverage=0.10,
+        termination_mode="candidate_exhaustion",
+        max_decisions=8,
+        seed=42,
+    ))
+    result = explorer.explore(
+        environment.get_occupancy_map(), environment.get_start_pose()
+    )
+
+    assert result["success"]
+    assert result["metadata"]["termination_mode"] == "candidate_exhaustion"
+    assert result["metadata"]["termination_reason"] != "coverage_target"
+
+
 def test_topological_coverage_matches_known_map_disk_proxy():
     environment = create_environment("empty", width=8.0, height=8.0)
     truth = environment.get_occupancy_map()

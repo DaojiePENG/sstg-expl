@@ -1,0 +1,17 @@
+schema: sstg_system_sim_method/v1
+method: ans_adapted
+strategy: ans
+runtime_adapter: sstg_policy
+display_name: ANS-Global Joint (adapted)
+comparison_role: internal_algorithmic_baseline
+implementation_origin: existing_active_neural_slam_adapter
+independent_public_baseline: false
+formal_method_eligible: false
+coverage_objective: joint
+topological_radius_m: 2.0
+clearance_weight: 1.50
+travel_cost_weight: 0.60
+checkpoint: models/checkpoints/ans_global_policy.pt
+checkpoint_sha256: 616fd1485e1f0ba9673db08340d586c050f001f171890d966809c0b9f0320314
+status: unknown_completion_development_adapter
+unknown_completion_protocol: unknown_completion_v1

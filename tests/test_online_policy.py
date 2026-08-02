@@ -25,6 +25,7 @@ def _session(start=(5.0, 5.0, 0.0)):
             strategy="sstg",
             sensor=SensorConfig(360.0, 8.0, 1.0),
             coverage_objective="joint",
+            termination_mode="candidate_exhaustion",
             topological_radius=2.0,
             max_decisions=20,
             seed=7,
@@ -131,6 +132,13 @@ def test_online_completion_does_not_claim_truth_coverage():
     assert decision.status == "complete"
     assert decision.reason == "candidate_exhaustion"
     assert "truth" not in decision.to_dict()
+    assert session.summary()["termination_reason"] == "candidate_exhaustion"
+
+
+def test_online_session_rejects_truth_target_termination():
+    config = UnknownExplorerConfig(termination_mode="coverage_target")
+    with pytest.raises(ValueError, match="has no truth"):
+        OnlineExplorerSession(config, (1.0, 1.0, 0.0))
 
 
 def test_map_transform_uses_floor_below_negative_boundary():

@@ -208,6 +208,7 @@ class SSTGPolicyNode(Node):
             "auto_start": False,
             "strategy": "sstg",
             "coverage_objective": "joint",
+            "termination_mode": "candidate_exhaustion",
             "map_topic": "/map",
             "map_frame": "map",
             "base_frame": "base_footprint",
@@ -224,7 +225,7 @@ class SSTGPolicyNode(Node):
             "lidar_fov_deg": 360.0,
             "lidar_range_m": 20.0,
             "lidar_angular_resolution_deg": 1.0,
-            "robot_radius_m": 0.24,
+            "robot_radius_m": 0.30,
             "safety_margin_m": 0.0,
             "preferred_clearance_m": 0.5,
             "target_spacing_m": 2.0,
@@ -242,7 +243,8 @@ class SSTGPolicyNode(Node):
             "use_topological_vantages": True,
             "require_known_footprint": True,
             "policy_seed": 42,
-            "max_decisions": 100,
+            "ans_checkpoint": "models/checkpoints/ans_global_policy.pt",
+            "max_decisions": 80,
             "max_distance_m": 150.0,
             "max_duration_s": 900.0,
             "allow_existing_output": False,
@@ -256,6 +258,9 @@ class SSTGPolicyNode(Node):
             strategy=str(self.get_parameter("strategy").value),
             coverage_objective=str(
                 self.get_parameter("coverage_objective").value
+            ),
+            termination_mode=str(
+                self.get_parameter("termination_mode").value
             ),
             sensor=SensorConfig(
                 field_of_view_deg=float(
@@ -326,6 +331,10 @@ class SSTGPolicyNode(Node):
                 self.get_parameter("require_known_footprint").value
             ),
             seed=int(self.get_parameter("policy_seed").value),
+            checkpoint=(
+                str(self.get_parameter("ans_checkpoint").value).strip()
+                or None
+            ),
             max_decisions=self.max_decisions,
             verbose=False,
         )
@@ -512,6 +521,7 @@ class SSTGPolicyNode(Node):
             self._append_trace("session_started", self.session.summary())
         budget_reason = self._budget_reason()
         if budget_reason is not None:
+            self.session.terminate(budget_reason)
             self.running = False
             self._publish_status("BUDGET_EXHAUSTED", budget_reason)
             self._append_trace("budget_reached", {"reason": budget_reason})
@@ -657,6 +667,7 @@ class SSTGPolicyNode(Node):
         if self.termination_requested_reason is not None:
             budget_reason = self.termination_requested_reason
             self.termination_requested_reason = None
+            self.session.terminate(budget_reason)
             self.running = False
             self._append_trace("budget_reached", {"reason": budget_reason})
             self._append_trace("session_finished", self.session.summary())

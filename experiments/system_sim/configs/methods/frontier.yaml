@@ -12,3 +12,4 @@ topological_radius_m: 2.0
 clearance_weight: 1.50
 travel_cost_weight: 0.60
 status: development_adapter
+unknown_completion_protocol: unknown_completion_v1

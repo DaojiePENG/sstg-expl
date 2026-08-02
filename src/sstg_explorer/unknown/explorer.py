@@ -22,6 +22,7 @@ from sstg_explorer.sensing import RaycastSensor, SensorConfig
 
 UNKNOWN_STRATEGIES = ("frontier", "nbv", "rrt", "ans", "sstg")
 COVERAGE_OBJECTIVES = ("sensor", "joint")
+TERMINATION_MODES = ("coverage_target", "candidate_exhaustion")
 
 
 @dataclass
@@ -35,6 +36,7 @@ class UnknownExplorerConfig:
     topological_radius: float = 2.0
     topological_merge_distance: float = 0.25
     target_topological_coverage: float = 0.95
+    termination_mode: str = "coverage_target"
     information_gain_weight: float = 0.40
     topological_gain_weight: float = 0.60
     max_decisions: int = 80
@@ -68,6 +70,8 @@ class UnknownExplorerConfig:
             raise ValueError(
                 f"Unknown coverage objective: {self.coverage_objective}"
             )
+        if self.termination_mode not in TERMINATION_MODES:
+            raise ValueError(f"Unknown termination mode: {self.termination_mode}")
         if not 0.0 < self.target_coverage <= 1.0:
             raise ValueError("target_coverage must be in (0, 1]")
         if not 0.0 < self.target_topological_coverage <= 1.0:
@@ -1052,7 +1056,10 @@ class UnknownMapExplorer:
         for decision in range(1, self.config.max_decisions + 1):
             before = self._coverage(truth, belief, positions)
             before_primary = self._primary_coverage(before)
-            if self._target_met(before):
+            if (
+                self.config.termination_mode == "coverage_target"
+                and self._target_met(before)
+            ):
                 termination_reason = (
                     "joint_coverage_target"
                     if self.config.coverage_objective == "joint"
@@ -1088,7 +1095,11 @@ class UnknownMapExplorer:
             ]
             self._previous_candidate_keys = active_keys
             if selected is None:
-                termination_reason = "no_informative_candidate"
+                termination_reason = (
+                    "candidate_exhaustion"
+                    if self.config.termination_mode == "candidate_exhaustion"
+                    else "no_informative_candidate"
+                )
                 steps.append({
                     "trace_id": len(steps), "iteration": decision,
                     "event": termination_reason,
@@ -1288,7 +1299,10 @@ class UnknownMapExplorer:
             termination_reason = "max_decisions"
 
         final = self._coverage(truth, belief, positions)
-        if self._target_met(final):
+        if (
+            self.config.termination_mode == "coverage_target"
+            and self._target_met(final)
+        ):
             termination_reason = (
                 "joint_coverage_target"
                 if self.config.coverage_objective == "joint"
@@ -1306,6 +1320,7 @@ class UnknownMapExplorer:
                 ),
                 "strategy": self.config.strategy,
                 "coverage_objective": self.config.coverage_objective,
+                "termination_mode": self.config.termination_mode,
                 "sensor_fov_deg": self.config.sensor.field_of_view_deg,
                 "sensor_range_m": self.config.sensor.max_range,
                 "angular_resolution_deg": self.config.sensor.angular_resolution_deg,
