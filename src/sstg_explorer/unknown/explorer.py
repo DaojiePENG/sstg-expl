@@ -1,6 +1,7 @@
 """Common online unknown-map protocol and exploration-policy adapters."""
 from __future__ import annotations
 
+from collections import deque
 import math
 import time
 from dataclasses import dataclass, field
@@ -201,6 +202,44 @@ class UnknownMapExplorer:
             )
             safe = known_free & (~inflated_known_obstacles)
         current_cell = belief.world_to_grid(*current)
+        if not safe[current_cell]:
+            # Nav2 may accept a goal a few centimetres away from its nominal
+            # endpoint.  A frontier endpoint that was conservative-safe when
+            # commanded can therefore land just outside the eroded policy
+            # mask.  Marking only that single cell creates an artificial
+            # one-cell component and falsely reports candidate exhaustion.
+            # Connect the measured, known-free robot pose back to the nearest
+            # conservative-safe cell through a short known-free escape path.
+            frontier = deque([(current_cell, 0)])
+            parents = {current_cell: None}
+            bridge_end = None
+            max_bridge_cells = max(1, inflation_cells)
+            while frontier:
+                cell, distance = frontier.popleft()
+                if safe[cell]:
+                    bridge_end = cell
+                    break
+                if distance >= max_bridge_cells:
+                    continue
+                row, col = cell
+                for neighbor in (
+                    (row - 1, col), (row + 1, col),
+                    (row, col - 1), (row, col + 1),
+                ):
+                    nr, nc = neighbor
+                    if (
+                        0 <= nr < belief.height
+                        and 0 <= nc < belief.width
+                        and known_free[neighbor]
+                        and neighbor not in parents
+                    ):
+                        parents[neighbor] = cell
+                        frontier.append((neighbor, distance + 1))
+            if bridge_end is not None:
+                cell = bridge_end
+                while cell is not None:
+                    safe[cell] = True
+                    cell = parents[cell]
         safe[current_cell] = True
 
         planning_data = np.full(belief.shape, 100, dtype=np.int8)

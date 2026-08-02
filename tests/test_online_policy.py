@@ -135,6 +135,20 @@ def test_online_completion_does_not_claim_truth_coverage():
     assert session.summary()["termination_reason"] == "candidate_exhaustion"
 
 
+def test_goal_tolerance_pose_is_bridged_back_to_conservative_safe_space():
+    belief = _known_room()
+    # This measured pose is known free but lies inside the 0.3 m erosion band,
+    # as can happen when Nav2 accepts a nearby frontier goal within tolerance.
+    session = _session(start=(0.35, 5.0, 0.0))
+
+    decision = session.propose(belief)
+
+    assert decision.status == "navigate"
+    assert decision.reason == "goal_selected"
+    assert len(decision.active_candidates) > 1
+    assert decision.planned_path[0] == pytest.approx((0.35, 5.0))
+
+
 def test_online_session_rejects_truth_target_termination():
     config = UnknownExplorerConfig(termination_mode="coverage_target")
     with pytest.raises(ValueError, match="has no truth"):
