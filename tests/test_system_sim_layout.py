@@ -682,7 +682,11 @@ def test_frozen_nav2_parameters_stay_inside_upstream_tb3_limits():
     policy = yaml.safe_load((
         ROOT / "ros2_ws/src/sstg_policy_ros/config/policy.yaml"
     ).read_text(encoding="utf-8"))
+    unknown_completion = yaml.safe_load((
+        ROOT / "experiments/system_sim/configs/unknown_completion.yaml"
+    ).read_text(encoding="utf-8"))
     controller = nav2["controller_server"]["ros__parameters"]["FollowPath"]
+    controller_server = nav2["controller_server"]["ros__parameters"]
     smoother = nav2["velocity_smoother"]["ros__parameters"]
     robot = shared["robot"]
 
@@ -702,9 +706,12 @@ def test_frozen_nav2_parameters_stay_inside_upstream_tb3_limits():
         "robot_radius"
     ] == footprint["radius_m"]
     assert controller["CostCritic"]["consider_footprint"] is False
-    assert policy["sstg_policy"]["ros__parameters"][
-        "robot_radius_m"
-    ] == conservative_radius
+    assert controller_server["progress_checker"][
+        "required_movement_radius"
+    ] < controller_server["general_goal_checker"]["xy_goal_tolerance"]
+    assert policy["sstg_policy"]["ros__parameters"]["robot_radius_m"] == (
+        unknown_completion["shared_policy"]["robot_radius_m"]
+    )
 
 
 def test_system_sim_budget_matches_policy_and_is_required_by_launch():
