@@ -165,3 +165,23 @@ def test_session_rejects_resolution_change_but_allows_origin_growth():
     changed = OccupancyGrid(grown.data, 0.2, grown.origin)
     with pytest.raises(ValueError, match="resolution changed"):
         session.propose(changed, map_revision=3)
+
+
+def test_ans_temporal_memory_is_reprojected_when_map_extent_grows():
+    policy = _session().policy
+    previous = OccupancyGrid(
+        np.zeros((4, 5), dtype=np.int8), 0.1, (0.0, 0.0)
+    )
+    policy._previous_known_mask = np.zeros(previous.shape, dtype=bool)
+    policy._previous_known_mask[1, 2] = True
+    policy._previous_known_origin = previous.origin
+    policy._previous_known_resolution = previous.resolution
+    grown = OccupancyGrid(
+        np.zeros((8, 10), dtype=np.int8), 0.1, (-0.3, -0.2)
+    )
+
+    reprojected = policy._previous_known_in_current_grid(grown)
+
+    assert reprojected.shape == grown.shape
+    assert np.count_nonzero(reprojected) == 1
+    assert reprojected[3, 5]

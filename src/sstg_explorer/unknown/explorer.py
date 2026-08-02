@@ -130,6 +130,8 @@ class UnknownMapExplorer:
         self._executed_candidate_keys = set()
         self._ans = None
         self._previous_known_mask = None
+        self._previous_known_origin = None
+        self._previous_known_resolution = None
         if self.config.strategy == "ans":
             if not self.config.checkpoint:
                 raise ValueError("ANS unknown policy requires checkpoint=...")
@@ -393,8 +395,7 @@ class UnknownMapExplorer:
         )
         full[0][region] = occupied
         full[1][region] = known
-        if self._previous_known_mask is not None:
-            full[3][region] = self._previous_known_mask
+        full[3][region] = self._previous_known_in_current_grid(belief)
         current_cell = belief.world_to_grid(*current)
         cr, cc = current_cell[0] + offset_r, current_cell[1] + offset_c
         full[2, max(0, cr - 1):cr + 2, max(0, cc - 1):cc + 2] = 1.0
@@ -415,7 +416,65 @@ class UnknownMapExplorer:
             cc - local_cells // 2 + int(predicted_local[1]) - offset_c,
         )
         self._previous_known_mask = known.copy()
+        self._previous_known_origin = tuple(map(float, belief.origin))
+        self._previous_known_resolution = float(belief.resolution)
         return predicted
+
+    def _previous_known_in_current_grid(
+        self, belief: OccupancyGrid
+    ) -> np.ndarray:
+        """Reproject ANS temporal memory when a ROS SLAM map grows.
+
+        OccupancyGrid origins remain axis aligned in the common policy model,
+        but online SLAM may prepend rows/columns as exploration expands.  ANS
+        needs its previous-known channel expressed in the current extent.
+        """
+        result = np.zeros(belief.shape, dtype=bool)
+        previous = self._previous_known_mask
+        if previous is None:
+            return result
+        if (
+            self._previous_known_origin is None
+            or self._previous_known_resolution is None
+            or not math.isclose(
+                float(belief.resolution),
+                float(self._previous_known_resolution),
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        ):
+            return result
+
+        resolution = float(belief.resolution)
+        row_shift_float = (
+            float(belief.origin[1]) - float(self._previous_known_origin[1])
+        ) / resolution
+        col_shift_float = (
+            float(belief.origin[0]) - float(self._previous_known_origin[0])
+        ) / resolution
+        row_shift = int(round(row_shift_float))
+        col_shift = int(round(col_shift_float))
+        if (
+            not math.isclose(row_shift_float, row_shift, abs_tol=1e-6)
+            or not math.isclose(col_shift_float, col_shift, abs_tol=1e-6)
+        ):
+            return result
+
+        current_row0 = max(0, -row_shift)
+        current_col0 = max(0, -col_shift)
+        current_row1 = min(belief.height, previous.shape[0] - row_shift)
+        current_col1 = min(belief.width, previous.shape[1] - col_shift)
+        if current_row0 >= current_row1 or current_col0 >= current_col1:
+            return result
+        previous_row0 = current_row0 + row_shift
+        previous_col0 = current_col0 + col_shift
+        previous_row1 = current_row1 + row_shift
+        previous_col1 = current_col1 + col_shift
+        result[current_row0:current_row1, current_col0:current_col1] = previous[
+            previous_row0:previous_row1,
+            previous_col0:previous_col1,
+        ]
+        return result
 
     def _raw_candidates(
         self,
@@ -1009,6 +1068,8 @@ class UnknownMapExplorer:
         self._previous_candidate_keys = set()
         self._executed_candidate_keys = set()
         self._previous_known_mask = None
+        self._previous_known_origin = None
+        self._previous_known_resolution = None
 
         initial_observation = self.sensor.observe(truth, belief, current, heading)
         scan_count += 1
