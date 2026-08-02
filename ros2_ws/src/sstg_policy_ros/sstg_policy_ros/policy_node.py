@@ -245,8 +245,8 @@ class SSTGPolicyNode(Node):
             "policy_seed": 42,
             "ans_checkpoint": "models/checkpoints/ans_global_policy.pt",
             "max_decisions": 80,
-            "max_distance_m": 150.0,
-            "max_duration_s": 900.0,
+            "max_distance_m": 300.0,
+            "max_duration_s": 1800.0,
             "allow_existing_output": False,
             "output_dir": "system_sim_outputs/runs/development/manual",
         }
