@@ -64,6 +64,7 @@ def test_ros_policy_matches_shared_procedural_algorithm_config():
         "topological_gain_weight": "topological_gain_weight",
         "robot_radius_m": "robot_radius_m",
         "safety_margin_m": "safety_margin_m",
+        "minimum_goal_clearance_m": "minimum_goal_clearance_m",
         "preferred_clearance_m": "preferred_clearance_m",
         "target_spacing_m": "target_spacing_m",
         "min_gain_cells": "min_gain_cells",
@@ -118,6 +119,7 @@ def test_protocol_constructs_the_same_shared_explorer_configuration():
         max_decisions=protocol["fail_safes"]["max_decisions"],
         robot_radius=shared["robot_radius_m"],
         safety_margin=shared["safety_margin_m"],
+        minimum_goal_clearance=shared["minimum_goal_clearance_m"],
         preferred_clearance=shared["preferred_clearance_m"],
         target_spacing=shared["target_spacing_m"],
         scan_interval=shared["scan_interval_m"],
@@ -136,5 +138,6 @@ def test_protocol_constructs_the_same_shared_explorer_configuration():
 
     assert asdict(config)["termination_mode"] == "candidate_exhaustion"
     assert config.robot_radius == 0.24
+    assert config.minimum_goal_clearance == 0.40
     assert config.max_decisions == 80
     assert config.online_exhaustion_confirmations == 3

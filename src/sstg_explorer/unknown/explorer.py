@@ -44,6 +44,7 @@ class UnknownExplorerConfig:
     max_decisions: int = 80
     robot_radius: float = 0.3
     safety_margin: float = 0.0
+    minimum_goal_clearance: float = 0.0
     preferred_clearance: float = 0.5
     target_spacing: float = 2.0
     scan_interval: float = 1.0
@@ -92,6 +93,8 @@ class UnknownExplorerConfig:
             raise ValueError("at least one coverage gain weight must be positive")
         if self.clearance_weight < 0.0 or self.travel_cost_weight < 0.0:
             raise ValueError("clearance and travel-cost weights must be non-negative")
+        if self.minimum_goal_clearance < 0.0:
+            raise ValueError("minimum_goal_clearance must be non-negative")
 
 
 class UnknownMapExplorer:
@@ -542,12 +545,24 @@ class UnknownMapExplorer:
         )
         known_obstacles = belief.get_occupied_mask()
         clearance = distance_transform_edt(~known_obstacles) * belief.resolution
+        # Traversal uses the physical footprint in ``safe``.  Stopping and
+        # rotating at an exploration viewpoint needs extra room for braking
+        # and pose error, but applying that extra clearance to the entire path
+        # would incorrectly disconnect narrow doors.  Keep the two contracts
+        # separate and derive both from the policy-visible occupancy grid.
+        minimum_goal_clearance = max(
+            self.config.robot_radius + self.config.safety_margin,
+            self.config.minimum_goal_clearance,
+        )
+        goal_safe = safe & (
+            clearance + 1e-9 >= minimum_goal_clearance
+        )
         unknown_distance = distance_transform_edt(~unknown) * belief.resolution
         frontier_band = (
             self.config.robot_radius + 2.0 * belief.resolution
         )
         frontier_mask = (
-            safe & reachable &
+            goal_safe & reachable &
             (unknown_distance <= frontier_band)
         ) if has_unknown else np.zeros_like(safe)
         components, count = label(frontier_mask, structure=np.ones((3, 3)))
@@ -605,7 +620,7 @@ class UnknownMapExplorer:
             # unknown cell is traversable.  They are belief-derived, unlike a
             # ground-truth uniform grid.
             vantage_cells = self._spatial_representatives(
-                reachable, cost_map, clearance,
+                reachable & goal_safe, cost_map, clearance,
                 max_count=self.config.max_frontier_candidates // 2,
                 resolution=belief.resolution,
             )
@@ -636,13 +651,15 @@ class UnknownMapExplorer:
             # space.  They close discrete 2 m coverage gaps revealed by the
             # long-range sensor without consulting hidden ground truth.
             gap_cells = self._spatial_representatives(
-                uncovered_known_free & reachable,
+                uncovered_known_free & reachable & goal_safe,
                 cost_map,
                 clearance,
                 max_count=self.config.max_frontier_candidates // 2,
                 resolution=belief.resolution,
             )
-            gap_indices = np.argwhere(uncovered_known_free & reachable)
+            gap_indices = np.argwhere(
+                uncovered_known_free & reachable & goal_safe
+            )
             if len(gap_indices):
                 gap_costs = cost_map[
                     gap_indices[:, 0], gap_indices[:, 1]
@@ -693,7 +710,7 @@ class UnknownMapExplorer:
                 })
 
         if self.config.strategy in ("nbv", "rrt"):
-            indices = np.argwhere(reachable)
+            indices = np.argwhere(reachable & goal_safe)
             if len(indices):
                 sample_count = min(self.config.random_candidates, len(indices))
                 chosen = self.rng.choice(len(indices), size=sample_count, replace=False)

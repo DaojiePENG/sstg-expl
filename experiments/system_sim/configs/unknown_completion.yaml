@@ -60,6 +60,9 @@ shared_policy:
   # candidate exhaustion after a map update.
   robot_radius_m: 0.24
   safety_margin_m: 0.0
+  # Endpoint-only clearance for braking and in-place sensing. Traversal still
+  # uses the 0.24 m physical footprint, so narrow doors remain connected.
+  minimum_goal_clearance_m: 0.40
   preferred_clearance_m: 0.50
   target_spacing_m: 2.0
   scan_interval_m: 1.0

@@ -26,6 +26,7 @@ sstg_policy:
     # Keep policy reachability identical to Nav2's padded physical footprint.
     robot_radius_m: 0.24
     safety_margin_m: 0.0
+    minimum_goal_clearance_m: 0.40
     preferred_clearance_m: 0.5
     target_spacing_m: 2.0
     information_gain_weight: 0.40

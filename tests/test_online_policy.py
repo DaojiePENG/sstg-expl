@@ -47,6 +47,30 @@ def test_online_session_selects_goal_without_ground_truth_argument():
     assert decision.generated_candidates
 
 
+def test_goal_clearance_is_endpoint_only_and_filters_all_candidates():
+    session = OnlineExplorerSession(
+        UnknownExplorerConfig(
+            strategy="sstg",
+            sensor=SensorConfig(360.0, 8.0, 1.0),
+            coverage_objective="joint",
+            termination_mode="candidate_exhaustion",
+            robot_radius=0.24,
+            minimum_goal_clearance=1.0,
+            seed=7,
+        ),
+        (5.0, 5.0, 0.0),
+    )
+
+    decision = session.propose(_known_room(), map_revision=1)
+
+    assert decision.status == "navigate"
+    assert decision.generated_candidates
+    assert all(
+        candidate["clearance"] + 1e-9 >= 1.0
+        for candidate in decision.generated_candidates
+    )
+
+
 def test_online_session_requires_execution_result_before_next_goal():
     session = _session()
     belief = _known_room()

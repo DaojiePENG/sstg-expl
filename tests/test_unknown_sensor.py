@@ -122,6 +122,8 @@ def test_gazebo_sstg_utility_weights_are_explicit_and_validated():
     assert configured.travel_cost_weight == 0.8
     with np.testing.assert_raises_regex(ValueError, "travel-cost weights"):
         UnknownExplorerConfig(travel_cost_weight=-0.1)
+    with np.testing.assert_raises_regex(ValueError, "minimum_goal_clearance"):
+        UnknownExplorerConfig(minimum_goal_clearance=-0.1)
 
 
 def test_joint_objective_continues_after_long_range_sensor_saturates():

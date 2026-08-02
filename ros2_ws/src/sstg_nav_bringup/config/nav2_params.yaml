@@ -112,7 +112,9 @@ controller_server:
       max_angular_vel: 1.1
       min_angular_vel: -1.1
       max_linear_accel: 0.6
-      max_linear_decel: -0.6
+      # Use the upstream TB3 braking limit so a collision-check stop is not
+      # smeared by the downstream smoother into a marginal endpoint.
+      max_linear_decel: -1.0
       max_angular_accel: 1.8
       max_angular_decel: -1.8
       lookahead_dist: 0.6
@@ -136,9 +138,16 @@ controller_server:
       # policy-level clearance filter.
       max_allowed_time_to_collision_up_to_carrot: 0.5
       use_regulated_linear_velocity_scaling: true
-      use_cost_regulated_linear_velocity_scaling: false
+      # Slow continuously inside the same 0.7 m inflated local cost field
+      # before the arc checker needs to hard-stop.  These parameters mirror
+      # the local costmap's inflation model; no evaluator or truth signal is
+      # involved.
+      use_cost_regulated_linear_velocity_scaling: true
+      cost_scaling_dist: 0.6
+      cost_scaling_gain: 1.0
+      inflation_cost_scaling_factor: 3.0
       regulated_linear_scaling_min_radius: 0.9
-      regulated_linear_scaling_min_speed: 0.25
+      regulated_linear_scaling_min_speed: 0.05
       use_fixed_curvature_lookahead: false
       curvature_lookahead_dist: 0.25
       use_rotate_to_heading: true
@@ -332,7 +341,7 @@ velocity_smoother:
     max_velocity: [0.4, 0.0, 1.1]
     min_velocity: [-0.2, 0.0, -1.1]
     max_accel: [0.6, 0.0, 1.8]
-    max_decel: [-0.6, 0.0, -1.8]
+    max_decel: [-1.0, 0.0, -1.8]
     odom_topic: "odom"
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]

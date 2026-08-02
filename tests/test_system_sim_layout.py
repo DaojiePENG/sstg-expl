@@ -699,7 +699,7 @@ def test_frozen_nav2_parameters_stay_inside_upstream_tb3_limits():
     assert controller["max_angular_accel"] <= robot["max_angular_acceleration_radps2"]
     assert smoother["max_velocity"] == [0.4, 0.0, 1.1]
     assert smoother["max_accel"] == [0.6, 0.0, 1.8]
-    assert smoother["max_decel"] == [-0.6, 0.0, -1.8]
+    assert smoother["max_decel"] == [-1.0, 0.0, -1.8]
     footprint = robot["collision_footprint"]
     conservative_radius = float(robot["policy_conservative_radius_m"])
     assert conservative_radius == (
@@ -713,6 +713,15 @@ def test_frozen_nav2_parameters_stay_inside_upstream_tb3_limits():
     # The external collision monitor action is disabled in the core screen,
     # leaving RPP's local-costmap arc projection as the single reactive gate.
     assert controller["use_collision_detection"] is True
+    assert controller["use_cost_regulated_linear_velocity_scaling"] is True
+    assert controller["inflation_cost_scaling_factor"] == nav2[
+        "local_costmap"
+    ]["local_costmap"]["ros__parameters"]["inflation_layer"][
+        "cost_scaling_factor"
+    ]
+    assert controller["cost_scaling_dist"] < nav2["local_costmap"][
+        "local_costmap"
+    ]["ros__parameters"]["inflation_layer"]["inflation_radius"]
     collision_monitor = nav2["collision_monitor"]["ros__parameters"]
     assert collision_monitor["FootprintApproach"]["enabled"] is False
     assert collision_monitor["scan"]["enabled"] is False

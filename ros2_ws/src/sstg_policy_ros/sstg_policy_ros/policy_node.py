@@ -228,6 +228,7 @@ class SSTGPolicyNode(Node):
             "lidar_angular_resolution_deg": 1.0,
             "robot_radius_m": 0.24,
             "safety_margin_m": 0.0,
+            "minimum_goal_clearance_m": 0.40,
             "preferred_clearance_m": 0.5,
             "target_spacing_m": 2.0,
             "information_gain_weight": 0.40,
@@ -296,6 +297,9 @@ class SSTGPolicyNode(Node):
             robot_radius=float(self.get_parameter("robot_radius_m").value),
             safety_margin=float(
                 self.get_parameter("safety_margin_m").value
+            ),
+            minimum_goal_clearance=float(
+                self.get_parameter("minimum_goal_clearance_m").value
             ),
             preferred_clearance=float(
                 self.get_parameter("preferred_clearance_m").value
