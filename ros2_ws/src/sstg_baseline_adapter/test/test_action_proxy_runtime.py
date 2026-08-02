@@ -522,6 +522,9 @@ def test_upstream_cancel_is_latched_until_downstream_goal_acceptance(
     )
     assert execution["nav2_status"] == GoalStatus.STATUS_CANCELED
     assert execution["cancel_origin"] == "upstream_cancel_request"
+    assert execution["reason"] == (
+        f"nav2_status_{GoalStatus.STATUS_CANCELED}:upstream_cancel_request"
+    )
     assert execution["succeeded"] is False
 
     harness.finish_from_upstream()

@@ -49,6 +49,7 @@ def _snapshot(
     reason: str = "policy_session_settled",
     clearance: bool = True,
     ate: bool = True,
+    cancellation_metrics: bool = True,
 ) -> dict:
     value = {
         "schema": "sstg_system_sim_evaluator_snapshot/v2",
@@ -94,6 +95,14 @@ def _snapshot(
             ),
         },
     }
+    if cancellation_metrics:
+        value["actions"].update({
+            "navigation_failure_count": 1,
+            "navigation_canceled_count": 1,
+            "navigation_upstream_cancel_count": 1,
+            "navigation_adapter_cancel_count": 0,
+            "navigation_non_cancel_failure_count": 0,
+        })
     if clearance:
         value["static_clearance"] = {
             "footprint_clearance_mean_m": 0.40,
@@ -301,6 +310,7 @@ def _fixture_project(tmp_path: Path) -> dict[str, object]:
                 collision_free=None if seed == 2 else True,
                 clearance=seed != 1,
                 ate=seed != 2,
+                cancellation_metrics=seed != 2,
             ),
         )
     return {"root": root, "study": study, "rows": rows}
@@ -342,6 +352,27 @@ def test_analysis_retains_all_runs_and_separates_success_constructs(
     assert timeout["dual_threshold_success"] == "false"
     assert timeout["collision_free"] == "false"
     assert timeout["information_coverage"] == "0.5"
+    completed = next(
+        row for row in runs
+        if row["method"] == "sstg" and row["replicate_seed"] == "1"
+    )
+    assert completed["navigation_failure_count"] == "1"
+    assert completed["navigation_canceled_count"] == "1"
+    assert completed["navigation_upstream_cancel_count"] == "1"
+    assert completed["navigation_adapter_cancel_count"] == "0"
+    assert completed["navigation_non_cancel_failure_count"] == "0"
+    legacy = next(
+        row for row in runs
+        if row["method"] == "frontier" and row["replicate_seed"] == "2"
+    )
+    for field in (
+        "navigation_failure_count",
+        "navigation_canceled_count",
+        "navigation_upstream_cancel_count",
+        "navigation_adapter_cancel_count",
+        "navigation_non_cancel_failure_count",
+    ):
+        assert legacy[field] == ""
     sstg = next(row for row in aggregates if row["method"] == "sstg")
     assert float(sstg["task_completion_mean"]) == pytest.approx(1.0 / 3.0)
     assert float(sstg["dual_success_mean"]) == pytest.approx(0.5)
@@ -483,6 +514,113 @@ def test_completed_run_without_settled_snapshot_fails_closed(tmp_path: Path) -> 
             root=root,
             study_dir=study,
             output_dir=root / "outputs/no_terminal",
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "navigation_failure_count",
+        "navigation_canceled_count",
+        "navigation_upstream_cancel_count",
+        "navigation_adapter_cancel_count",
+        "navigation_non_cancel_failure_count",
+    ),
+)
+def test_negative_cancellation_action_count_fails_closed(
+    tmp_path: Path, field: str,
+) -> None:
+    project = _fixture_project(tmp_path)
+    root = project["root"]
+    study = project["study"]
+    rows = project["rows"]
+    assert isinstance(root, Path) and isinstance(study, Path)
+    assert isinstance(rows, list)
+    row = next(
+        row for row in rows
+        if row["method"] == "sstg" and row["replicate_seed"] == "1"
+    )
+    run_dir = root / row["run_output_dir"]
+    metrics = run_dir / "evaluation_metrics.jsonl"
+    records = [json.loads(line) for line in metrics.read_text().splitlines()]
+    settled = next(
+        record["payload"]
+        for record in records
+        if record.get("event") == "metrics_snapshot"
+        and record.get("payload", {}).get("reason")
+        == "policy_session_settled"
+    )
+    settled["actions"][field] = -1
+    _write_jsonl(metrics, records)
+    manifest_path = run_dir / "run_launch_manifest.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["execution"]["artifact_audit"]["files"][
+        "evaluation_metrics.jsonl"
+    ]["sha256"] = _sha(metrics)
+    manifest_path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+
+    with pytest.raises(AnalysisError, match=f"{field} must be non-negative"):
+        analyze_study(
+            root=root,
+            study_dir=study,
+            output_dir=root / f"outputs/negative_{field}",
+        )
+
+
+@pytest.mark.parametrize(
+    ("updates", "message"),
+    (
+        (
+            {"navigation_failure_count": 2},
+            "success/failure counts do not partition executions",
+        ),
+        (
+            {"navigation_canceled_count": 0},
+            "cancel/non-cancel counts do not partition failures",
+        ),
+        (
+            {"navigation_upstream_cancel_count": 2},
+            "attributed navigation cancellations exceed all cancellations",
+        ),
+    ),
+)
+def test_inconsistent_cancellation_action_counts_fail_closed(
+    tmp_path: Path, updates: dict[str, int], message: str,
+) -> None:
+    project = _fixture_project(tmp_path)
+    root = project["root"]
+    study = project["study"]
+    rows = project["rows"]
+    assert isinstance(root, Path) and isinstance(study, Path)
+    assert isinstance(rows, list)
+    row = next(
+        row for row in rows
+        if row["method"] == "sstg" and row["replicate_seed"] == "1"
+    )
+    run_dir = root / row["run_output_dir"]
+    metrics = run_dir / "evaluation_metrics.jsonl"
+    records = [json.loads(line) for line in metrics.read_text().splitlines()]
+    settled = next(
+        record["payload"]
+        for record in records
+        if record.get("event") == "metrics_snapshot"
+        and record.get("payload", {}).get("reason")
+        == "policy_session_settled"
+    )
+    settled["actions"].update(updates)
+    _write_jsonl(metrics, records)
+    manifest_path = run_dir / "run_launch_manifest.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["execution"]["artifact_audit"]["files"][
+        "evaluation_metrics.jsonl"
+    ]["sha256"] = _sha(metrics)
+    manifest_path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+
+    with pytest.raises(AnalysisError, match=message):
+        analyze_study(
+            root=root,
+            study_dir=study,
+            output_dir=root / "outputs/inconsistent_cancellation_counts",
         )
 
 

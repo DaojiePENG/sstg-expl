@@ -969,6 +969,11 @@ class FrontierActionAdapter(Node):
                 f"nav2_status_{context.downstream_status}:"
                 f"superseded_by_{context.superseded_by_decision_id}"
             )
+        elif context.cancel_origin is not None:
+            reason = (
+                f"nav2_status_{context.downstream_status}:"
+                f"{context.cancel_origin}"
+            )
         else:
             reason = f"nav2_status_{context.downstream_status}"
         nav2_error_code = (

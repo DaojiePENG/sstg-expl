@@ -1618,6 +1618,10 @@ class ActionTraceAccumulator:
         self.execution_count = 0
         self.navigation_success_count = 0
         self.navigation_failure_count = 0
+        self.navigation_canceled_count = 0
+        self.navigation_upstream_cancel_count = 0
+        self.navigation_adapter_cancel_count = 0
+        self.navigation_non_cancel_failure_count = 0
         self.decision_error_count = 0
         self.session_finished_count = 0
         self.decision_time_ms_total = 0.0
@@ -1686,9 +1690,24 @@ class ActionTraceAccumulator:
                 raise ValueError("execution path must be a list")
             reason = str(payload.get("reason", "unspecified"))
             recomputed = _polyline_length(path)
+            failed = not succeeded
+            canceled = failed and payload.get("nav2_status") == 5
+            cancel_origin = payload.get("cancel_origin")
             self.execution_count += 1
             self.navigation_success_count += int(succeeded)
-            self.navigation_failure_count += int(not succeeded)
+            self.navigation_failure_count += int(failed)
+            self.navigation_canceled_count += int(canceled)
+            self.navigation_non_cancel_failure_count += int(
+                failed and not canceled
+            )
+            if canceled and isinstance(cancel_origin, str):
+                if cancel_origin in {
+                    "upstream_cancel_request",
+                    "nav2_native_preemption",
+                }:
+                    self.navigation_upstream_cancel_count += 1
+                elif cancel_origin.startswith("adapter_"):
+                    self.navigation_adapter_cancel_count += 1
             self.trace_reported_translation_m += translation
             self.trace_recomputed_path_length_m += recomputed
             self.trace_reported_rotation_deg += rotation
@@ -1719,6 +1738,16 @@ class ActionTraceAccumulator:
             "execution_count": self.execution_count,
             "navigation_success_count": self.navigation_success_count,
             "navigation_failure_count": self.navigation_failure_count,
+            "navigation_canceled_count": self.navigation_canceled_count,
+            "navigation_upstream_cancel_count": (
+                self.navigation_upstream_cancel_count
+            ),
+            "navigation_adapter_cancel_count": (
+                self.navigation_adapter_cancel_count
+            ),
+            "navigation_non_cancel_failure_count": (
+                self.navigation_non_cancel_failure_count
+            ),
             "navigation_success_rate": success_rate,
             "decision_error_count": self.decision_error_count,
             "session_finished_count": self.session_finished_count,

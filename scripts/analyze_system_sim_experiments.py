@@ -96,6 +96,11 @@ RUN_FIELDS = (
     "navigation_goal_count",
     "execution_count",
     "navigation_success_count",
+    "navigation_failure_count",
+    "navigation_canceled_count",
+    "navigation_upstream_cancel_count",
+    "navigation_adapter_cancel_count",
+    "navigation_non_cancel_failure_count",
     "collision_count",
     "collision_free",
     "contact_message_count",
@@ -450,6 +455,21 @@ def _extract_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         "navigation_success_count": _number(_nested(
             snapshot, ("actions", "navigation_success_count")
         ), "navigation success count"),
+        "navigation_failure_count": _number(_nested(
+            snapshot, ("actions", "navigation_failure_count")
+        ), "navigation failure count"),
+        "navigation_canceled_count": _number(_nested(
+            snapshot, ("actions", "navigation_canceled_count")
+        ), "navigation canceled count"),
+        "navigation_upstream_cancel_count": _number(_nested(
+            snapshot, ("actions", "navigation_upstream_cancel_count")
+        ), "navigation upstream cancel count"),
+        "navigation_adapter_cancel_count": _number(_nested(
+            snapshot, ("actions", "navigation_adapter_cancel_count")
+        ), "navigation adapter cancel count"),
+        "navigation_non_cancel_failure_count": _number(_nested(
+            snapshot, ("actions", "navigation_non_cancel_failure_count")
+        ), "navigation non-cancel failure count"),
         "collision_count": _number(_nested(
             snapshot, ("safety", "collision_count")
         ), "collision count"),
@@ -504,6 +524,11 @@ def _extract_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         "navigation_goal_count",
         "execution_count",
         "navigation_success_count",
+        "navigation_failure_count",
+        "navigation_canceled_count",
+        "navigation_upstream_cancel_count",
+        "navigation_adapter_cancel_count",
+        "navigation_non_cancel_failure_count",
         "collision_count",
         "contact_message_count",
         "mean_clearance_m",
@@ -518,6 +543,28 @@ def _extract_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         value = result.get(field)
         if value is not None and float(value) < 0.0:
             raise AnalysisError(f"{field} must be non-negative")
+    execution = result.get("execution_count")
+    success = result.get("navigation_success_count")
+    failure = result.get("navigation_failure_count")
+    canceled = result.get("navigation_canceled_count")
+    upstream_canceled = result.get("navigation_upstream_cancel_count")
+    adapter_canceled = result.get("navigation_adapter_cancel_count")
+    non_cancel_failure = result.get("navigation_non_cancel_failure_count")
+    if None not in (execution, success, failure):
+        if float(success) + float(failure) != float(execution):
+            raise AnalysisError(
+                "navigation success/failure counts do not partition executions"
+            )
+    if None not in (failure, canceled, non_cancel_failure):
+        if float(canceled) + float(non_cancel_failure) != float(failure):
+            raise AnalysisError(
+                "navigation cancel/non-cancel counts do not partition failures"
+            )
+    if None not in (canceled, upstream_canceled, adapter_canceled):
+        if float(upstream_canceled) + float(adapter_canceled) > float(canceled):
+            raise AnalysisError(
+                "attributed navigation cancellations exceed all cancellations"
+            )
     if raw_nodes is not None and duplicate_nodes is not None:
         if float(duplicate_nodes) > float(raw_nodes):
             raise AnalysisError("duplicate node count exceeds raw node count")

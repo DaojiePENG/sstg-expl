@@ -594,6 +594,11 @@ def test_action_trace_accumulator_counts_and_recomputes_path_length():
     assert snapshot["navigation_goal_count"] == 1
     assert snapshot["execution_count"] == 1
     assert snapshot["navigation_success_rate"] == 1.0
+    assert snapshot["navigation_failure_count"] == 0
+    assert snapshot["navigation_canceled_count"] == 0
+    assert snapshot["navigation_upstream_cancel_count"] == 0
+    assert snapshot["navigation_adapter_cancel_count"] == 0
+    assert snapshot["navigation_non_cancel_failure_count"] == 0
     assert snapshot["decision_time_ms_mean"] == 12.5
     assert snapshot["decision_time_observed_count"] == 1
     assert snapshot["decision_time_unavailable_count"] == 0
@@ -601,6 +606,55 @@ def test_action_trace_accumulator_counts_and_recomputes_path_length():
     assert snapshot["trace_recomputed_path_length_m"] == 5.0
     assert snapshot["trace_translation_disagreement_m"] == 1.0
     assert snapshot["execution_reasons"] == {"nav2_status_4": 1}
+
+
+def test_action_trace_classifies_cancellations_by_origin():
+    actions = ActionTraceAccumulator()
+    executions = [
+        (1, 5, "upstream_cancel_request"),
+        (2, 5, "nav2_native_preemption"),
+        (3, 5, "adapter_goal_timeout"),
+        (4, 5, "adapter_session_termination"),
+        (5, 5, None),
+        (6, 6, None),
+    ]
+    for decision_id, nav2_status, cancel_origin in executions:
+        actions.ingest(_record("execution", {
+            "decision_id": decision_id,
+            "succeeded": False,
+            "reason": f"nav2_status_{nav2_status}",
+            "translation_m": 0.0,
+            "rotation_deg": 0.0,
+            "path": [],
+            "nav2_status": nav2_status,
+            "cancel_origin": cancel_origin,
+        }, ros_time_ns=decision_id))
+
+    snapshot = actions.snapshot()
+    assert snapshot["navigation_failure_count"] == 6
+    assert snapshot["navigation_canceled_count"] == 5
+    assert snapshot["navigation_upstream_cancel_count"] == 2
+    assert snapshot["navigation_adapter_cancel_count"] == 2
+    assert snapshot["navigation_non_cancel_failure_count"] == 1
+
+
+def test_action_trace_legacy_failure_without_cancel_fields_is_non_cancel():
+    actions = ActionTraceAccumulator()
+    actions.ingest(_record("execution", {
+        "decision_id": 1,
+        "succeeded": False,
+        "reason": "goal_rejected",
+        "translation_m": 0.0,
+        "rotation_deg": 0.0,
+        "path": [],
+    }))
+
+    snapshot = actions.snapshot()
+    assert snapshot["navigation_failure_count"] == 1
+    assert snapshot["navigation_canceled_count"] == 0
+    assert snapshot["navigation_upstream_cancel_count"] == 0
+    assert snapshot["navigation_adapter_cancel_count"] == 0
+    assert snapshot["navigation_non_cancel_failure_count"] == 1
 
 
 def test_action_trace_preserves_unavailable_upstream_decision_time():
