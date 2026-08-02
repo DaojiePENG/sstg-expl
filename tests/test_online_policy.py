@@ -150,6 +150,11 @@ def test_failed_goal_suppresses_neighboring_embodied_targets():
         for candidate in next_decision.generated_candidates
     )
     assert not next_decision.active_candidates
+    assert next_decision.status == "failed"
+    assert next_decision.reason == "navigation_failure_exhaustion"
+    assert session.summary()["termination_reason"] == (
+        "navigation_failure_exhaustion"
+    )
 
 
 def test_adapter_cancel_does_not_poison_failed_goal_neighborhood():

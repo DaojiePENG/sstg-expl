@@ -259,12 +259,29 @@ class OnlineExplorerSession:
             native_completion_trigger = "sstg_frontier_topology_convergence"
         elif selected is None:
             native_completion_trigger = "candidate_exhaustion"
+        navigation_failure_exhaustion = bool(
+            selected is None
+            and not active
+            and any(
+                candidate.get("status")
+                == "pruned_navigation_failure_neighborhood"
+                for candidate in traced
+            )
+        )
+        if navigation_failure_exhaustion:
+            native_completion_trigger = "navigation_failure_exhaustion"
 
-        status = "confirming"
+        status = (
+            "failed" if navigation_failure_exhaustion else "confirming"
+        )
         reason = (
-            f"{native_completion_trigger}_pending"
-            if native_completion_trigger is not None
-            else "candidate_exhaustion_pending"
+            "navigation_failure_exhaustion"
+            if navigation_failure_exhaustion
+            else (
+                f"{native_completion_trigger}_pending"
+                if native_completion_trigger is not None
+                else "candidate_exhaustion_pending"
+            )
         )
         target_pose = None
         planned_path: List[Point2D] = []
@@ -287,6 +304,8 @@ class OnlineExplorerSession:
             else:
                 status = "stalled"
                 reason = "selected_candidate_unreachable"
+        elif navigation_failure_exhaustion:
+            self._native_completion_trigger = native_completion_trigger
         elif (
             map_revision is None
             or map_revision != self._last_exhaustion_map_revision
@@ -296,6 +315,7 @@ class OnlineExplorerSession:
             self._native_completion_trigger = native_completion_trigger
         if (
             selected is None
+            and not navigation_failure_exhaustion
             and self._exhaustion_confirmation
             >= self.config.online_exhaustion_confirmations
         ):
