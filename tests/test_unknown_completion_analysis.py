@@ -38,6 +38,11 @@ def _write_run(root: Path, method: str, order: int) -> dict[str, str]:
                 "c_t_truth_endpoints": topology,
                 "coverage_distance_auc_normalized": .7 + order / 100,
             },
+            "core_policy": {"truth_topological": {"endpoint_audit": {
+                "unique_endpoint_count": order,
+                "raw_endpoint_observation_count": order,
+                "redundant_endpoint_fraction": 0.0,
+            }}},
             "ground_truth_motion": {"ground_truth_path_length_m": distance},
         }})
     policy_path = run / "policy_trace.jsonl"
@@ -92,6 +97,7 @@ def test_focused_unknown_completion_report(tmp_path: Path, monkeypatch) -> None:
     assert len(summary) == 5
     assert all(row["equivalent_95_95_reached"] == "true" for row in summary)
     assert all(row["native_exhaustion_confirmed"] == "true" for row in summary)
+    assert all(row["redundant_endpoint_fraction_at_95_95"] == "0.0" for row in summary)
     conclusion = (output / "CONCLUSION.md").read_text()
     assert "核心算法比较" in conclusion
     assert "现实终止诊断" in conclusion

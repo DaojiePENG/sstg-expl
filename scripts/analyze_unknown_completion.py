@@ -46,6 +46,9 @@ class CoverageSample:
     topological: float
     joint: float
     auc: float
+    unique_endpoints: int | None
+    raw_endpoint_observations: int | None
+    redundant_endpoint_fraction: float | None
 
 
 @dataclass(frozen=True)
@@ -63,6 +66,9 @@ class MethodResult:
     topological_at_95_95: float | None
     joint_at_95_95: float | None
     coverage_distance_auc_at_95_95: float | None
+    unique_endpoints_at_95_95: int | None
+    raw_endpoint_observations_at_95_95: int | None
+    redundant_endpoint_fraction_at_95_95: float | None
     terminal_reason: str
     native_termination_rule: str
     native_exhaustion_confirmed: bool
@@ -170,6 +176,32 @@ def _coverage_samples(records: Sequence[Mapping[str, Any]]) -> list[CoverageSamp
             raise AnalysisError("AUC or distance lies outside its valid range")
         if samples and distance + 1e-6 < samples[-1].distance_m:
             raise AnalysisError("ground-truth distance decreases")
+        core_policy = payload.get("core_policy")
+        truth_topological = (
+            core_policy.get("truth_topological")
+            if isinstance(core_policy, Mapping) else None
+        )
+        endpoint_audit = (
+            truth_topological.get("endpoint_audit")
+            if isinstance(truth_topological, Mapping) else None
+        )
+        unique_endpoints = None
+        raw_endpoint_observations = None
+        redundant_endpoint_fraction = None
+        if isinstance(endpoint_audit, Mapping):
+            if endpoint_audit.get("unique_endpoint_count") is not None:
+                unique_endpoints = int(endpoint_audit["unique_endpoint_count"])
+            if endpoint_audit.get("raw_endpoint_observation_count") is not None:
+                raw_endpoint_observations = int(
+                    endpoint_audit["raw_endpoint_observation_count"]
+                )
+            if endpoint_audit.get("redundant_endpoint_fraction") is not None:
+                redundant_endpoint_fraction = _number(
+                    endpoint_audit["redundant_endpoint_fraction"],
+                    "redundant endpoint fraction",
+                )
+                if not 0.0 <= redundant_endpoint_fraction <= 1.0:
+                    raise AnalysisError("redundant endpoint fraction lies outside [0, 1]")
         samples.append(CoverageSample(
             ros_time_ns=int(record["ros_time_ns"]),
             distance_m=distance,
@@ -177,6 +209,9 @@ def _coverage_samples(records: Sequence[Mapping[str, Any]]) -> list[CoverageSamp
             topological=topological,
             joint=min(sensor, topological),
             auc=auc,
+            unique_endpoints=unique_endpoints,
+            raw_endpoint_observations=raw_endpoint_observations,
+            redundant_endpoint_fraction=redundant_endpoint_fraction,
         ))
     if not samples:
         raise AnalysisError("no evaluator core-policy coverage samples")
@@ -252,6 +287,15 @@ def analyze_run(
         topological_at_95_95=None if crossing is None else crossing.topological,
         joint_at_95_95=None if crossing is None else crossing.joint,
         coverage_distance_auc_at_95_95=None if crossing is None else crossing.auc,
+        unique_endpoints_at_95_95=(
+            None if crossing is None else crossing.unique_endpoints
+        ),
+        raw_endpoint_observations_at_95_95=(
+            None if crossing is None else crossing.raw_endpoint_observations
+        ),
+        redundant_endpoint_fraction_at_95_95=(
+            None if crossing is None else crossing.redundant_endpoint_fraction
+        ),
         terminal_reason=terminal_reason,
         native_termination_rule=str(summary.get("native_termination_rule", "unknown")),
         native_exhaustion_confirmed=(
@@ -312,7 +356,9 @@ def _plot_comparison(
         item.distance_to_95_95_m is None,
         math.inf if item.distance_to_95_95_m is None else item.distance_to_95_95_m,
     ))
-    fig, (curve_axis, bar_axis) = plt.subplots(1, 2, figsize=(13, 5.2))
+    fig, (curve_axis, distance_axis, action_axis) = plt.subplots(
+        1, 3, figsize=(17, 5.2)
+    )
     for result in results:
         samples = traces[result.method]
         if result.distance_to_95_95_m is not None:
@@ -337,16 +383,50 @@ def _plot_comparison(
     curve_axis.legend(loc="lower right")
 
     values = [item.distance_to_95_95_m if item.distance_to_95_95_m is not None else 0.0 for item in ordered]
-    bars = bar_axis.bar([item.method_label for item in ordered], values,
-                        color=[colors[item.method] for item in ordered])
+    bars = distance_axis.bar([item.method_label for item in ordered], values,
+                             color=[colors[item.method] for item in ordered])
     for bar, result in zip(bars, ordered):
         text = "not reached" if result.distance_to_95_95_m is None else f"{result.distance_to_95_95_m:.1f} m\nAUC {result.coverage_distance_auc_at_95_95:.3f}"
-        bar_axis.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + max(values + [1.0]) * .015,
-                      text, ha="center", va="bottom", fontsize=9)
-    bar_axis.set(xlabel="Method", ylabel="Distance to first joint 95/95 (m)",
-                 title="Procedural-equivalent endpoint (lower distance is better)")
-    bar_axis.grid(axis="y", alpha=0.25)
-    bar_axis.set_ylim(0.0, max(values + [1.0]) * 1.18)
+        distance_axis.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + max(values + [1.0]) * .015,
+            text, ha="center", va="bottom", fontsize=9,
+        )
+    distance_axis.set(
+        xlabel="Method", ylabel="Distance to first joint 95/95 (m)",
+        title="Travel efficiency (lower is better)",
+    )
+    distance_axis.grid(axis="y", alpha=0.25)
+    distance_axis.set_ylim(0.0, max(values + [1.0]) * 1.18)
+
+    action_order = sorted(results, key=lambda item: (
+        item.executions_to_95_95 is None,
+        math.inf if item.executions_to_95_95 is None else item.executions_to_95_95,
+    ))
+    action_values = [item.executions_to_95_95 or 0 for item in action_order]
+    action_bars = action_axis.bar(
+        [item.method_label for item in action_order], action_values,
+        color=[colors[item.method] for item in action_order],
+    )
+    for bar, result in zip(action_bars, action_order):
+        if result.executions_to_95_95 is None:
+            label = "not reached"
+        else:
+            redundancy = result.redundant_endpoint_fraction_at_95_95
+            label = f"{result.executions_to_95_95} actions"
+            if redundancy is not None:
+                label += f"\n{100.0 * redundancy:.1f}% redundant"
+        action_axis.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + max(action_values + [1]) * .015,
+            label, ha="center", va="bottom", fontsize=9,
+        )
+    action_axis.set(
+        xlabel="Method", ylabel="Executions to first joint 95/95",
+        title="Oriented-action efficiency (lower is better)",
+    )
+    action_axis.grid(axis="y", alpha=0.25)
+    action_axis.set_ylim(0.0, max(action_values + [1]) * 1.18)
     fig.suptitle("ROS2/Gazebo unknown-completion | development scene, one seed")
     fig.tight_layout()
     fig.savefig(path, dpi=180, bbox_inches="tight")
@@ -357,6 +437,11 @@ def _write_conclusion(path: Path, results: Sequence[MethodResult]) -> None:
     reached = [item for item in results if item.equivalent_95_95_reached]
     distance_rank = sorted(reached, key=lambda item: item.distance_to_95_95_m or math.inf)
     auc_rank = sorted(reached, key=lambda item: item.coverage_distance_auc_at_95_95 or -math.inf, reverse=True)
+    action_rank = sorted(
+        reached,
+        key=lambda item: math.inf if item.executions_to_95_95 is None
+        else item.executions_to_95_95,
+    )
     sstg = next(item for item in results if item.method == "sstg")
     native = [item for item in results if item.native_exhaustion_confirmed]
     lines = [
@@ -376,23 +461,27 @@ def _write_conclusion(path: Path, results: Sequence[MethodResult]) -> None:
     if sstg.equivalent_95_95_reached:
         distance_position = distance_rank.index(sstg) + 1
         auc_position = auc_rank.index(sstg) + 1
+        action_position = action_rank.index(sstg) + 1
         lines.append(
             f"SSTG 在阈值距离上为第 {distance_position}/{len(reached)}（{sstg.distance_to_95_95_m:.2f} m），"
-            f"到该端点的覆盖—距离 AUC 为第 {auc_position}/{len(reached)}（{sstg.coverage_distance_auc_at_95_95:.3f}）。"
+            f"到该端点的覆盖—距离 AUC 为第 {auc_position}/{len(reached)}（{sstg.coverage_distance_auc_at_95_95:.3f}），"
+            f"定向执行次数为第 {action_position}/{len(reached)}（{sstg.executions_to_95_95} 次）。"
         )
     lines.extend([
         "",
         "## 统一端点（核心算法比较）",
         "",
-        "| 方法 | 达到95/95 | 距离/m | AUC@端点 | 决策/执行 |",
-        "|---|---:|---:|---:|---:|",
+        "| 方法 | 达到95/95 | 距离/m | AUC@端点 | 决策/执行 | 唯一端点 | 冗余端点 |",
+        "|---|---:|---:|---:|---:|---:|---:|",
     ])
     for item in distance_rank + [item for item in results if item not in reached]:
         lines.append(
             f"| {item.method_label} | {'是' if item.equivalent_95_95_reached else '否'} | "
             f"{'' if item.distance_to_95_95_m is None else f'{item.distance_to_95_95_m:.2f}'} | "
             f"{'' if item.coverage_distance_auc_at_95_95 is None else f'{item.coverage_distance_auc_at_95_95:.3f}'} | "
-            f"{'' if item.decisions_to_95_95 is None else f'{item.decisions_to_95_95}/{item.executions_to_95_95}'} |"
+            f"{'' if item.decisions_to_95_95 is None else f'{item.decisions_to_95_95}/{item.executions_to_95_95}'} | "
+            f"{'' if item.unique_endpoints_at_95_95 is None else item.unique_endpoints_at_95_95} | "
+            f"{'' if item.redundant_endpoint_fraction_at_95_95 is None else f'{100.0 * item.redundant_endpoint_fraction_at_95_95:.1f}%'} |"
         )
     lines.extend([
         "",
