@@ -121,6 +121,7 @@ recording:
   backend: rosbag2
   storage_id: mcap
   storage_preset_profile: zstd_fast
+  include_hidden_topics: true
   output: bags/core
   topics:
     - /clock

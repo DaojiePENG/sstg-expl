@@ -62,9 +62,10 @@ the independent evaluator still decides coverage, target recall, collision,
 and joint success.  The public API does not expose upstream internal decision
 compute time, so this field is recorded as unavailable rather than a fabricated
 zero.  Proxy transparency and the observed upstream-cancel Gazebo path now
-pass.  Until native-replacement Gazebo coverage, matched sensor freeze, and
-hidden action-topic recording and shutdown-cleanup gates pass, followed by
-paired multi-scene/multi-seed validation, the method remains a development
+pass.  A follow-up smoke also retained all proxy/shared action feedback and
+status hidden topics and closed cleanly without unconsumed adapter executor
+exceptions.  Until native-replacement Gazebo coverage, matched sensor freeze,
+and paired multi-scene/multi-seed gates pass, the method remains a development
 baseline candidate and is ineligible for a confirmatory table.
 
 Experiment-specific room topology and collision truth may be generated locally

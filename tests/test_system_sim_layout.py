@@ -780,6 +780,7 @@ def test_core_rosbag_profile_matches_shared_stack_and_is_enabled(monkeypatch):
     assert recording["enabled"] is True
     assert recording["storage_id"] == module.CORE_BAG_STORAGE_ID
     assert recording["storage_preset_profile"] == module.CORE_BAG_STORAGE_PRESET
+    assert recording["include_hidden_topics"] is True
     assert recording["topics"] == list(module.CORE_BAG_TOPICS)
     assert set(recording["topic_types"]) == set(recording["topics"])
     assert 'DeclareLaunchArgument("record_bag", default_value="true")' in launch
@@ -808,7 +809,9 @@ def test_core_rosbag_profile_matches_shared_stack_and_is_enabled(monkeypatch):
         "/baseline/frontier_mrtsp_dp/navigate_to_pose/_action/feedback",
         "/baseline/frontier_mrtsp_dp/navigate_to_pose/_action/status",
     ]
-    assert command.count("--include-hidden-topics") == 1
+    assert command.count("--include-hidden-topics") == int(
+        recording["include_hidden_topics"]
+    )
     assert command.index("--include-hidden-topics") < topics_index
 
 

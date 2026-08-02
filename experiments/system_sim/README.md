@@ -41,7 +41,9 @@ validation.  The audit opens the bag with upstream `rosbag2_py`, reads every
 record to EOF, and cross-checks message counts, per-file counts, framing and
 frozen ROS topic types.  A missing `/map`, `/scan`, ground-truth path, policy
 trace, world clock/stats, or task-camera stream fails the run instead of
-producing a partial figure later.
+producing a partial figure later.  The frozen profile enables hidden-topic
+recording so both the proxy and shared Nav2 action feedback/status streams are
+retained; a dedicated runtime smoke verified all four streams as nonempty.
 
 ## Host dependencies
 
@@ -139,8 +141,9 @@ technical failures.  Raw Nav2 outcomes remain unchanged, while a policy
 cancel/replacement pose is frozen when it occurs so a late result cannot be
 credited with a newer goal's motion.  The method remains development-only until
 the native-replacement branch is exercised in Gazebo, sensor parameters are
-frozen, the hidden action-topic recording contract and adapter shutdown cleanup
-are closed, and paired multi-scene/multi-seed validation passes.
+frozen, and paired multi-scene/multi-seed validation passes.  A dedicated smoke
+has now verified nonempty proxy/shared hidden action topics and clean adapter
+executor shutdown.
 
 Keep the system `protoc` ahead of Conda while compiling this overlay.  A Conda
 protobuf compiler paired with ROS's system protobuf libraries is an unsupported

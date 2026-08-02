@@ -57,6 +57,7 @@ RECORDING_CONTRACT = {
     "backend": "rosbag2",
     "storage_id": "mcap",
     "storage_preset_profile": "zstd_fast",
+    "include_hidden_topics": True,
     "output": "bags/core",
     "topics": list(CORE_BAG_TOPICS),
     "topic_types": dict(CORE_BAG_TOPIC_TYPES),
@@ -681,6 +682,11 @@ def test_shared_stack_middleware_contract_rejects_missing_or_unknown_fields(
     [
         ("enabled", False, "enabled must be True"),
         ("storage_id", "sqlite3", "storage_id must be 'mcap'"),
+        (
+            "include_hidden_topics",
+            False,
+            "include_hidden_topics must be True",
+        ),
         ("topics", ["/map"], "topics must match"),
         (
             "topic_types",

@@ -134,12 +134,13 @@ cancel branch of the prospective `policy_transition_node_v1` contract end to
 end: raw Nav2 statuses remain unchanged, while the adapter freezes the robot
 pose at the causal transition so a late result cannot borrow motion from a
 newer goal.  Native replacement has real ROS graph coverage but still needs a
-Gazebo branch-coverage run.  The method remains development-only pending that
-check, alignment of the declared hidden action topics with rosbag2 recording,
-adapter shutdown-future cleanup, matched sensor-parameter freeze, and paired
-multi-scene/multi-seed validation.  Its frontier-exhaustion event is only a
-termination reason; the evaluator, not the method, determines coverage and
-joint success.
+Gazebo branch-coverage run.  A subsequent artifact smoke recorded nonzero
+feedback and status messages on all four declared ROS action hidden topics and
+shut the adapter down without unconsumed executor exceptions.  The method
+remains development-only pending native-replacement coverage, matched
+sensor-parameter freeze, and paired multi-scene/multi-seed validation.  Its
+frontier-exhaustion event is only a termination reason; the evaluator, not the
+method, determines coverage and joint success.
 
 ## Visual evidence contract
 

@@ -336,6 +336,7 @@ def validate_recording_contract(
         "backend": "rosbag2",
         "storage_id": "mcap",
         "storage_preset_profile": "zstd_fast",
+        "include_hidden_topics": True,
         "output": "bags/core",
     }
     for field, expected in expected_scalars.items():

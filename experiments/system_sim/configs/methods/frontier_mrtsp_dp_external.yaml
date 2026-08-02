@@ -13,4 +13,4 @@ coverage_objective: joint
 topological_radius_m: 2.0
 topological_merge_distance_m: 0.25
 policy_seed_applicable: false
-status: development_distance_budget_and_transition_cancel_e2e_valid
+status: development_distance_transition_actionbag_shutdown_e2e_valid

@@ -122,12 +122,10 @@ components:
       budget_clock: ros_sim_time
       path_frame: odom
       decision_compute_time: unavailable_from_public_upstream_api
-    verification_status: local_build_adapter_runtime_distance_budget_and_transition_cancel_gazebo_e2e_verified
+    verification_status: local_build_adapter_runtime_distance_transition_actionbag_and_shutdown_gazebo_e2e_verified
     formal_baseline_eligible: false
     blockers:
       - native_preemption_gazebo_branch_coverage_pending
-      - hidden_action_topic_recording_contract_alignment_pending
-      - adapter_shutdown_future_cleanup_pending
       - frozen_sensor_matched_parameters_pending
       - paired_multi_scene_multi_seed_validation_pending
     naming_constraint: Do not label this implementation classic nearest-frontier.
