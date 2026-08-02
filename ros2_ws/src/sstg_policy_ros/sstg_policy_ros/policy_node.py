@@ -209,6 +209,7 @@ class SSTGPolicyNode(Node):
             "strategy": "sstg",
             "coverage_objective": "joint",
             "termination_mode": "candidate_exhaustion",
+            "online_exhaustion_confirmations": 3,
             "map_topic": "/map",
             "map_frame": "map",
             "base_frame": "base_footprint",
@@ -261,6 +262,9 @@ class SSTGPolicyNode(Node):
             ),
             termination_mode=str(
                 self.get_parameter("termination_mode").value
+            ),
+            online_exhaustion_confirmations=int(
+                self.get_parameter("online_exhaustion_confirmations").value
             ),
             sensor=SensorConfig(
                 field_of_view_deg=float(
@@ -540,6 +544,13 @@ class SSTGPolicyNode(Node):
             return
         self._append_trace("decision", decision.to_dict())
         self._publish_markers(decision)
+        if decision.status == "confirming":
+            self._publish_status("CONFIRMING_COMPLETION", decision.reason)
+            self.settle_until_ns = (
+                self.get_clock().now().nanoseconds
+                + int(self.map_settle_s * 1e9)
+            )
+            return
         if decision.status != "navigate":
             self.running = False
             self._publish_status(decision.status.upper(), decision.reason)

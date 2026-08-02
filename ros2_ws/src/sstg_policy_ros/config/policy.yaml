@@ -5,6 +5,7 @@ sstg_policy:
     strategy: sstg
     coverage_objective: joint
     termination_mode: candidate_exhaustion
+    online_exhaustion_confirmations: 3
     map_topic: /map
     map_frame: map
     base_frame: base_footprint

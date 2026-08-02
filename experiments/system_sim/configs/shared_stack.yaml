@@ -228,8 +228,8 @@ shared_autonomy:
   nav2_params: ros2_ws/src/sstg_nav_bringup/config/nav2_params.yaml
   slam_params: ros2_ws/src/sstg_nav_bringup/config/slam_toolbox.yaml
 experiment_budget:
-  max_duration_s: 900.0
-  max_distance_m: 150.0
+  max_duration_s: 1800.0
+  max_distance_m: 300.0
   # Sole primary protocol now follows the procedural unknown benchmark.
   max_decisions: 80
   goal_timeout_s: 180.0

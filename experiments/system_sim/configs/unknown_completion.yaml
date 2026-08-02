@@ -14,6 +14,10 @@ policy_contract:
   pose_source: ros2_map_to_base_footprint
   termination_mode: candidate_exhaustion
   rationale: unknown_cells_continue_to_generate_goals_until_no_informative_reachable_candidate_remains
+  completion_confirmation:
+    consecutive_new_map_revisions: 3
+    reset_on_any_new_valid_candidate: true
+    truth_coverage_used: false
 
 evaluator_contract:
   truth_access: true
@@ -22,6 +26,9 @@ evaluator_contract:
   topological_success_threshold: 0.95
   success_objective: joint
   threshold_role: offline_outcome_not_policy_stop
+  procedural_equivalent_endpoint: first_joint_95_95_crossing
+  primary_analysis_truncates_at_equivalent_endpoint: true
+  post_endpoint_role: real_robot_termination_diagnostic_only
 
 fail_safes:
   max_decisions: 80
@@ -69,22 +76,27 @@ methods:
     strategy: frontier
     config: experiments/system_sim/configs/methods/frontier.yaml
     procedural_algorithm: frontier
+    native_termination_rule: no_reachable_frontier_or_joint_gap_above_gain
   - method: nbv
     strategy: nbv
     config: experiments/system_sim/configs/methods/nbv.yaml
     procedural_algorithm: nbv
+    native_termination_rule: no_nbv_candidate_above_information_or_topological_gain
   - method: rrt_adapted
     strategy: rrt
     config: experiments/system_sim/configs/methods/rrt_adapted.yaml
     procedural_algorithm: rrt
+    native_termination_rule: no_rrt_expansion_above_information_or_topological_gain
   - method: ans_adapted
     strategy: ans
     config: experiments/system_sim/configs/methods/ans_adapted.yaml
     procedural_algorithm: ans
+    native_termination_rule: no_ans_guided_candidate_above_information_or_topological_gain
   - method: sstg
     strategy: sstg
     config: experiments/system_sim/configs/methods/sstg.yaml
     procedural_algorithm: sstg
+    native_termination_rule: no_multi_frontier_vantage_or_joint_gap_above_gain
 
 ans_checkpoint:
   path: models/checkpoints/ans_global_policy.pt

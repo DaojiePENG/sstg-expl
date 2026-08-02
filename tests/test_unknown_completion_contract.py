@@ -39,6 +39,7 @@ def test_five_ros_methods_map_one_to_one_to_procedural_algorithms():
     ]
     assert len({item["strategy"] for item in mappings}) == 5
     for item in mappings:
+        assert item["native_termination_rule"].startswith("no_")
         method = _yaml(ROOT / item["config"])
         assert method["method"] == item["method"]
         assert method["strategy"] == item["strategy"]
@@ -81,6 +82,9 @@ def test_ros_policy_matches_shared_procedural_algorithm_config():
         assert ros[ros_name] == shared[protocol_name]
 
     assert ros["termination_mode"] == protocol["policy_contract"]["termination_mode"]
+    assert ros["online_exhaustion_confirmations"] == protocol[
+        "policy_contract"
+    ]["completion_confirmation"]["consecutive_new_map_revisions"]
     assert ros["lidar_fov_deg"] == sensor["field_of_view_deg"]
     assert ros["lidar_range_m"] == sensor["max_range_m"]
     assert ros["lidar_angular_resolution_deg"] == sensor["angular_resolution_deg"]
@@ -106,6 +110,9 @@ def test_protocol_constructs_the_same_shared_explorer_configuration():
         topological_merge_distance=shared["topological_merge_distance_m"],
         target_topological_coverage=shared["target_topological_coverage"],
         termination_mode=protocol["policy_contract"]["termination_mode"],
+        online_exhaustion_confirmations=protocol["policy_contract"][
+            "completion_confirmation"
+        ]["consecutive_new_map_revisions"],
         information_gain_weight=shared["information_gain_weight"],
         topological_gain_weight=shared["topological_gain_weight"],
         max_decisions=protocol["fail_safes"]["max_decisions"],
@@ -130,3 +137,4 @@ def test_protocol_constructs_the_same_shared_explorer_configuration():
     assert asdict(config)["termination_mode"] == "candidate_exhaustion"
     assert config.robot_radius == 0.30
     assert config.max_decisions == 80
+    assert config.online_exhaustion_confirmations == 3

@@ -41,6 +41,9 @@ class OnlineDecision:
     active_candidates: List[Dict]
     known_free_cells: int
     known_topological_coverage: float
+    native_termination_rule: str
+    exhaustion_confirmation: int
+    exhaustion_confirmations_required: int
     decision_time_ms: float
 
     def to_dict(self) -> Dict:
@@ -77,6 +80,14 @@ class OnlineExplorerSession:
     ground-truth argument; truth coverage remains an evaluator responsibility.
     """
 
+    _NATIVE_TERMINATION_RULES = {
+        "frontier": "no_reachable_frontier_or_joint_gap_above_gain",
+        "nbv": "no_nbv_candidate_above_information_or_topological_gain",
+        "rrt": "no_rrt_expansion_above_information_or_topological_gain",
+        "ans": "no_ans_guided_candidate_above_information_or_topological_gain",
+        "sstg": "no_multi_frontier_vantage_or_joint_gap_above_gain",
+    }
+
     def __init__(self, config: UnknownExplorerConfig, start_pose: Pose2D):
         if config.termination_mode != "candidate_exhaustion":
             raise ValueError(
@@ -105,6 +116,8 @@ class OnlineExplorerSession:
         self._next_decision_id = 1
         self._pending: Optional[OnlineDecision] = None
         self._map_resolution: Optional[float] = None
+        self._exhaustion_confirmation = 0
+        self._last_exhaustion_map_revision: Optional[int] = None
         self.termination_reason = "running"
 
     @staticmethod
@@ -193,11 +206,13 @@ class OnlineExplorerSession:
             active, belief, ans_predicted
         )
 
-        status = "complete"
-        reason = "candidate_exhaustion"
+        status = "confirming"
+        reason = "candidate_exhaustion_pending"
         target_pose = None
         planned_path: List[Point2D] = []
         if selected is not None:
+            self._exhaustion_confirmation = 0
+            self._last_exhaustion_map_revision = None
             path = self.policy._plan(
                 planner, current, selected, belief.data.size
             )
@@ -213,6 +228,19 @@ class OnlineExplorerSession:
             else:
                 status = "stalled"
                 reason = "selected_candidate_unreachable"
+        elif (
+            map_revision is None
+            or map_revision != self._last_exhaustion_map_revision
+        ):
+            self._exhaustion_confirmation += 1
+            self._last_exhaustion_map_revision = map_revision
+        if (
+            selected is None
+            and self._exhaustion_confirmation
+            >= self.config.online_exhaustion_confirmations
+        ):
+            status = "complete"
+            reason = "candidate_exhaustion"
 
         decision = OnlineDecision(
             decision_id=self._next_decision_id,
@@ -227,12 +255,19 @@ class OnlineExplorerSession:
             active_candidates=[dict(candidate) for candidate in active],
             known_free_cells=known_free_cells,
             known_topological_coverage=known_topology,
+            native_termination_rule=self._NATIVE_TERMINATION_RULES[
+                self.config.strategy
+            ],
+            exhaustion_confirmation=self._exhaustion_confirmation,
+            exhaustion_confirmations_required=(
+                self.config.online_exhaustion_confirmations
+            ),
             decision_time_ms=(time.perf_counter() - started) * 1000.0,
         )
         self._next_decision_id += 1
         if decision.status == "navigate":
             self._pending = decision
-        else:
+        elif decision.status != "confirming":
             self.termination_reason = decision.reason
         return decision
 
@@ -359,6 +394,13 @@ class OnlineExplorerSession:
             "coverage_objective": self.config.coverage_objective,
             "termination_mode": self.config.termination_mode,
             "termination_reason": self.termination_reason,
+            "native_termination_rule": self._NATIVE_TERMINATION_RULES[
+                self.config.strategy
+            ],
+            "exhaustion_confirmation": self._exhaustion_confirmation,
+            "exhaustion_confirmations_required": (
+                self.config.online_exhaustion_confirmations
+            ),
             "decisions_issued": self._next_decision_id - 1,
             "executions": len(self.execution_records),
             "successful_executions": sum(

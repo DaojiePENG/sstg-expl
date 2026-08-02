@@ -38,6 +38,7 @@ class UnknownExplorerConfig:
     topological_merge_distance: float = 0.25
     target_topological_coverage: float = 0.95
     termination_mode: str = "coverage_target"
+    online_exhaustion_confirmations: int = 3
     information_gain_weight: float = 0.40
     topological_gain_weight: float = 0.60
     max_decisions: int = 80
@@ -73,6 +74,8 @@ class UnknownExplorerConfig:
             )
         if self.termination_mode not in TERMINATION_MODES:
             raise ValueError(f"Unknown termination mode: {self.termination_mode}")
+        if self.online_exhaustion_confirmations <= 0:
+            raise ValueError("online_exhaustion_confirmations must be positive")
         if not 0.0 < self.target_coverage <= 1.0:
             raise ValueError("target_coverage must be in (0, 1]")
         if not 0.0 < self.target_topological_coverage <= 1.0:

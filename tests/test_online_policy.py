@@ -127,10 +127,17 @@ def test_online_completion_does_not_claim_truth_coverage():
         (0.0, 0.0),
     )
     session = _session(start=(1.5, 1.5, 0.0))
-    decision = session.propose(belief)
+    first = session.propose(belief, map_revision=1)
+    repeated = session.propose(belief, map_revision=1)
+    second = session.propose(belief, map_revision=2)
+    decision = session.propose(belief, map_revision=3)
 
+    assert first.status == "confirming"
+    assert repeated.exhaustion_confirmation == 1
+    assert second.exhaustion_confirmation == 2
     assert decision.status == "complete"
     assert decision.reason == "candidate_exhaustion"
+    assert decision.exhaustion_confirmation == 3
     assert "truth" not in decision.to_dict()
     assert session.summary()["termination_reason"] == "candidate_exhaustion"
 
@@ -147,6 +154,24 @@ def test_goal_tolerance_pose_is_bridged_back_to_conservative_safe_space():
     assert decision.reason == "goal_selected"
     assert len(decision.active_candidates) > 1
     assert decision.planned_path[0] == pytest.approx((0.35, 5.0))
+
+
+def test_new_native_candidate_resets_completion_confirmation():
+    enclosed_data = np.full((100, 100), 100, dtype=np.int8)
+    enclosed_data[15, 15] = 0
+    enclosed = OccupancyGrid(
+        enclosed_data,
+        0.1,
+        (0.0, 0.0),
+    )
+    session = _session(start=(1.55, 1.55, 0.0))
+    assert session.propose(enclosed, map_revision=1).status == "confirming"
+    assert session.propose(enclosed, map_revision=2).exhaustion_confirmation == 2
+
+    decision = session.propose(_known_room(), map_revision=3)
+
+    assert decision.status == "navigate"
+    assert decision.exhaustion_confirmation == 0
 
 
 def test_online_session_rejects_truth_target_termination():
