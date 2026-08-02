@@ -18,6 +18,7 @@ import yaml
 import scripts.run_system_sim_schedule as system_sim_runner
 from scripts.generate_system_sim_schedule import (
     CORE_BAG_REQUIRED_TOPICS,
+    CORE_BAG_REQUIRED_TOPICS_BY_RUNTIME_ADAPTER,
     CORE_BAG_TOPIC_TYPES,
     CORE_BAG_TOPICS,
     ROS_GZ_BRIDGE_CONTRACT,
@@ -62,6 +63,12 @@ RECORDING_CONTRACT = {
     "topics": list(CORE_BAG_TOPICS),
     "topic_types": dict(CORE_BAG_TOPIC_TYPES),
     "required_nonempty_topics": list(CORE_BAG_REQUIRED_TOPICS),
+    "required_nonempty_topics_by_runtime_adapter": {
+        runtime_adapter: list(topics)
+        for runtime_adapter, topics in (
+            CORE_BAG_REQUIRED_TOPICS_BY_RUNTIME_ADAPTER.items()
+        )
+    },
 }
 
 
@@ -697,6 +704,11 @@ def test_shared_stack_middleware_contract_rejects_missing_or_unknown_fields(
             "required_nonempty_topics",
             ["/map"],
             "required_nonempty_topics must match",
+        ),
+        (
+            "required_nonempty_topics_by_runtime_adapter",
+            {"sstg_policy": ["/navigate_to_pose/_action/status"]},
+            "required_nonempty_topics_by_runtime_adapter must match",
         ),
     ],
 )
@@ -2145,6 +2157,116 @@ def test_artifact_audit_hashes_core_mcap_and_requires_key_topics(
     assert any(
         "required topic is empty or absent: /scan" in error
         for error in missing["errors"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("runtime_adapter", "empty_topic"),
+    [
+        (runtime_adapter, topic)
+        for runtime_adapter, topics in (
+            CORE_BAG_REQUIRED_TOPICS_BY_RUNTIME_ADAPTER.items()
+        )
+        for topic in topics
+    ],
+)
+def test_core_bag_gate_requires_each_runtime_adapter_action_topic(
+    tmp_path: Path,
+    runtime_adapter: str,
+    empty_topic: str,
+) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    _write_core_bag(output, empty_topic=empty_topic)
+
+    _files, errors, summary = system_sim_runner._core_bag_artifacts(
+        output,
+        RECORDING_CONTRACT,
+        expected_runtime_adapter=runtime_adapter,
+    )
+
+    assert errors == [
+        f"core bag required topic is empty or absent: {empty_topic}"
+    ]
+    assert summary["complete"] is False
+    assert summary["expected_runtime_adapter"] == runtime_adapter
+    assert empty_topic in summary[
+        "runtime_adapter_required_nonempty_topics"
+    ]
+    assert empty_topic in summary["required_nonempty_topics"]
+
+
+def test_core_bag_gate_does_not_require_external_proxy_for_sstg_policy(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    proxy_feedback = (
+        "/baseline/frontier_mrtsp_dp/navigate_to_pose/_action/feedback"
+    )
+    _write_core_bag(output, empty_topic=proxy_feedback)
+
+    _files, errors, summary = system_sim_runner._core_bag_artifacts(
+        output,
+        RECORDING_CONTRACT,
+        expected_runtime_adapter="sstg_policy",
+    )
+
+    assert errors == []
+    assert summary["complete"] is True
+    assert proxy_feedback not in summary[
+        "runtime_adapter_required_nonempty_topics"
+    ]
+
+
+def test_core_bag_gate_does_not_retroactively_change_legacy_contract(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    shared_feedback = "/navigate_to_pose/_action/feedback"
+    _write_core_bag(output, empty_topic=shared_feedback)
+    legacy_contract = dict(RECORDING_CONTRACT)
+    legacy_contract.pop("required_nonempty_topics_by_runtime_adapter")
+
+    _files, errors, summary = system_sim_runner._core_bag_artifacts(
+        output,
+        legacy_contract,
+        expected_runtime_adapter="sstg_policy",
+    )
+
+    assert errors == []
+    assert summary["complete"] is True
+    assert summary["runtime_adapter_required_nonempty_topics"] == []
+
+
+def test_completed_artifact_audit_applies_selected_adapter_action_gate(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    with (output / "launch.log").open("w", encoding="utf-8") as launch_log:
+        subprocess.run(
+            [sys.executable, "-c", _artifact_writer_program(), str(output), "exit"],
+            check=True,
+            stdout=launch_log,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    shared_feedback = "/navigate_to_pose/_action/feedback"
+    _write_core_bag(output, empty_topic=shared_feedback)
+
+    audit = validate_completed_artifacts(
+        output,
+        expected_recording_contract=RECORDING_CONTRACT,
+        expected_runtime_adapter="sstg_policy",
+    )
+
+    assert audit["valid"] is False
+    assert audit["core_bag"]["complete"] is False
+    assert (
+        f"core bag required topic is empty or absent: {shared_feedback}"
+        in audit["errors"]
     )
 
 

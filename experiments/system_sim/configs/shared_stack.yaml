@@ -181,6 +181,15 @@ recording:
     - /evaluation/ground_truth_odom
     - /evaluation/world_stats
     - /task_camera/image_raw
+  required_nonempty_topics_by_runtime_adapter:
+    sstg_policy:
+      - /navigate_to_pose/_action/feedback
+      - /navigate_to_pose/_action/status
+    frontier_mrtsp_dp_external:
+      - /navigate_to_pose/_action/feedback
+      - /navigate_to_pose/_action/status
+      - /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/feedback
+      - /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/status
 shared_autonomy:
   mapping: slam_toolbox_async
   navigation: nav2

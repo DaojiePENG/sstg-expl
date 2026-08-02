@@ -407,6 +407,8 @@ def _read_core_bag_to_eof(
 def _core_bag_artifacts(
     output_dir: Path,
     contract: Mapping[str, Any],
+    *,
+    expected_runtime_adapter: str | None = None,
 ) -> tuple[dict[str, dict[str, Any]], list[str], dict[str, Any]]:
     """Validate a finalized rosbag2 MCAP and return hashable evidence records."""
     files: dict[str, dict[str, Any]] = {}
@@ -420,6 +422,9 @@ def _core_bag_artifacts(
         "topic_types": {},
         "reader_message_count": 0,
         "reader_verified": False,
+        "expected_runtime_adapter": expected_runtime_adapter,
+        "required_nonempty_topics": [],
+        "runtime_adapter_required_nonempty_topics": [],
         "complete": False,
     }
     bag_dir = output_dir / str(contract.get("output", ""))
@@ -516,7 +521,29 @@ def _core_bag_artifacts(
     summary["topic_types"] = topic_types
     if type(message_count) is int and sum(topic_counts.values()) != message_count:
         errors.append("core bag topic counts do not sum to message_count")
-    for topic in contract.get("required_nonempty_topics", CORE_BAG_REQUIRED_TOPICS):
+    required_topics = list(
+        contract.get("required_nonempty_topics", CORE_BAG_REQUIRED_TOPICS)
+    )
+    runtime_required_topics: list[str] = []
+    if expected_runtime_adapter is not None:
+        required_by_adapter = contract.get(
+            "required_nonempty_topics_by_runtime_adapter",
+            {},
+        )
+        if isinstance(required_by_adapter, Mapping):
+            runtime_required_topics = [
+                str(topic)
+                for topic in required_by_adapter.get(
+                    expected_runtime_adapter, ()
+                )
+            ]
+    summary["runtime_adapter_required_nonempty_topics"] = (
+        runtime_required_topics
+    )
+    required_topics.extend(runtime_required_topics)
+    required_topics = list(dict.fromkeys(str(topic) for topic in required_topics))
+    summary["required_nonempty_topics"] = required_topics
+    for topic in required_topics:
         if topic_counts.get(str(topic), 0) <= 0:
             errors.append(f"core bag required topic is empty or absent: {topic}")
 
@@ -753,7 +780,9 @@ def validate_completed_artifacts(
     core_bag = {"required": False, "complete": None}
     if expected_recording_contract is not None:
         bag_files, bag_errors, core_bag = _core_bag_artifacts(
-            output_dir, expected_recording_contract
+            output_dir,
+            expected_recording_contract,
+            expected_runtime_adapter=expected_runtime_adapter,
         )
         files.update(bag_files)
         errors.extend(bag_errors)

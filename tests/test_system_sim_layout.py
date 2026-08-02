@@ -809,6 +809,10 @@ def test_core_rosbag_profile_matches_shared_stack_and_is_enabled(monkeypatch):
         "/baseline/frontier_mrtsp_dp/navigate_to_pose/_action/feedback",
         "/baseline/frontier_mrtsp_dp/navigate_to_pose/_action/status",
     ]
+    assert recording["required_nonempty_topics_by_runtime_adapter"] == {
+        "sstg_policy": hidden_action_topics[:2],
+        "frontier_mrtsp_dp_external": hidden_action_topics,
+    }
     assert command.count("--include-hidden-topics") == int(
         recording["include_hidden_topics"]
     )

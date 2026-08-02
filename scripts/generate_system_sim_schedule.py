@@ -204,6 +204,18 @@ CORE_BAG_REQUIRED_TOPICS = (
     "/evaluation/world_stats",
     "/task_camera/image_raw",
 )
+CORE_BAG_REQUIRED_TOPICS_BY_RUNTIME_ADAPTER = {
+    "sstg_policy": (
+        "/navigate_to_pose/_action/feedback",
+        "/navigate_to_pose/_action/status",
+    ),
+    "frontier_mrtsp_dp_external": (
+        "/navigate_to_pose/_action/feedback",
+        "/navigate_to_pose/_action/status",
+        "/baseline/frontier_mrtsp_dp/navigate_to_pose/_action/feedback",
+        "/baseline/frontier_mrtsp_dp/navigate_to_pose/_action/status",
+    ),
+}
 CSV_FIELDS = (
     "schema",
     "study_id",
@@ -353,11 +365,31 @@ def validate_recording_contract(
         raise ScheduleError(
             f"{label}.required_nonempty_topics must match the frozen required list"
         )
+    expected_required_by_adapter = {
+        runtime_adapter: list(topics)
+        for runtime_adapter, topics in (
+            CORE_BAG_REQUIRED_TOPICS_BY_RUNTIME_ADAPTER.items()
+        )
+    }
+    required_by_adapter = value.get(
+        "required_nonempty_topics_by_runtime_adapter"
+    )
+    if (
+        not isinstance(required_by_adapter, Mapping)
+        or dict(required_by_adapter) != expected_required_by_adapter
+    ):
+        raise ScheduleError(
+            f"{label}.required_nonempty_topics_by_runtime_adapter must match "
+            "the frozen runtime-adapter required lists"
+        )
     return {
         **expected_scalars,
         "topics": list(CORE_BAG_TOPICS),
         "topic_types": dict(CORE_BAG_TOPIC_TYPES),
         "required_nonempty_topics": list(CORE_BAG_REQUIRED_TOPICS),
+        "required_nonempty_topics_by_runtime_adapter": (
+            expected_required_by_adapter
+        ),
     }
 
 
