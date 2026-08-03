@@ -1,0 +1,496 @@
+schema: sstg_system_sim_schedule_freeze/v2
+study_id: gazebo_unknown_completion_next_stage_recovery_v16c_ans_office_20260803
+backend: gazebo_harmonic
+eligibility:
+  evidence_tier: development
+  formal_result_eligible: false
+  reasons:
+  - evidence_tier_is_development
+  - shared_stack_not_frozen:development
+  - condition_not_frozen:development
+  - method_not_frozen:ans_adapted:unknown_completion_development_adapter
+  - method_not_formal_eligible:ans_adapted
+  - world_not_test_split:dev_office_01:development
+  - world_not_formal_eligible:dev_office_01
+design:
+  matching_unit:
+  - world_id
+  - start_id
+  - condition
+  - replicate_seed
+  randomization_unit: block_id
+  randomized_factor: method
+  method_order_algorithm: sha256-key-sort/v1
+  methods:
+  - ans_adapted
+  condition: nominal
+  replicate_seeds:
+  - 331
+  start_policy: first
+  run_output_root: system_sim_outputs/unknown_completion/next_stage/gazebo_unknown_completion_next_stage_recovery_v16c_ans_office_20260803
+  block_count: 1
+  methods_per_block: 1
+  scheduled_run_count: 1
+randomization:
+  seed: 20260803
+seed_contract:
+  seed_source: replicate_seed
+  valid_range_inclusive:
+  - 1
+  - 2147483647
+  launch_argument_columns:
+    policy_seed: replicate_seed
+    simulation_seed: replicate_seed
+ros_gz_bridge_contract:
+  package: ros_gz_bridge
+  required_version: 1.0.23
+  repository: https://github.com/gazebosim/ros_gz
+  source_tag: 1.0.23
+  source_commit: ec3a555b540ac492882d587a09752eb2eeeee3cd
+  required_fix_commit: 4c6cb80bb30fc0871bbd5ec95761272ce49a150d
+  source_checkout: ros2_ws/src/third_party/ros_gz
+  required_prefix: ros2_ws/install/ros_gz_bridge
+  system_apt_version_observed: 1.0.22-1noble.20260615.142443
+  system_apt_eligible: false
+ros_middleware_contract:
+  implementation: rmw_fastrtps_cpp
+  package: rmw_fastrtps_cpp
+  required_version: 8.4.4
+  required_prefix: /opt/ros/jazzy
+  required_library_sha256: 046375a1ef195094abb57c832b275c385261052cfed3ee044cce70e25a42cef3
+  apt_package: ros-jazzy-rmw-fastrtps-cpp
+  apt_version_observed: 8.4.4-1noble.20260615.124621
+  required_linked_dependencies:
+    rmw_fastrtps_shared_cpp:
+      apt_package: ros-jazzy-rmw-fastrtps-shared-cpp
+      apt_version: 8.4.4-1noble.20260615.124045
+      required_library: /opt/ros/jazzy/lib/librmw_fastrtps_shared_cpp.so
+      required_sha256: c1abaceb3433fd4f20b1f5a5fa6686d285659bce8a2bb81ec2d61954a6d490ec
+    fastrtps:
+      apt_package: ros-jazzy-fastrtps
+      apt_version: 2.14.6-1noble.20260303.233638
+      required_library: /opt/ros/jazzy/lib/libfastrtps.so.2.14.6
+      required_sha256: 8d39de86a55a92e1be92640a22e6322f099227930d4fc98bd821b6effd7a3eaa
+    fastcdr:
+      apt_package: ros-jazzy-fastcdr
+      apt_version: 2.2.7-1noble.20260225.051855
+      required_library: /opt/ros/jazzy/lib/libfastcdr.so.2.2.7
+      required_sha256: 0eeb1f3d1859db07e7551be9df814053a8a4805c9feb9cb990363e43ac45cd69
+  custom_underlays_eligible: false
+  required_environment:
+    ROS_DISTRO: jazzy
+    ROS_DOMAIN_ID: '42'
+    ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+    SKIP_DEFAULT_XML: '1'
+  forbidden_environment:
+  - CYCLONEDDS_URI
+  - ROS_DISCOVERY_SERVER
+  - ROS_LOCALHOST_ONLY
+  - ROS_STATIC_PEERS
+  - ROS_SUPER_CLIENT
+  forbidden_environment_prefixes:
+  - FASTDDS_
+  - FASTRTPS_
+  - RMW_FASTRTPS_
+  - ROS_SECURITY_
+  prefix_path_environment:
+  - AMENT_PREFIX_PATH
+  - CMAKE_PREFIX_PATH
+  - COLCON_PREFIX_PATH
+  - LD_LIBRARY_PATH
+  - PATH
+  - PKG_CONFIG_PATH
+  - PYTHONPATH
+  allowed_prefix_roots:
+  - ros2_ws/install
+  - /opt/ros/jazzy
+  additional_allowed_prefix_roots:
+    PATH:
+    - /usr/bin
+    - /usr/sbin
+    PYTHONPATH:
+    - ros2_ws/build
+recording_contract:
+  enabled: true
+  backend: rosbag2
+  storage_id: mcap
+  storage_preset_profile: zstd_fast
+  include_hidden_topics: true
+  output: bags/core
+  topics:
+  - /clock
+  - /tf
+  - /tf_static
+  - /scan
+  - /imu
+  - /joint_states
+  - /odom
+  - /map
+  - /cmd_vel
+  - /plan
+  - /navigate_to_pose/_action/feedback
+  - /navigate_to_pose/_action/status
+  - /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/feedback
+  - /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/status
+  - /baseline/frontier_mrtsp_dp/exploration_complete
+  - /explore/frontiers
+  - /policy/decision_trace
+  - /policy/status
+  - /policy/candidates
+  - /evaluation/ground_truth_odom
+  - /evaluation/world_stats
+  - /evaluation/metrics
+  - /evaluation/status
+  - /task_camera/image_raw
+  topic_types:
+    /clock: rosgraph_msgs/msg/Clock
+    /tf: tf2_msgs/msg/TFMessage
+    /tf_static: tf2_msgs/msg/TFMessage
+    /scan: sensor_msgs/msg/LaserScan
+    /imu: sensor_msgs/msg/Imu
+    /joint_states: sensor_msgs/msg/JointState
+    /odom: nav_msgs/msg/Odometry
+    /map: nav_msgs/msg/OccupancyGrid
+    /cmd_vel: geometry_msgs/msg/Twist
+    /plan: nav_msgs/msg/Path
+    /navigate_to_pose/_action/feedback: nav2_msgs/action/NavigateToPose_FeedbackMessage
+    /navigate_to_pose/_action/status: action_msgs/msg/GoalStatusArray
+    /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/feedback: nav2_msgs/action/NavigateToPose_FeedbackMessage
+    /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/status: action_msgs/msg/GoalStatusArray
+    /baseline/frontier_mrtsp_dp/exploration_complete: std_msgs/msg/Empty
+    /explore/frontiers: visualization_msgs/msg/MarkerArray
+    /policy/decision_trace: std_msgs/msg/String
+    /policy/status: std_msgs/msg/String
+    /policy/candidates: visualization_msgs/msg/MarkerArray
+    /evaluation/ground_truth_odom: nav_msgs/msg/Odometry
+    /evaluation/world_stats: ros_gz_interfaces/msg/WorldStatistics
+    /evaluation/metrics: std_msgs/msg/String
+    /evaluation/status: std_msgs/msg/String
+    /task_camera/image_raw: sensor_msgs/msg/Image
+  required_nonempty_topics:
+  - /clock
+  - /scan
+  - /map
+  - /policy/decision_trace
+  - /evaluation/ground_truth_odom
+  - /evaluation/world_stats
+  - /task_camera/image_raw
+  required_nonempty_topics_by_runtime_adapter:
+    sstg_policy:
+    - /navigate_to_pose/_action/feedback
+    - /navigate_to_pose/_action/status
+    frontier_mrtsp_dp_external:
+    - /navigate_to_pose/_action/feedback
+    - /navigate_to_pose/_action/status
+    - /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/feedback
+    - /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/status
+localization_reporting_contract:
+  schema: sstg_system_sim_localization_reporting/v1
+  evidence_source: evaluator_ground_truth_ate
+  continuous_metrics:
+  - ate_mean_m
+  - ate_rmse_m
+  - ate_max_m
+  analysis_population: all_scheduled_runs
+  missing_data_policy: retain_as_missing_without_imputation
+  localization_based_run_exclusion: false
+  method_comparison_role: secondary_outcome_not_adjustment_covariate
+  paired_reporting_keys:
+  - world_id
+  - start_id
+  - condition
+  - replicate_seed
+  map_to_odom_diagnostic:
+    source_topic: /tf
+    parent_frame: map
+    child_frame: odom
+    statistic: largest_adjacent_translation_correction_m
+    threshold_m: null
+    role: descriptive_only
+  formal_threshold_policy: externally_anchor_and_freeze_before_test_split_or_report_none
+experiment_budget:
+  max_duration_s: 1800.0
+  max_distance_m: 300.0
+  max_decisions: 80
+  goal_timeout_s: 180.0
+budget_provenance:
+  source: development_override
+  development_overrides:
+    max_duration_s: 1800.0
+    max_distance_m: 300.0
+    max_decisions: 80
+    goal_timeout_s: 180.0
+source:
+  repository_commit: c8e5f45c6e667d95ea63cd314840829eff961ac2
+  repository_dirty: false
+  source_tree_sha256: 798380c353b64a2303ae7df81f75d09abc06dc582a16d07312e4fc4dbbe86aa5
+  source_paths:
+  - src
+  - ros2_ws/src
+  tool_path: scripts/generate_system_sim_schedule.py
+  tool_sha256: 84c22e8b4050fb39f4b510a3a37f6e21d0f294c356124c52f85a1608589da0c9
+  runner_tool_path: scripts/run_system_sim_schedule.py
+  runner_tool_sha256: 606c197bd35c6647a6ae1a808b72e55116c124b47359aa5059c2e9a9713afc6c
+  tree_hash_algorithm: sha256(path-length || path || file-sha256)/v1
+inputs:
+  study_config_sha256: a14ece5b1eb0ad8a4dda8b24b6a0b676b229c7298417d0e7686320c7ead9ae9c
+  world_registry:
+    path: experiments/system_sim/registries/worlds.yaml
+    sha256: d4e3109a228ce52b6b834e863eecdffe058c60eb2f664eda0c3384ca866795eb
+  shared_stack:
+    path: experiments/system_sim/configs/shared_stack.yaml
+    sha256: ee5fe0fae8a151dd588e167578ca02c1a5d827d993f51dd86554a665842b10b3
+    freeze_status: development
+    seed_contract:
+      seed_source: replicate_seed
+      valid_range_inclusive:
+      - 1
+      - 2147483647
+      launch_argument_columns:
+        policy_seed: replicate_seed
+        simulation_seed: replicate_seed
+    ros_gz_bridge_contract:
+      package: ros_gz_bridge
+      required_version: 1.0.23
+      repository: https://github.com/gazebosim/ros_gz
+      source_tag: 1.0.23
+      source_commit: ec3a555b540ac492882d587a09752eb2eeeee3cd
+      required_fix_commit: 4c6cb80bb30fc0871bbd5ec95761272ce49a150d
+      source_checkout: ros2_ws/src/third_party/ros_gz
+      required_prefix: ros2_ws/install/ros_gz_bridge
+      system_apt_version_observed: 1.0.22-1noble.20260615.142443
+      system_apt_eligible: false
+    ros_middleware_contract:
+      implementation: rmw_fastrtps_cpp
+      package: rmw_fastrtps_cpp
+      required_version: 8.4.4
+      required_prefix: /opt/ros/jazzy
+      required_library_sha256: 046375a1ef195094abb57c832b275c385261052cfed3ee044cce70e25a42cef3
+      apt_package: ros-jazzy-rmw-fastrtps-cpp
+      apt_version_observed: 8.4.4-1noble.20260615.124621
+      required_linked_dependencies:
+        rmw_fastrtps_shared_cpp:
+          apt_package: ros-jazzy-rmw-fastrtps-shared-cpp
+          apt_version: 8.4.4-1noble.20260615.124045
+          required_library: /opt/ros/jazzy/lib/librmw_fastrtps_shared_cpp.so
+          required_sha256: c1abaceb3433fd4f20b1f5a5fa6686d285659bce8a2bb81ec2d61954a6d490ec
+        fastrtps:
+          apt_package: ros-jazzy-fastrtps
+          apt_version: 2.14.6-1noble.20260303.233638
+          required_library: /opt/ros/jazzy/lib/libfastrtps.so.2.14.6
+          required_sha256: 8d39de86a55a92e1be92640a22e6322f099227930d4fc98bd821b6effd7a3eaa
+        fastcdr:
+          apt_package: ros-jazzy-fastcdr
+          apt_version: 2.2.7-1noble.20260225.051855
+          required_library: /opt/ros/jazzy/lib/libfastcdr.so.2.2.7
+          required_sha256: 0eeb1f3d1859db07e7551be9df814053a8a4805c9feb9cb990363e43ac45cd69
+      custom_underlays_eligible: false
+      required_environment:
+        ROS_DISTRO: jazzy
+        ROS_DOMAIN_ID: '42'
+        ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+        SKIP_DEFAULT_XML: '1'
+      forbidden_environment:
+      - CYCLONEDDS_URI
+      - ROS_DISCOVERY_SERVER
+      - ROS_LOCALHOST_ONLY
+      - ROS_STATIC_PEERS
+      - ROS_SUPER_CLIENT
+      forbidden_environment_prefixes:
+      - FASTDDS_
+      - FASTRTPS_
+      - RMW_FASTRTPS_
+      - ROS_SECURITY_
+      prefix_path_environment:
+      - AMENT_PREFIX_PATH
+      - CMAKE_PREFIX_PATH
+      - COLCON_PREFIX_PATH
+      - LD_LIBRARY_PATH
+      - PATH
+      - PKG_CONFIG_PATH
+      - PYTHONPATH
+      allowed_prefix_roots:
+      - ros2_ws/install
+      - /opt/ros/jazzy
+      additional_allowed_prefix_roots:
+        PATH:
+        - /usr/bin
+        - /usr/sbin
+        PYTHONPATH:
+        - ros2_ws/build
+    recording_contract:
+      enabled: true
+      backend: rosbag2
+      storage_id: mcap
+      storage_preset_profile: zstd_fast
+      include_hidden_topics: true
+      output: bags/core
+      topics:
+      - /clock
+      - /tf
+      - /tf_static
+      - /scan
+      - /imu
+      - /joint_states
+      - /odom
+      - /map
+      - /cmd_vel
+      - /plan
+      - /navigate_to_pose/_action/feedback
+      - /navigate_to_pose/_action/status
+      - /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/feedback
+      - /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/status
+      - /baseline/frontier_mrtsp_dp/exploration_complete
+      - /explore/frontiers
+      - /policy/decision_trace
+      - /policy/status
+      - /policy/candidates
+      - /evaluation/ground_truth_odom
+      - /evaluation/world_stats
+      - /evaluation/metrics
+      - /evaluation/status
+      - /task_camera/image_raw
+      topic_types:
+        /clock: rosgraph_msgs/msg/Clock
+        /tf: tf2_msgs/msg/TFMessage
+        /tf_static: tf2_msgs/msg/TFMessage
+        /scan: sensor_msgs/msg/LaserScan
+        /imu: sensor_msgs/msg/Imu
+        /joint_states: sensor_msgs/msg/JointState
+        /odom: nav_msgs/msg/Odometry
+        /map: nav_msgs/msg/OccupancyGrid
+        /cmd_vel: geometry_msgs/msg/Twist
+        /plan: nav_msgs/msg/Path
+        /navigate_to_pose/_action/feedback: nav2_msgs/action/NavigateToPose_FeedbackMessage
+        /navigate_to_pose/_action/status: action_msgs/msg/GoalStatusArray
+        /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/feedback: nav2_msgs/action/NavigateToPose_FeedbackMessage
+        /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/status: action_msgs/msg/GoalStatusArray
+        /baseline/frontier_mrtsp_dp/exploration_complete: std_msgs/msg/Empty
+        /explore/frontiers: visualization_msgs/msg/MarkerArray
+        /policy/decision_trace: std_msgs/msg/String
+        /policy/status: std_msgs/msg/String
+        /policy/candidates: visualization_msgs/msg/MarkerArray
+        /evaluation/ground_truth_odom: nav_msgs/msg/Odometry
+        /evaluation/world_stats: ros_gz_interfaces/msg/WorldStatistics
+        /evaluation/metrics: std_msgs/msg/String
+        /evaluation/status: std_msgs/msg/String
+        /task_camera/image_raw: sensor_msgs/msg/Image
+      required_nonempty_topics:
+      - /clock
+      - /scan
+      - /map
+      - /policy/decision_trace
+      - /evaluation/ground_truth_odom
+      - /evaluation/world_stats
+      - /task_camera/image_raw
+      required_nonempty_topics_by_runtime_adapter:
+        sstg_policy:
+        - /navigate_to_pose/_action/feedback
+        - /navigate_to_pose/_action/status
+        frontier_mrtsp_dp_external:
+        - /navigate_to_pose/_action/feedback
+        - /navigate_to_pose/_action/status
+        - /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/feedback
+        - /baseline/frontier_mrtsp_dp/navigate_to_pose/_action/status
+    localization_reporting_contract:
+      schema: sstg_system_sim_localization_reporting/v1
+      evidence_source: evaluator_ground_truth_ate
+      continuous_metrics:
+      - ate_mean_m
+      - ate_rmse_m
+      - ate_max_m
+      analysis_population: all_scheduled_runs
+      missing_data_policy: retain_as_missing_without_imputation
+      localization_based_run_exclusion: false
+      method_comparison_role: secondary_outcome_not_adjustment_covariate
+      paired_reporting_keys:
+      - world_id
+      - start_id
+      - condition
+      - replicate_seed
+      map_to_odom_diagnostic:
+        source_topic: /tf
+        parent_frame: map
+        child_frame: odom
+        statistic: largest_adjacent_translation_correction_m
+        threshold_m: null
+        role: descriptive_only
+      formal_threshold_policy: externally_anchor_and_freeze_before_test_split_or_report_none
+    experiment_budget:
+      max_duration_s: 1800.0
+      max_distance_m: 300.0
+      max_decisions: 80
+      goal_timeout_s: 180.0
+  condition:
+    condition: nominal
+    path: experiments/system_sim/configs/conditions/nominal.yaml
+    sha256: 6cbb040a8ee64636241718690d66d4e4e7fcec5ec3f384a030ea3d66339d6c2e
+    status: development
+  methods:
+  - method: ans_adapted
+    runtime_adapter: sstg_policy
+    path: experiments/system_sim/configs/methods/ans_adapted.yaml
+    sha256: c7fc068d175524c76fd8995cb3e804de927c377eb7a1b971a858fb9d54322dce
+    status: unknown_completion_development_adapter
+  worlds:
+  - world_id: dev_office_01
+    site_family: multi_room_office
+    split: development
+    formal_result_eligible: false
+    bundle: ros2_ws/src/sstg_gazebo/worlds/development/multi_room_office/dev_office_01
+    world_sdf: ros2_ws/src/sstg_gazebo/worlds/development/multi_room_office/dev_office_01/world.sdf
+    world_name: dev_office_01
+    truth_map_yaml: ros2_ws/src/sstg_gazebo/worlds/development/multi_room_office/dev_office_01/evaluation/truth_map.yaml
+    starts:
+    - start_id: start_southwest
+      x_m: -6.5
+      y_m: -4.5
+      yaw_deg: 0.0
+      spawn_yaw_rad: 0.0
+      truth_to_map_x_m: 6.5
+      truth_to_map_y_m: 4.5
+      truth_to_map_yaw_rad: 0.0
+    sha256:
+      bundle: f2a92c4f4f87106b7c05aa0d7257f2dc1f444dd0893f066b240131c3f75e0ddf
+      world.sdf: 1e84f9cb4637b2a85b67b86b0f6a7cd9c0a50942434681337bb19cfd86087d0d
+      metadata.yaml: 2731130e14804f864bf05f87c92a194df948c0dc4c2ab81e6018d8d2d2d7ee1d
+      starts.yaml: 7e2800af28045b11b05be3513d7b1e3765ad46aff428347a0b81b97051fdfa25
+      targets.yaml: 7ca13f397797d520102cd8b17281f7697bd44352351bd2516e7f6b126f51990e
+      evaluation/truth_map.yaml: d9da451897aad747bb8d1773e41f6d1464c49588ff0a777b12a49b1d54ce0a41
+launch:
+  package: sstg_nav_bringup
+  file: system_sim.launch.py
+  fixed_arguments:
+    headless: 'true'
+    rviz: 'false'
+    evaluator: 'true'
+    record_bag: 'true'
+  argument_columns:
+    world: world_sdf
+    world_name: world_name
+    start_x: start_x_m
+    start_y: start_y_m
+    start_yaw: start_yaw_rad
+    output_dir: run_output_dir
+    runtime_adapter: runtime_adapter
+    strategy: strategy
+    coverage_objective: coverage_objective
+    clearance_weight: clearance_weight
+    travel_cost_weight: travel_cost_weight
+    policy_seed: replicate_seed
+    simulation_seed: replicate_seed
+    max_duration_s: max_duration_s
+    max_distance_m: max_distance_m
+    max_decisions: max_decisions
+    goal_timeout_s: goal_timeout_s
+    truth_map_yaml: truth_map_yaml
+    truth_registration_id: truth_registration_id
+    truth_to_map_x_m: truth_to_map_x_m
+    truth_to_map_y_m: truth_to_map_y_m
+    truth_to_map_yaw_rad: truth_to_map_yaw_rad
+outputs:
+  run_schedule: run_schedule.csv
+  run_schedule_sha256: 331abbcd873311dfcf86aa39591b27b27fe8824e36c5aabe75fcc2bb13784b2c
+execution:
+  simulator_invoked: false
+  status: not_started
